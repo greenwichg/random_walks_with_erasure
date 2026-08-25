@@ -361,9 +361,12 @@ services:
       # coverage diverges as it runs, so legitimate late articles routinely match exactly one
       # member. Stays 1; the record lives on story_service.min_support.
       RWE_CLUSTER_MIN_SUPPORT: ${RWE_CLUSTER_MIN_SUPPORT:-1}
-      # Registered follow-up (story_service.support_scope): "groups" asks for breadth only when
-      # BOTH sides are already >= 2 members, exempting the singleton-absorption case that was the
-      # whole measured cost. Unmeasured -- "any" is what the 8.7% describes.
+      # MEASURED 2026-08-25 AND REJECTED at "groups" too: 1.9% dropped and the cost bar printed
+      # ADOPT, but --pieces showed the 106 splits were same-event fragmentation ("US national
+      # debt passes $40tn" severed from "US debt tops $40 trillion"; one election split from
+      # itself; the US-Canada tariff escalation cut three ways), plus new false merges downstream
+      # (Vietnamese football joined to a leukaemia-transplant story). Both scopes are spent; the
+      # record lives on story_service.support_scope.
       RWE_CLUSTER_SUPPORT_SCOPE: ${RWE_CLUSTER_SUPPORT_SCOPE:-any}
       RWE_STORY_REPAIR_QUORUM: ${RWE_STORY_REPAIR_QUORUM:-0.5}
       # X4 V-growth-2 (adopted 2026-08-16, docs/STORY_ENTITY_EVIDENCE_PLAN.md): a cluster merge

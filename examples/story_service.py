@@ -1315,8 +1315,23 @@ def entity_veto() -> bool:
     shape a veto should have at this coverage: quiet where extraction is absent, decisive where
     two clusters genuinely name different people.
 
+    **Measured bite, 2026-08-25 telemetry over a full build:** 7,466 merge decisions consulted,
+    of which **461 (6.2%) had a corroborated consensus on BOTH sides** — the coverage reality,
+    quantified: the rule fails open on 93.8% of merges and is simply silent there. Of the 461 it
+    could speak to, **24 were vetoed**, and the dup-merge stage vetoed 0. A rule that is quiet on
+    fourteen merges in fifteen and decisive on the rest is the shape a 24%-extraction signal
+    should have.
+
     A veto is the only direction offered. Entity evidence proposing merges is X5b's job and is
-    measured separately; this knob cannot create a cluster, only decline one."""
+    measured separately; this knob cannot create a cluster, only decline one.
+
+    **Measuring it after adoption.** ``--entity-veto`` only sets the AFTER side; the BEFORE side
+    resolves from the environment, which now carries the adopted default, so a bare run compares
+    the rule against itself and prints an honest 0/0/0. To re-measure, turn the baseline off for
+    that container:
+
+        dc run --rm -T -e RWE_STORY_ENTITY_VETO=0 api python \
+            examples/audit_clustering_change.py --entity-veto --pieces 5"""
     v = os.environ.get("RWE_STORY_ENTITY_VETO", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
 
@@ -1359,13 +1374,34 @@ def support_scope() -> str:
     The precedent is X6, recorded in ``docs/STORY_TEMPLATE_GATE.md``: a printed PASS overruled by
     the criterion as registered.
 
-    What would settle it is the split READ, not another aggregate: ``--pieces N`` prints the
-    pieces of the biggest split clusters. The dropped list divides visibly — "The Shards"
-    next-episode (6 of 6, a/p 3.0), "First Alert Weather", "Fantasy football rankings" look like
-    one outlet's template being correctly separated, while "US hits Canadian goods with 50%
-    tariffs" (−2 of 11 across 10 publishers) and "At least five killed in Russian missile strikes
-    on Kyiv" (−2 of 8 across 7) look like real coverage being shed. Which of those dominates the
-    106 is the adoption decision.
+    **The split read settled it: REJECTED 2026-08-25.** ``--pieces 12`` over the biggest split
+    clusters, and the 1.9% turns out to be same-event fragmentation, not template separation:
+
+      * "US national debt passes $40tn after doubling in a decade" split from "US debt tops $40
+        trillion, doubled under Donald Trump, Biden" — 6 and 6. One event, two phrasings; joining
+        exactly that is what clustering is for.
+      * "Progressive wins special election to fill Swalwell's California seat" (25) shed "Aisha
+        Wahab makes history as the first Afghan American elected to Congress" (2). One election.
+      * "US hits Canadian goods with 50% tariffs" fragmented three ways — the tariffs (6),
+        Canada matching "dollar for dollar" (6), Canada suspending talks (2). One escalation.
+      * "Darline Graham pilloried…" (41) shed "Lindsey Graham's sister makes security blunder in
+        car-crash debate" (2). Same debate, same person, named two ways.
+
+    Of the twelve, only the Kalshi promo-code chain (14 articles / 2 publishers) was a separation
+    worth having. The story count rising 1,512 → 1,555 is fragments, not events.
+
+    It also INTRODUCED false merges, by the mechanism documented on the containment property:
+    refusal is subtractive inside ``cluster()``, but ``_merge_duplicates`` and ``_repair`` then
+    receive different inputs and complete joins they previously declined. The run merged a
+    Vietnamese football story ("HLV Kim Sang Sik… 24 trận bất bại") into a leukaemia-transplant
+    story, "Everton Starting XI vs Crystal Palace" into "Isak returns to Newcastle with
+    Liverpool", and "Rory McIlroy… BMW Championship" into "Wyndham Clark's girlfriend reveals
+    huge relationship step". A rule that fragments real events and manufactures new welds is not
+    paying for its 1.9% however the cost bar reads.
+
+    With both scopes measured and rejected, the deterministic structural line on comparative
+    bridges is closed. What remains for that failure class is the banded semantic judge
+    (``event_identity``), which is implemented and dark for want of an API key.
 
     **Known weaker, stated plainly.** Under ``any`` the rule refuses the Odyssey/Spider-Man weld
     in BOTH merge orders. Under ``groups`` it refuses it in the order production actually takes

@@ -173,39 +173,33 @@ depends on where its strongest edge points, and merges are consumed best-first:
 * **Order B** (bridge's strongest edge points at the large side) — it joins as an unGated
   singleton and the foreign article follows as one too. `any` refuses; `groups` does not.
 
-**Measured 2026-08-25 — 1.8% dropped, adoption HELD.** 27,885 articles, baseline already
-carrying the adopted X5c veto:
+**Measured 2026-08-25 — REJECTED on the split read.** 27,908 articles, baseline already
+carrying the adopted X5c veto: 106 clusters split, droppedOut 114 = **1.9%**, stories
+1,512 → 1,555, largest cluster **60 → 60 unchanged**, blindspot claims 199 → 192.
 
-| | before | after (support 2 / groups) |
+The cost bar printed ADOPT. `--pieces 12` overturned it. The splits are same-event fragmentation,
+not template separation:
+
+| the split | what came apart | |
 |---|---|---|
-| stories | 1,508 | 1,553 |
-| largest cluster | 60 | **60 — unchanged** |
-| covered articles | 6,135 | 6,044 |
-| **droppedOut** | — | **113 = 1.8%** (bar 5%) |
-| clusters split | — | 106 (vs 371 under `any`) |
-| blindspot claims | 200 | 192 |
-| independent signal | 0/63 bad, mean 0.953 | 0/59 bad, mean 0.956 |
+| US national debt | "US debt tops $40 trillion, doubled under Trump, Biden" (6) ↔ "US national debt passes $40tn after doubling in a decade" (6) | one event, two phrasings |
+| Aisha Wahab | "Progressive wins special election to fill Swalwell's seat" (25) ↔ "first Afghan American elected to Congress" (2) | one election |
+| US–Canada tariffs | cut three ways: tariffs (6) / "match dollar for dollar" (6) / "suspends talks" (2) | one escalation |
+| Darline Graham | 41 ↔ "Lindsey Graham's sister makes security blunder in car-crash debate" (2) | one debate, one person |
 
-The scope does what it was designed to do — four-fifths of the `any` variant's cost, gone. The
-harness printed ADOPT and the decision is still held, because **that verdict line is a cost check
-and the criterion is not**. The bar registered on `link_quorum` reads "largest cluster well down,
-droppedOut ≤ 5%, no story-count fall", and the largest cluster did not move. The
-`odyssey-spiderman` exhibit read `separated → separated` on both sides for a second run, so the
-weld was again absent from the window and the benefit is unobserved. That is 113 articles and 8
-blindspot claims spent on something no instrument in the run can see. The precedent is X6, in
-`STORY_TEMPLATE_GATE.md`: *a printed PASS overruled by the criterion as registered.*
+Of the twelve biggest, only the Kalshi promo-code chain (14 articles / 2 publishers) was a
+separation worth having. **The story count rising 1,512 → 1,555 is fragments, not events** —
+which is exactly what a cost bar cannot see and a piece read can.
 
-What settles it is the split READ rather than another aggregate — `--pieces N` prints the pieces
-of the biggest split clusters, which is the read that tells a separated event from a shredded
-story. The dropped list divides visibly:
+It also *introduced* false merges, by the mechanism below: the run joined a Vietnamese football
+story ("HLV Kim Sang Sik… 24 trận bất bại") to a leukaemia-transplant story, "Everton Starting XI
+vs Crystal Palace" to "Isak returns to Newcastle with Liverpool", and "Rory McIlroy… BMW
+Championship" to "Wyndham Clark's girlfriend reveals huge relationship step". A rule that
+fragments real events and manufactures new welds is not paying for its 1.9% however the bar reads.
 
-* **plausibly correct** — one outlet repeating a template: "The Shards" next-episode (6 of 6,
-  a/p 3.0), "First Alert Weather", "Fantasy football rankings" (both a/p 2.0);
-* **plausibly damage** — "US hits Canadian goods with 50% tariffs" (−2 of 11 across 10
-  publishers, a/p 1.1), "At least five killed in Russian missile strikes on Kyiv" (−2 of 8
-  across 7).
-
-Which of those dominates the 106 is the adoption decision.
+**Both scopes are now spent, and the deterministic structural line on comparative bridges is
+closed.** What remains for that failure class is the banded semantic judge (`event_identity`),
+implemented and dark for want of an API key.
 
 One number worth explaining rather than glossing: the run reports **12 clusters merged** under a
 rule that can only refuse merges. Both are true. Refusal is subtractive inside `cluster()` — the

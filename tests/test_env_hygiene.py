@@ -434,8 +434,14 @@ def test_compose_keeps_the_rejected_min_support_off():
     claims 203 -> 149. The rule taxes GROWTH — a real story's coverage diverges as it runs, so
     legitimate late articles routinely match exactly one member (Harry/Meghan -5 of 60, the
     England v Pakistan Test live blog -6). The instrument stays; the default does not move
-    without a passing counterfactual. `RWE_CLUSTER_SUPPORT_SCOPE` likewise stays at the scope
-    that measurement describes.
+    without a passing counterfactual.
+
+    `RWE_CLUSTER_SUPPORT_SCOPE` stays "any" for a separate measured reason. The "groups" scope was
+    the follow-up candidate and it too was REJECTED (2026-08-25): 1.9% dropped and the cost bar
+    printed ADOPT, but the `--pieces` read showed the 106 splits were same-event fragmentation —
+    "US national debt passes $40tn" severed from "US debt tops $40 trillion", one election split
+    from itself, the US-Canada tariff escalation cut three ways — plus new false merges
+    downstream. Both scopes are spent.
     """
     import pathlib
     import re

@@ -25,6 +25,23 @@ It prints a VERDICT against bars fixed in advance (``--max-dropped``), because t
 tightening change looked good on its headline numbers and cost 10.5% of covered articles — a
 number nobody would have accepted if asked first.
 
+**The VERDICT line is a COST check, not the whole criterion.** The bar registered on
+``story_service.link_quorum`` reads "largest cluster well down, droppedOut ≤ 5%, no story-count
+fall", and this line only tests the middle clause. Two candidates have now printed ADOPT and been
+rejected on the rest of it — X6 (recorded in ``docs/STORY_TEMPLATE_GATE.md``) and the
+support-breadth ``groups`` scope, which printed ADOPT at 1.9% while ``--pieces`` showed the splits
+were same-event fragmentation ("US national debt passes $40tn" severed from "US debt tops $40
+trillion"). **Read ``--pieces N`` before adopting anything that splits clusters.** A rising story
+count is fragments as often as it is events, and only the pieces distinguish them.
+
+**Measuring a rule that has already been adopted.** Flags like ``--entity-veto`` set the AFTER
+side only; the BEFORE side resolves from the environment, so once a rule is a compose default a
+bare run compares it against itself and honestly reports 0/0/0. Turn the baseline off for that
+container instead::
+
+    dc run --rm -T -e RWE_STORY_ENTITY_VETO=0 api python \
+        examples/audit_clustering_change.py --entity-veto --pieces 5
+
 **Reading a ``--desc-tokens`` run.** This one is an INSTRUMENT, not a candidate — the shared-token
 floor it pairs with cannot separate paraphrases from wire templates, and
 ``story_service.desc_tokens`` records the measurement. What the run is for is sizing the two
