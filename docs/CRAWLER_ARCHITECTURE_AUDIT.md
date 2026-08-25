@@ -166,3 +166,80 @@ deserve it.
   not need it.
 * **No site-specific rules anywhere.** The AMP/mobile detection in the audit matches URL
   *structure* (`/amp` segment, `m.` host), never a publisher name.
+
+
+---
+
+# Measured on production, 2026-08-25
+
+19 feeds/adapters tracked, 27,873 articles in the scan window.
+
+## The per-feed breaker: validated, decisively
+
+```
+  polls    ok  fail   feed
+    332   193   131   MediaStack
+   1155   394     2   GDELT
+```
+
+**MediaStack has failed 131 times consecutively and is still being asked every 600 s sweep.** That
+is weakness §3 in production, at a scale the audit did not have to argue for: ~144 pointless
+requests a day to a provider that has refused every one of them since its 131st-from-last cycle,
+because the failure count that would stop it is keyed per feed and the scheduler reads the
+adapter's. GDELT's 34% success rate (394 of 1,155) is its known load-shedding and is handled
+correctly by the existing adapter-level rule — the breaker's ceiling is a small multiple of the
+feed's own interval, so a flaky-but-working source keeps its cadence.
+
+This alone justifies the change. It is also the piece with no downside: a feed that is failing
+cannot be made fresher by asking it more often.
+
+## The dedup blind spot: REJECTED
+
+```
+articles in window : 27,873
+redundant rows     : 13 (0.05% of the window) across 13 groups
+  by cause         : scheme 13   amp 0   mobile 0   other 0
+```
+
+Thirteen rows, **all of them scheme-only** (`http://` vs `https://` of one article — Deadline ×4,
+9to5Google ×2, El Punt Avui ×2, Euronews, Hollywood Reporter). Zero AMP, zero mobile.
+
+0.05% does not pay for a migration that would touch story ids, the feedback ledger, the score cache
+and `url_by_id`, and under which every existing `http://` row stops matching its own key. **The
+candidate is closed** — measured, rejected, recorded, exactly like the clustering knobs that failed
+their bars. If the number ever moves materially the audit is here to say so.
+
+## Two instrument corrections (the reason to keep reading your own tools)
+
+Both were found by running the audit rather than by reasoning about it, and both would have
+produced a wrong recommendation.
+
+1. **`feed_health.imported` is last-cycle, not cumulative.** `record_feed_health` *assigns* it
+   (`row.imported = ...`) while `total_polls` accumulates. The first version of this audit keyed
+   each feed's settled interval on `imported > 0`, so CNN read as quiet and NPR as busy purely from
+   what happened in one 10-minute window. The publish rate now comes from counting each
+   publisher's articles across the scan window — a signal that is actually a rate.
+
+2. **The audit's model was not the law.** It used `settled = 86400/N`, the interval at which every
+   poll finds exactly one article. That is not where `feed_schedule.advance` settles. The law
+   multiplies by `speedup` on change and `slowdown` otherwise, so it stops where the expected
+   log-step is zero:
+
+   ```
+   p* = ln(slowdown) / (ln(slowdown) − ln(speedup))    = 0.369 at the shipped 0.5/1.5
+   T* = p* · 86400 / N
+   ```
+
+   The old model was **2.7× too slow**, which made a 20-article/day feed read as "poll every 1.2 h"
+   — a freshness regression the change does not cause; the true settle is ~27 min. `T*` is now
+   derived from the same env knobs the law reads, and a parametrised test simulates `advance`
+   against steady publish rates and asserts the two agree, so tuning one without the other fails
+   in CI rather than in a recommendation.
+
+## Still unmeasured
+
+The cadence half. The corrected instrument gives a defensible estimate, but the request/body
+figures it prints are a model of the law's steady state, not an observation of it. The only honest
+way to get that is to run the scheduler on and read the `notModified` counter — which is why
+`RWE_FEED_SCHEDULER` stays off pending a shadow window, and why the breaker (which needs no such
+evidence) is the part worth enabling first.

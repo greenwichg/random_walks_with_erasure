@@ -359,3 +359,54 @@ def test_scheduler_off_uses_the_untouched_path(monkeypatch, st):
     agg = sources.RSSAdapter().poll_once(st, rss_ingest.make_scorer())
     assert hit.get("called") is True
     assert "notDue" not in agg, "no scheduler counters in the unscheduled aggregate"
+
+
+# --------------------------------------------------------------------------- #
+# The audit's model must BE the law, not a proxy for it.
+#
+# The instrument first shipped with `settled = 86400/N` — the interval at which every poll finds
+# exactly one article. That is not where `advance` settles: it was wrong by 2.7x in the SLOW
+# direction, which read as a freshness regression the change does not cause. These pin the
+# corrected model against the mechanism by simulation, so tuning one and not the other fails here
+# rather than in a production recommendation.
+# --------------------------------------------------------------------------- #
+def _simulate(rate_per_day, *, polls=4000, start=600.0):
+    """Run the real `advance` against a feed publishing at a steady rate; return the interval it
+    settles at. A poll is 'changed' when at least one article was published since the last one."""
+    s = fs.FeedState(interval_s=start)
+    t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    carried = 0.0
+    for _ in range(polls):
+        gap = s.interval_s or start
+        carried += rate_per_day * gap / 86400.0
+        changed = carried >= 1.0
+        if changed:
+            carried -= int(carried)
+        t = t + timedelta(seconds=gap)
+        s = fs.advance(s, changed=changed, now=t)
+    return s.interval_s
+
+
+@pytest.mark.parametrize("rate", [200.0, 120.0, 20.0, 5.0])
+def test_the_audit_model_predicts_where_the_law_actually_settles(rate):
+    import audit_crawler_health as ach
+    predicted = ach.equilibrium_interval(rate, lo=fs.DEFAULT_MIN_INTERVAL,
+                                         hi=fs.DEFAULT_MAX_INTERVAL)
+    observed = _simulate(rate)
+    assert 0.5 <= observed / predicted <= 2.0, (
+        f"{rate}/day: law settles at {observed:.0f}s, the audit predicts {predicted:.0f}s — "
+        "the instrument and the mechanism have drifted apart")
+
+
+def test_a_very_quiet_feed_settles_at_the_ceiling_in_both_model_and_law():
+    import audit_crawler_health as ach
+    assert ach.equilibrium_interval(0.5, lo=fs.DEFAULT_MIN_INTERVAL,
+                                    hi=fs.DEFAULT_MAX_INTERVAL) == fs.DEFAULT_MAX_INTERVAL
+    assert _simulate(0.5) == fs.DEFAULT_MAX_INTERVAL
+
+
+def test_a_firehose_settles_at_the_floor_in_both_model_and_law():
+    import audit_crawler_health as ach
+    assert ach.equilibrium_interval(5000.0, lo=fs.DEFAULT_MIN_INTERVAL,
+                                    hi=fs.DEFAULT_MAX_INTERVAL) == fs.DEFAULT_MIN_INTERVAL
+    assert _simulate(5000.0) == fs.DEFAULT_MIN_INTERVAL

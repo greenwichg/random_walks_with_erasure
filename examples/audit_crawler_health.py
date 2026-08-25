@@ -26,6 +26,7 @@ migration, not an edit, and the number below is what decides whether it is worth
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import re
 from collections import defaultdict
@@ -59,36 +60,74 @@ def _variant_key(canonical: str) -> str:
     return f"{host}{path}"
 
 
-def scheduler_report(store_) -> dict:
-    """Per-feed request volume under the uniform sweep vs the adaptive law."""
+def equilibrium_interval(rate_per_day: float, *, lo: float, hi: float) -> float:
+    """Where ``feed_schedule.advance`` settles a feed publishing ``rate_per_day`` articles.
+
+    The law multiplies the interval by ``speedup`` when a poll finds something and by ``slowdown``
+    when it does not, so the interval stops moving where the expected log-step is zero::
+
+        p*ln(speedup) + (1 - p)*ln(slowdown) = 0
+        p* = ln(slowdown) / (ln(slowdown) - ln(speedup))
+
+    ``p*`` is the CHANGE RATE the law converges to — with the shipped 0.5/1.5 pair, 0.369. A feed
+    publishing N articles a day is changed on a fraction ``N*T/86400`` of polls, so the settled
+    interval is ``p* * 86400 / N``, clamped.
+
+    Derived from the same env knobs the law reads, so tuning ``RWE_FEED_SPEEDUP`` cannot silently
+    put this instrument and the mechanism it measures on different models."""
+    sp, sl = feed_schedule.speedup(), feed_schedule.slowdown()
+    if not (0 < sp < 1 < sl):
+        return max(lo, min(86400.0 / max(rate_per_day, 1e-9), hi))   # degenerate knobs
+    p_star = math.log(sl) / (math.log(sl) - math.log(sp))
+    return max(lo, min(p_star * 86400.0 / max(rate_per_day, 1e-9), hi))
+
+
+def scheduler_report(store_, rate_per_day: "dict | None" = None) -> dict:
+    """Per-feed request volume under the uniform sweep vs the adaptive law.
+
+    **The publish rate comes from the CATALOG, not from ``feed_health.imported``.** That column is
+    assigned, not accumulated (``store.record_feed_health``: ``row.imported = ...``), so it holds
+    the LAST cycle only. An earlier revision of this function keyed the settled interval on
+    ``imported > 0`` and produced nonsense on the live catalog — CNN read as quiet and NPR as busy
+    because of what happened in one 10-minute window. Counting the articles a publisher actually
+    contributed over the whole scan window is the honest signal, and it is already loaded for the
+    duplicate section.
+
+    The settled interval is the **fixed point of the law as implemented**, not a convenient proxy
+    for it — see :func:`equilibrium_interval`. An earlier revision used ``86400/N`` (the interval
+    at which every poll finds exactly one article) and was wrong by 2.7x in the SLOW direction,
+    which made the change read as a freshness regression it is not. A feed we cannot match to any
+    catalog articles is reported as UNKNOWN rather than assumed quiet — the failure mode of
+    assuming is a real feed silently pushed to the ceiling."""
     try:
         rows = store_.list_feed_health()
     except Exception:
         rows = []
+    rate_per_day = rate_per_day or {}
     sweep = float(os.environ.get("RWE_POLL_INTERVAL", "600") or 600)
     lo, hi = feed_schedule.min_interval(), feed_schedule.max_interval()
     out = []
     for r in rows:
         polls = int(r.get("totalPolls") or 0)
         ok = int(r.get("totalOk") or 0)
-        imported = int(r.get("imported") or 0)
         fails = int(r.get("consecutiveFailures") or 0)
-        # Where the law would settle this feed. A feed importing on most polls converges to the
-        # floor; one that never imports converges to the ceiling; a failing one walks to the
-        # ceiling regardless. Settled interval, not a step-by-step replay: the question is the
-        # steady state, and the transient is a few cycles either way.
+        name = r.get("name") or ""
+        rate = rate_per_day.get(name.strip().lower())
+        imported = int(round(rate)) if rate is not None else -1
         if fails > 0:
+            settled = hi                     # broken: the breaker walks it out regardless
+        elif rate is None:
+            settled = sweep                  # unknown: assume nothing, change nothing
+        elif rate <= 0:
             settled = hi
-        elif polls and ok and imported > 0:
-            settled = lo
         else:
-            settled = hi
+            settled = equilibrium_interval(rate, lo=lo, hi=hi)
         # >1 means the sweep asks this feed MORE often than the law would; <1 means less.
         skew = (settled / sweep) if sweep else 1.0
         out.append({"feed": r.get("feedUrl") or r.get("feed_url"), "name": r.get("name"),
                     "polls": polls, "ok": ok, "imported": imported, "fails": fails,
-                    "settled": settled, "skew": skew,
-                    "changes": bool(imported > 0 and fails == 0)})
+                    "settled": settled, "skew": skew, "rate": rate,
+                    "changes": bool(rate and rate > 0 and fails == 0)})
     per_day_now = (86400.0 / sweep) * len(out) if out else 0.0
     per_day_next = sum(86400.0 / r["settled"] for r in out) if out else 0.0
     # The cost that actually matters. Today every request downloads a full document. Under the
@@ -108,6 +147,15 @@ def duplicate_report(store_, *, limit: int = 10) -> dict:
     # window can no longer affect a story, a feed, or a reader.
     rows = story_service._fetch(store_)
     urls = [r.get("canonicalUrl") or r.get("url") for r in rows]
+    # Publisher -> articles per day over this window, the honest publish-rate signal the
+    # scheduler section needs (feed_health.imported is last-cycle only).
+    span_days = max(1.0, float(os.environ.get("RWE_STORIES_SCAN_DAYS", "6") or 6))
+    per_pub: dict = defaultdict(int)
+    for r in rows:
+        pub = (r.get("publisher") or "").strip().lower()
+        if pub:
+            per_pub[pub] += 1
+    rate_per_day = {k: v / span_days for k, v in per_pub.items()}
     groups = defaultdict(set)
     for u in urls:
         if not u:
@@ -128,6 +176,7 @@ def duplicate_report(store_, *, limit: int = 10) -> dict:
     extra = sum(len(v) - 1 for v in dupes.values())
     return {"articles": len(urls), "groups": len(dupes), "redundant": extra,
             "share": (extra / len(urls)) if urls else 0.0, "byReason": by_reason,
+            "ratePerDay": rate_per_day,
             "examples": [v for _, v in sorted(dupes.items())[:limit]]}
 
 
@@ -138,7 +187,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     st = store_mod.Store(args.db)
 
-    s = scheduler_report(st)
+    d = duplicate_report(st, limit=args.show)
+    s = scheduler_report(st, d["ratePerDay"])
     print(f"\n=== per-feed scheduler counterfactual "
           f"(sweep {s['sweep']:.0f}s, floor {s['floor']:.0f}s, ceiling {s['ceiling']:.0f}s) ===")
     print(f"feeds tracked      : {s['feeds']}")
@@ -148,13 +198,17 @@ def main(argv=None) -> int:
     print("  (request count may RISE: the law polls a busy feed harder. What falls is bytes —")
     print("   an unchanged feed answers 304 with no body, which is what buys the faster cadence.)")
     if s["rows"]:
-        print(f"\n  {'polls':>6} {'ok':>5} {'imp':>5} {'fail':>4} {'settled':>9} {'vs sweep':>9}  feed")
-        for r in sorted(s["rows"], key=lambda r: -r["skew"])[:20]:
+        print(f"\n  {'polls':>6} {'ok':>5} {'arts/d':>7} {'fail':>4} {'settled':>9} "
+              f"{'vs sweep':>9}  feed")
+        for r in sorted(s["rows"], key=lambda r: -r["skew"])[:25]:
             settled = (f"{r['settled'] / 3600:.1f}h" if r["settled"] >= 3600
                        else f"{r['settled'] / 60:.0f}m")
-            print(f"  {r['polls']:>6} {r['ok']:>5} {r['imported']:>5} {r['fails']:>4} "
+            rate = "     ?" if r["rate"] is None else f"{r['rate']:>6.1f}"
+            print(f"  {r['polls']:>6} {r['ok']:>5} {rate:>7} {r['fails']:>4} "
                   f"{settled:>9} {r['skew']:>8.1f}x  {(r['name'] or r['feed'] or '')[:50]}")
         print("  vs sweep >1 = we currently ask it MORE often than it earns; <1 = less.")
+        print("  arts/d ? = no catalog articles matched this health row's name. Reported, never")
+        print("  assumed: an unmatched feed keeps the current sweep interval in this estimate.")
         dead = [r for r in s["rows"] if r["fails"] > 0]
         if dead:
             print(f"\n  {len(dead)} feed(s) currently failing and re-asked every sweep — the "
@@ -162,7 +216,6 @@ def main(argv=None) -> int:
             for r in dead[:10]:
                 print(f"    {r['fails']:>3} consecutive  {(r['name'] or r['feed'] or '')[:60]}")
 
-    d = duplicate_report(st, limit=args.show)
     print(f"\n=== dedup-key blind spots (canonical_url keeps scheme, /amp, m.) ===")
     print(f"articles in window : {d['articles']:,}")
     print(f"redundant rows     : {d['redundant']:,} ({d['share'] * 100:.2f}% of the window) "
