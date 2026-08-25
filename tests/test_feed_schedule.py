@@ -410,3 +410,33 @@ def test_a_firehose_settles_at_the_floor_in_both_model_and_law():
     assert ach.equilibrium_interval(5000.0, lo=fs.DEFAULT_MIN_INTERVAL,
                                     hi=fs.DEFAULT_MAX_INTERVAL) == fs.DEFAULT_MIN_INTERVAL
     assert _simulate(5000.0) == fs.DEFAULT_MIN_INTERVAL
+
+
+# --------------------------------------------------------------------------- #
+# Scope: the scheduler covers RSS feeds, not API adapters.
+#
+# feed_health is keyed by feed URL for RSS and by a synthetic adapter key for everything else.
+# The scheduler lives in RSSAdapter._ingest_scheduled, so adapters never reach it — and
+# MultiSourcePoller._effective_interval already backs THEM off on sustained failure. The audit
+# first reported a failing adapter as a gap this change closes, which was wrong on both counts.
+# --------------------------------------------------------------------------- #
+def test_health_rows_are_split_into_feeds_and_adapters():
+    import audit_crawler_health as ach
+    for rss in ("https://cnn.com/rss.xml", "http://npr.org/feed"):
+        assert ach.is_rss_feed(rss) is True, rss
+    for adapter in ("mediastack://news", "gdelt://doc", "newsapi://top-headlines",
+                    "googlenews://rss", "crawl://BBC"):
+        assert ach.is_rss_feed(adapter) is False, adapter
+    assert ach.is_rss_feed("") is False and ach.is_rss_feed(None) is False
+
+
+def test_the_counterfactual_totals_exclude_adapters(tmp_path):
+    """An adapter's cadence cannot be changed by this scheduler, so counting it in the
+    before/after totals would credit the change with traffic it does not govern."""
+    import audit_crawler_health as ach
+    st = store_mod.Store(f"sqlite:///{tmp_path}/t.db")
+    st.record_feed_health("https://a.com/rss.xml", ok=True, name="A", stats={"new": 0})
+    st.record_feed_health("gdelt://doc", ok=True, name="GDELT", stats={"new": 0})
+    rep = ach.scheduler_report(st, {"a": 100.0, "gdelt": 100.0})
+    assert rep["feeds"] == 1 and rep["adapters"] == 1
+    assert rep["perDayNow"] == 86400.0 / rep["sweep"], "one RSS feed's worth, not two rows'"

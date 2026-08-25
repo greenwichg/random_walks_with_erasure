@@ -60,6 +60,19 @@ def _variant_key(canonical: str) -> str:
     return f"{host}{path}"
 
 
+def is_rss_feed(feed_url: str) -> bool:
+    """Whether this health row is an RSS FEED rather than a keyed-JSON/API adapter.
+
+    The distinction is load-bearing and was missed on the first production read. ``feed_health``
+    rows are keyed by feed URL for RSS (``https://…/rss.xml``) and by a synthetic adapter key for
+    everything else (``gdelt://doc``, ``newsapi://top-headlines``, ``mediastack://news``). The
+    per-feed scheduler lives in ``sources.RSSAdapter._ingest_scheduled`` and therefore covers ONLY
+    the first kind. Adapters are scheduled by ``MultiSourcePoller._effective_interval``, which
+    already backs them off on sustained failure — reporting them as "re-asked every sweep" claimed
+    a problem that rule had already solved, and credited this change with fixing it."""
+    return str(feed_url or "").lower().startswith(("http://", "https://"))
+
+
 def equilibrium_interval(rate_per_day: float, *, lo: float, hi: float) -> float:
     """Where ``feed_schedule.advance`` settles a feed publishing ``rate_per_day`` articles.
 
@@ -124,18 +137,22 @@ def scheduler_report(store_, rate_per_day: "dict | None" = None) -> dict:
             settled = equilibrium_interval(rate, lo=lo, hi=hi)
         # >1 means the sweep asks this feed MORE often than the law would; <1 means less.
         skew = (settled / sweep) if sweep else 1.0
-        out.append({"feed": r.get("feedUrl") or r.get("feed_url"), "name": r.get("name"),
+        feed_url = r.get("feedUrl") or r.get("feed_url")
+        out.append({"feed": feed_url, "rss": is_rss_feed(feed_url), "name": r.get("name"),
                     "polls": polls, "ok": ok, "imported": imported, "fails": fails,
                     "settled": settled, "skew": skew, "rate": rate,
                     "changes": bool(rate and rate > 0 and fails == 0)})
-    per_day_now = (86400.0 / sweep) * len(out) if out else 0.0
-    per_day_next = sum(86400.0 / r["settled"] for r in out) if out else 0.0
+    # Only RSS rows are in scope: the scheduler cannot change an adapter's cadence.
+    scoped = [r for r in out if r["rss"]]
+    per_day_now = (86400.0 / sweep) * len(scoped) if scoped else 0.0
+    per_day_next = sum(86400.0 / r["settled"] for r in scoped) if scoped else 0.0
     # The cost that actually matters. Today every request downloads a full document. Under the
     # scheduler only a CHANGED feed does; the rest answer 304 with no body. A feed that changes
     # is assumed to do so on most polls (it is at the floor precisely because it does).
     bodies_now = per_day_now
-    bodies_next = sum((86400.0 / r["settled"]) for r in out if r["changes"]) if out else 0.0
-    return {"sweep": sweep, "floor": lo, "ceiling": hi, "feeds": len(out),
+    bodies_next = sum((86400.0 / r["settled"]) for r in scoped if r["changes"]) if scoped else 0.0
+    return {"sweep": sweep, "floor": lo, "ceiling": hi,
+            "feeds": len(scoped), "adapters": len(out) - len(scoped),
             "perDayNow": per_day_now, "perDayNext": per_day_next,
             "bodiesNow": bodies_now, "bodiesNext": bodies_next, "rows": out}
 
@@ -191,7 +208,8 @@ def main(argv=None) -> int:
     s = scheduler_report(st, d["ratePerDay"])
     print(f"\n=== per-feed scheduler counterfactual "
           f"(sweep {s['sweep']:.0f}s, floor {s['floor']:.0f}s, ceiling {s['ceiling']:.0f}s) ===")
-    print(f"feeds tracked      : {s['feeds']}")
+    print(f"RSS feeds in scope : {s['feeds']}   "
+          f"(+{s['adapters']} API adapters the scheduler does NOT touch)")
     print(f"requests/day        now {s['perDayNow']:>8,.0f}   ->  after {s['perDayNext']:>8,.0f}")
     print(f"FULL BODIES/day     now {s['bodiesNow']:>8,.0f}   ->  after {s['bodiesNext']:>8,.0f}"
           f"   <- the cost that matters")
@@ -200,7 +218,7 @@ def main(argv=None) -> int:
     if s["rows"]:
         print(f"\n  {'polls':>6} {'ok':>5} {'arts/d':>7} {'fail':>4} {'settled':>9} "
               f"{'vs sweep':>9}  feed")
-        for r in sorted(s["rows"], key=lambda r: -r["skew"])[:25]:
+        for r in sorted([x for x in s["rows"] if x["rss"]], key=lambda r: -r["skew"])[:25]:
             settled = (f"{r['settled'] / 3600:.1f}h" if r["settled"] >= 3600
                        else f"{r['settled'] / 60:.0f}m")
             rate = "     ?" if r["rate"] is None else f"{r['rate']:>6.1f}"
@@ -209,11 +227,20 @@ def main(argv=None) -> int:
         print("  vs sweep >1 = we currently ask it MORE often than it earns; <1 = less.")
         print("  arts/d ? = no catalog articles matched this health row's name. Reported, never")
         print("  assumed: an unmatched feed keeps the current sweep interval in this estimate.")
-        dead = [r for r in s["rows"] if r["fails"] > 0]
-        if dead:
-            print(f"\n  {len(dead)} feed(s) currently failing and re-asked every sweep — the "
-                  f"per-feed breaker is what backs these off:")
-            for r in dead[:10]:
+        dead_rss = [r for r in s["rows"] if r["fails"] > 0 and r["rss"]]
+        dead_api = [r for r in s["rows"] if r["fails"] > 0 and not r["rss"]]
+        if dead_rss:
+            print(f"\n  {len(dead_rss)} RSS feed(s) failing — the per-feed breaker in this change "
+                  f"is what backs these off:")
+            for r in dead_rss[:10]:
+                print(f"    {r['fails']:>3} consecutive  {(r['name'] or r['feed'] or '')[:60]}")
+        if dead_api:
+            print(f"\n  {len(dead_api)} API adapter(s) failing. NOT in this change's scope — "
+                  f"MultiSourcePoller._effective_interval")
+            print("  already backs an adapter off on sustained failure (4x its own interval at "
+                  "this depth,")
+            print("  capped at RWE_SOURCE_MAX_INTERVAL). Listed for visibility, not as a gap:")
+            for r in dead_api[:10]:
                 print(f"    {r['fails']:>3} consecutive  {(r['name'] or r['feed'] or '')[:60]}")
 
     print(f"\n=== dedup-key blind spots (canonical_url keeps scheme, /amp, m.) ===")

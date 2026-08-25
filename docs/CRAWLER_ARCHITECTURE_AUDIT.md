@@ -174,24 +174,36 @@ deserve it.
 
 19 feeds/adapters tracked, 27,873 articles in the scan window.
 
-## The per-feed breaker: validated, decisively
+## The per-feed breaker — and a claim retracted
+
+The first production read reported this:
 
 ```
   polls    ok  fail   feed
     332   193   131   MediaStack
-   1155   394     2   GDELT
 ```
 
-**MediaStack has failed 131 times consecutively and is still being asked every 600 s sweep.** That
-is weakness §3 in production, at a scale the audit did not have to argue for: ~144 pointless
-requests a day to a provider that has refused every one of them since its 131st-from-last cycle,
-because the failure count that would stop it is keyed per feed and the scheduler reads the
-adapter's. GDELT's 34% success rate (394 of 1,155) is its known load-shedding and is handled
-correctly by the existing adapter-level rule — the breaker's ceiling is a small multiple of the
-feed's own interval, so a flaky-but-working source keeps its cadence.
+and this document said it "validated the breaker, decisively". **That was wrong, in both halves,
+and the error is worth keeping rather than deleting.**
 
-This alone justifies the change. It is also the piece with no downside: a feed that is failing
-cannot be made fresher by asking it more often.
+`feed_health` rows are keyed two different ways: by feed URL for RSS (`https://…/rss.xml`) and by
+a synthetic adapter key for everything else (`mediastack://news`, `gdelt://doc`,
+`newsapi://top-headlines`). MediaStack is a `KeyedJSONAdapter`, not an RSS feed. So:
+
+* **the new breaker does not cover it.** The scheduler lives in `RSSAdapter._ingest_scheduled`;
+  adapters have their own `poll_once` and never reach it;
+* **it was not "re-asked every sweep" either.** `MultiSourcePoller._effective_interval` already
+  backs an adapter off on sustained failure — at 132 consecutive failures that is 4× its own
+  interval, capped at `RWE_SOURCE_MAX_INTERVAL`. The rule that would fix it had already fixed it.
+
+The audit printed "re-asked every sweep" because that phrase was an *assumption baked into the
+instrument*, not an observation. `is_rss_feed()` now splits the two populations: RSS rows are
+scoped to this change, adapter rows are listed for visibility with the existing rule named. The
+request/body totals count RSS rows only, since the scheduler cannot move an adapter's cadence.
+
+What remains true: **the breaker is the right mechanism for RSS feeds**, and the 19 tracked rows
+are ~10 RSS feeds plus ~9 adapters, so the scheduler's real scope is half what the first read
+implied.
 
 ## The dedup blind spot: REJECTED
 

@@ -38,6 +38,15 @@ services:
       # live catalog. RWE_FEED_MIN_INTERVAL / RWE_FEED_MAX_INTERVAL bound the adaptive cadence at
       # both ends (defaults 120s / 6h) and are the only politeness numbers that matter here.
       RWE_FEED_SCHEDULER: ${RWE_FEED_SCHEDULER:-0}
+      # The bounds and the two multipliers MUST be listed here too. `environment:` is an explicit
+      # allowlist and this stack has no `env_file:`, so a variable absent from this block never
+      # reaches the container whatever deploy/.env says -- compose reads that file to substitute
+      # ${VAR}, not to inject it. Shipping RWE_FEED_SCHEDULER alone made the floor untunable and
+      # unrollbackable: an operator could turn the scheduler on but not slow it down.
+      RWE_FEED_MIN_INTERVAL: ${RWE_FEED_MIN_INTERVAL:-}
+      RWE_FEED_MAX_INTERVAL: ${RWE_FEED_MAX_INTERVAL:-}
+      RWE_FEED_SPEEDUP: ${RWE_FEED_SPEEDUP:-}
+      RWE_FEED_SLOWDOWN: ${RWE_FEED_SLOWDOWN:-}
       # The background poller resolves its feeds from RWE_RSS_FEEDS — the SAME list the `ingest` service
       # uses. WITHOUT this (and the matching mount below) the poller loads ZERO feeds and silently no-ops,
       # so the catalog only ever refreshes at `up` time. Keep this pair in sync with the ingest service.
