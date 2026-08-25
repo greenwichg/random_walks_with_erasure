@@ -831,6 +831,15 @@ class FeedHealth(Base):
     duplicate: Mapped[int] = mapped_column(default=0)         # already-seen, last cycle
     rejected: Mapped[int] = mapped_column(default=0)          # failed URL/host guard, last cycle
     missing_metadata: Mapped[int] = mapped_column(default=0)  # no title / no pub date, last cycle
+    # Per-feed scheduling state (feed_schedule.py) — NULL for every feed until the scheduler is
+    # enabled, and read by nothing while it is off. Kept on this table rather than a new one
+    # because it is keyed identically (feed URL) and written on the same cycle by the same code
+    # path; a second table would be a join and a second write for one row's worth of state.
+    etag: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    last_modified: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    content_sha: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    next_due_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    interval_s: Mapped[Optional[float]] = mapped_column(default=None)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
@@ -969,6 +978,7 @@ class Store:
         self._ensure_lifecycle_columns()
         self._ensure_publisher_metadata_columns()
         self._ensure_delivery_retry_columns()
+        self._ensure_feed_schedule_columns()
         self._ensure_search_indexes()
 
     @contextmanager
@@ -1708,6 +1718,19 @@ class Store:
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
 
+    def _ensure_feed_schedule_columns(self) -> None:
+        """Additive, idempotent per-feed scheduling columns on ``feed_health`` — same discipline as
+        ``_ensure_media_columns``, and here for the same reason ``_ensure_publisher_metadata_columns``
+        exists: ``create_all`` creates NEW tables only, and this table shipped long ago."""
+        for name, decl in [("etag", "VARCHAR(512)"), ("last_modified", "VARCHAR(128)"),
+                           ("content_sha", "VARCHAR(64)"), ("next_due_at", "VARCHAR(64)"),
+                           ("interval_s", "FLOAT")]:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE feed_health ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
     def _ensure_publisher_metadata_columns(self) -> None:
         """Additive, idempotent columns on ``publisher_metadata`` — same discipline as
         ``_ensure_media_columns``, and here for the same reason it exists there.
@@ -2302,6 +2325,40 @@ class Store:
             rec = self._feed_health_row(row)
             rec["transition"] = transition
             return rec
+
+    def feed_schedule_state(self, feed_url: str) -> dict:
+        """One feed's persisted scheduling state, or empty defaults when it has never been polled.
+
+        Returns a plain dict rather than a ``feed_schedule.FeedState`` so ``store`` keeps no import
+        of the policy module — the same direction of dependency every other side table observes."""
+        with self.session() as s:
+            row = s.get(FeedHealth, feed_url)
+            if row is None:
+                return {"etag": None, "last_modified": None, "content_sha": None,
+                        "next_due_at": None, "interval_s": None, "consecutive_failures": 0}
+            return {"etag": row.etag, "last_modified": row.last_modified,
+                    "content_sha": row.content_sha, "next_due_at": row.next_due_at,
+                    "interval_s": row.interval_s,
+                    "consecutive_failures": int(row.consecutive_failures or 0)}
+
+    def record_feed_schedule(self, feed_url: str, *, etag=None, last_modified=None,
+                             content_sha=None, next_due_at=None, interval_s=None) -> None:
+        """Persist one feed's scheduling state. Creates the health row if this feed is new, so the
+        scheduler can run before a health record exists (a feed skipped on its first cycle would
+        otherwise never acquire state and would be re-polled forever)."""
+        with self.session() as s:
+            row = s.get(FeedHealth, feed_url)
+            if row is None:
+                row = FeedHealth(feed_url=feed_url, healthy=True, consecutive_failures=0,
+                                 total_polls=0, total_ok=0, total_failed=0,
+                                 imported=0, duplicate=0, rejected=0, missing_metadata=0)
+                s.add(row)
+            row.etag = etag
+            row.last_modified = last_modified
+            row.content_sha = content_sha
+            row.next_due_at = next_due_at
+            row.interval_s = interval_s
+            row.updated_at = _utcnow()
 
     def list_feed_health(self) -> list:
         with self.session() as s:

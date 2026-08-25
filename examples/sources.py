@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import rss_ingest      # reuse: FeedEntry, load_feeds/fetch_feed/parse_feed, ingest_entries, ingest_all
+import feed_schedule   # per-feed cadence + conditional-GET policy (pure; off unless enabled)
 import media           # reuse: pick_best_image (image SELECTION only — never modified, never downloads)
 import corpus_health   # reuse: validation-aware retention (post-cycle, exactly as FeedPoller runs it)
 import storage_lifecycle  # reuse: the ONE bounded cleanup pass (catalog + derived tables)
@@ -377,15 +378,95 @@ class RSSAdapter(SourceAdapter):
     def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
         """RSS reuses ``rss_ingest.ingest_all`` verbatim (identical behaviour + per-feed health). When
         ``RWE_RSS_MAX_ARTICLES`` is set, it uses a per-feed capped path that still reuses
-        fetch_feed/parse_feed/ingest_entries (only the entry list is truncated first)."""
+        fetch_feed/parse_feed/ingest_entries (only the entry list is truncated first).
+
+        With ``RWE_FEED_SCHEDULER`` on, a third path asks each feed on its OWN cadence and with
+        conditional-GET validators — see ``_ingest_scheduled``. Off, neither branch below is
+        reachable and this method is exactly what it was."""
         feeds = rss_ingest.load_feeds(self.feeds_spec)
         cap = self.max_articles()
-        if cap is None:
+        if feed_schedule.enabled():
+            agg = self._ingest_scheduled(feeds, scorer, store_, cap, on_feed)
+        elif cap is None:
             agg = rss_ingest.ingest_all(feeds, scorer, store_, on_feed=on_feed)   # unchanged RSS path
         else:
             agg = self._ingest_capped(feeds, scorer, store_, cap, on_feed)
         agg["provider"] = self.provider
         agg["sourceType"] = self.source_type
+        return agg
+
+    def _ingest_scheduled(self, feeds, scorer, store_, cap, on_feed) -> dict:
+        """Per-feed cadence + conditional GET (``feed_schedule``).
+
+        Three outcomes per feed, and only one of them costs a full document:
+
+        * **not due** — skipped entirely. No request, no health record: a feed we chose not to ask
+          has no new evidence about its health, and writing one would reset the very timers the
+          skip is based on.
+        * **304 / unchanged** — the origin says nothing changed. Counted, health recorded as a
+          successful poll with zero entries (it IS a successful poll — treating the cheapest
+          possible answer as a failure is the classic conditional-GET bug), interval widened.
+        * **200 with a body** — parsed and ingested exactly as the unscheduled paths do, through
+          the same ``ingest_entries`` choke point. Nothing downstream can tell which path ran.
+
+        ``changed`` is decided by the ingest result first and the body hash second: a 200 whose
+        bytes differ but which yields no new articles is a regenerated document, not new
+        journalism, and the slow branch is the right one for it."""
+        agg = {"feeds": 0, "ok": 0, "failed": 0, "entries": 0, "new": 0, "duplicates": 0,
+               "skipped": 0, "blocked": 0, "unknown_outlet": 0,
+               "notDue": 0, "notModified": 0, "errors": []}
+        for name, url in feeds:
+            raw = store_.feed_schedule_state(url)
+            state = feed_schedule.FeedState(**raw)
+            if not feed_schedule.due(state):
+                agg["notDue"] += 1
+                continue
+            agg["feeds"] += 1
+            t0 = time.perf_counter()
+            result, error, fetched = None, None, None
+            try:
+                fetched = rss_ingest.fetch_feed_conditional(
+                    url, etag=state.etag, last_modified=state.last_modified)
+                if not fetched.not_modified:
+                    title, entries = rss_ingest.parse_feed(fetched.data)
+                    if cap is not None:
+                        entries = entries[: max(0, cap)]
+                    result = rss_ingest.ingest_entries(entries, name or title or None, url,
+                                                       scorer, store_, source_type="rss")
+                    result["feed"] = url
+            except Exception as e:
+                error = e
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+
+            if error is not None:
+                agg["failed"] += 1
+                agg["errors"].append({"feed": url, "error": f"{type(error).__name__}: {error}"})
+                state = feed_schedule.advance(state, changed=False, failed=True)
+            else:
+                agg["ok"] += 1
+                if fetched.not_modified:
+                    agg["notModified"] += 1
+                    changed = False
+                    sha = state.content_sha
+                else:
+                    for k in ("entries", "new", "duplicates", "skipped", "blocked",
+                              "unknown_outlet"):
+                        agg[k] += (result or {}).get(k, 0)
+                    sha = feed_schedule.content_hash(fetched.data)
+                    changed = bool((result or {}).get("new", 0)) or sha != state.content_sha
+                state = feed_schedule.advance(
+                    state, changed=changed, etag=fetched.etag,
+                    last_modified=fetched.last_modified, content_sha=sha)
+
+            store_.record_feed_schedule(
+                url, etag=state.etag, last_modified=state.last_modified,
+                content_sha=state.content_sha, next_due_at=state.next_due_at,
+                interval_s=state.interval_s)
+            if on_feed is not None:
+                try:
+                    on_feed(name, url, result, latency_ms, error)
+                except Exception:
+                    pass
         return agg
 
     def _ingest_capped(self, feeds, scorer, store_, cap, on_feed) -> dict:

@@ -32,6 +32,7 @@ import math
 import os
 import sys
 import time
+import urllib.error          # explicit: urllib.request only exposes it as an import side effect
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -276,13 +277,61 @@ def parse_feed(data: bytes) -> "tuple[str, list[FeedEntry]]":
 # --------------------------------------------------------------------------- #
 # Fetch + config
 # --------------------------------------------------------------------------- #
+def _feed_headers() -> dict:
+    return {"User-Agent": _USER_AGENT,
+            "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"}
+
+
 def fetch_feed(url: str, timeout: float = 15.0) -> bytes:
     """Fetch a feed's bytes (operator-configured URL; not user input)."""
-    req = urllib.request.Request(url, headers={
-        "User-Agent": _USER_AGENT,
-        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"})
+    req = urllib.request.Request(url, headers=_feed_headers())
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
+
+
+@dataclass
+class FeedFetch:
+    """One conditional fetch's result. ``not_modified`` means the origin answered 304 and ``data``
+    is empty — there is nothing to parse and nothing to ingest, which is the entire point."""
+    data: bytes = b""
+    not_modified: bool = False
+    etag: Optional[str] = None
+    last_modified: Optional[str] = None
+
+
+def fetch_feed_conditional(url: str, *, etag: Optional[str] = None,
+                           last_modified: Optional[str] = None,
+                           timeout: float = 15.0) -> FeedFetch:
+    """Fetch a feed, sending whatever validators we hold, and report what came back.
+
+    A separate function rather than parameters on :func:`fetch_feed` because that one's signature
+    is a CONTRACT: ``ingest_all``/``ingest_feed`` accept any ``fetch(url) -> bytes`` and the test
+    suite injects fakes of exactly that shape. Widening it would either break those callers or
+    grow optional parameters they must all learn about. This is the conditional path, used only
+    when the scheduler is on; everything else keeps calling the plain one.
+
+    ``urllib`` raises ``HTTPError`` on 304 rather than returning it, which is the trap here — a
+    naive port treats the cheapest possible answer as a failure, marks the feed unhealthy, and
+    backs off the one feed that is behaving perfectly. It is caught and translated."""
+    headers = dict(_feed_headers())
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return FeedFetch(data=resp.read(), not_modified=False,
+                             etag=resp.headers.get("ETag"),
+                             last_modified=resp.headers.get("Last-Modified"))
+    except urllib.error.HTTPError as e:
+        if e.code == 304:
+            # Not an error: the feed is unchanged. Keep the validators we sent — a 304 need not
+            # repeat them, and dropping them here would make every subsequent poll unconditional.
+            return FeedFetch(data=b"", not_modified=True,
+                             etag=e.headers.get("ETag") or etag,
+                             last_modified=e.headers.get("Last-Modified") or last_modified)
+        raise
 
 
 def load_feeds(spec: "str | None" = None) -> "list[tuple[Optional[str], str]]":
