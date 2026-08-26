@@ -1776,6 +1776,105 @@ the real number, not the optimistic one.**
 `6abc.com` passes gate 5 at **exactly 80%**, the bar itself. Four of its twenty items sit off-host.
 It is an admission, not a comfortable one, and worth knowing before anything is promoted.
 
+## `CrawlAdapter` wired into the poller — the first change that lets crawled content reach the catalog
+
+Everything before this was read-only probing. This crosses into ingestion, so the properties below
+are **enforced rather than documented**.
+
+`CrawlAdapter` already existed and already inherited the source chassis — `poll_once` does quota →
+`ingest_entries` → health identically to every other adapter. What was missing was the wiring and,
+much more importantly, the guards.
+
+### The trap this nearly shipped
+
+`CrawlAdapter.enabled()` read `config.enabled` and nothing else, and
+`examples/data/crawler_publishers.json` shipped **six publishers marked enabled** — BBC, NPR, The
+Guardian, Associated Press, HuffPost, Texas Tribune — whose URLs and `article_pattern`s
+`CRAWLER_DESIGN.md` calls *"unverified guesses"*. They were inert while nothing registered the
+adapter. Registering it makes `enabled: true` live.
+
+Measured before fixing: with the flag on, **6 crawl adapters registered and all 6 were enabled**.
+They are now `enabled: false`, and the two the live probe actually verified are in their place.
+
+### Two switches, and the second is the one that matters
+
+| gate | what it stops |
+|---|---|
+| `RWE_CRAWL_ENABLED`, default **off** | deploying the wiring changes nothing. The keyed adapters need an API key before they can act — an accidental safety catch a crawl config, being just a file, has no equivalent of |
+| **shadow membership**, enforced in `enabled()` | `corpus.DEFAULT_TIER` is `"A"`, so an outlet nobody put in `RWE_CORPUS_SHADOW` does not land somewhere neutral: its articles go **straight into the clustering corpus and start voting in stories** |
+
+The second is the load-bearing one. Stage 3 says a discovered source is `tier = 'shadow'` — stored,
+deduped, attributed, surfaced nowhere — for a minimum of 14 days, and M8 measures it there before M9
+proposes anything. **Promotion by omission is the one failure this change could cause that nobody
+would notice** until a crawled outlet turned up in a blindspot claim, so `enabled()` refuses rather
+than the docs asking nicely. A publisher enabled but unshadowed reports why, because silently not
+running is indistinguishable from a broken config.
+
+Verified: flag on and no shadow → **zero adapters run**, both naming the fix. Flag on and
+`RWE_CORPUS_SHADOW=kait8.com,kwch.com` → both run.
+
+### What the config says, and what it deliberately does not
+
+`article_pattern` is **empty**, and that is a stated position rather than an oversight.
+`CRAWLER_DESIGN.md`'s sharpest warning is that a pattern matching 0% of discovered URLs makes the
+crawler ingest nothing while every gate reports healthy — so an **invented** pattern is worse than
+none. We have not observed these publishers' article URL shape: the probe reported 100% on-host and
+printed no samples. Empty means no pattern filter, which is defensible for a *news* sitemap (it
+contains articles by specification) and is bounded by `max_age_days: 7` and `max_urls: 60`.
+
+The lint still says so, and its wording was corrected on the way: it cited *section* discovery for
+every publisher including sitemap-only ones, and a warning that does not describe your config is one
+people learn to skip.
+
+`unknown_publisher` also fires for both, and that one is **correct and expected** — these outlets
+are unrated, which is precisely why they go to shadow rather than to Tier A.
+
+The configured source is the **declared index**, not the child the probe descended to: the index is
+what robots.txt advertises and is therefore the stable address, and the ladder descends on its own.
+
+### Still no article bodies
+
+`discover_sitemap` yields `url`, `title`, `published_at` and `body=None`. Verified directly, and
+pinned by a test, because it is the constraint the whole design rests on.
+
+### Three existing invariants had to be amended, and why that is not weakening them
+
+The wiring failed three tests that all encoded the same assumption: **every configured publisher is
+hand-picked and registry-known, and crawled content goes to Tier A.** M7 inverts that — it discovers
+*unrated* outlets and routes them to shadow.
+
+The load-bearing one read *"a name the registry does not know ingests with NO lean — the crawler
+would be adding volume the product cannot describe."* That is **true for Tier A and false for
+shadow**: a shadow article reaches no reader surface and no story, so it describes nothing to
+anyone. It is evidence for M8 and nothing else.
+
+**The protection is relocated, not removed.** It used to live in "the config may only contain rated
+publishers", enforced by a test's vigilance. It now lives in `CrawlAdapter.enabled()` refusing to
+run any publisher outside `RWE_CORPUS_SHADOW` — enforced by construction. The amended tests say
+*resolves **or** is shadow-bound*, and lint output is permitted only for shadow-bound publishers and
+only for the two expected codes.
+
+`article_pattern` is likewise now required where discovery is an **HTML index** — a section page
+links to tags, authors and the shop — and optional for a news sitemap, which contains articles by
+specification.
+
+**The deeper point: shadow is the mechanism for exactly this uncertainty.** The lane exists to
+ingest something we are not sure about, measure it for 14 days, and decide. Declining to enable a
+verified source because one attribute is unobserved would defeat the machinery built for that.
+
+### Closing the loop on the unobserved pattern
+
+The probe now prints and records up to three **sample article URLs** per admitted host, so an
+`article_pattern` can be written from observation rather than guessed. That is the path from
+"acceptable in shadow" to "verified", and it needs no new crawling — the URLs are already in the
+discovery document the probe fetched.
+
+### Failure isolation
+
+A malformed or missing crawl config returns an empty adapter list rather than raising. A supplement
+that can break the thing it supplements is worse than one that is absent, and the RSS poller must
+survive a bad crawl config.
+
 ## What M7 does NOT do
 
 It does not ingest. `--probe` reads `robots.txt`, one landing page and at most one feed per host, and

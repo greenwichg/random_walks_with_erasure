@@ -186,8 +186,15 @@ def lint_config(configs) -> "list[dict]":
                                  "detail": f"{s.url} is on neither domains nor discovery_domains "
                                            f"{list(fetchable)} — usually a typo"})
         if not c.article_pattern:
+            # Name the kinds ACTUALLY configured. The old wording cited section discovery for every
+            # publisher, including sitemap-only ones that configure no section source — and a
+            # warning that does not describe your config is a warning people learn to skip.
+            kinds = sorted({s.kind for s in c.sources}) or ["(none)"]
+            risk = ("an HTML index links to tags, authors and the shop" if "section" in kinds
+                    else "a sitemap may list section and tag pages alongside articles")
             problems.append({"code": "no_article_pattern", "publisher": c.publisher,
-                             "detail": "section discovery would accept tag/author/index pages"})
+                             "detail": f"no pattern, and {'/'.join(kinds)} discovery is configured "
+                                       f"— {risk}"})
         else:
             try:
                 re.compile(c.article_pattern)
@@ -710,7 +717,45 @@ class CrawlAdapter(sources.SourceAdapter):
         return f"crawl://{self.config.publisher.lower().replace(' ', '-')}"
 
     def enabled(self) -> bool:
-        return bool(self.config.enabled)
+        """Both switches must be on: the global flag **and** this publisher's own.
+
+        ``RWE_CRAWL_ENABLED`` defaults to OFF, so registering this adapter changes nothing until an
+        operator turns it on. That matters more here than for the keyed adapters: those need an API
+        key to do anything, which is an accidental safety catch this has no equivalent of — a crawl
+        config is just a file, and the file already contains six publishers whose URLs
+        `CRAWLER_DESIGN.md` calls unverified guesses. Without the global flag, wiring this into the
+        registry would have started crawling the BBC, NPR, AP and the Guardian on paths nobody has
+        ever checked."""
+        if not (sources._bool_env("RWE_CRAWL_ENABLED") and bool(self.config.enabled)):
+            return False
+        return self.in_shadow()
+
+    def in_shadow(self) -> bool:
+        """Whether this publisher is in the shadow lane — **a hard precondition for crawling it.**
+
+        `corpus.DEFAULT_TIER` is ``"A"``. So an outlet we crawl that nobody put in
+        ``RWE_CORPUS_SHADOW`` does not land somewhere neutral: its articles go straight into the
+        clustering corpus and start forming and voting in stories. That is *promotion*, arrived at
+        by omission rather than by decision.
+
+        The roadmap's Stage 3 says a discovered source is ``tier = 'shadow'`` — stored, deduped,
+        attributed, surfaced nowhere — for a minimum of 14 days, and M8 measures it there before M9
+        proposes anything. Enforcing that here rather than documenting it means the wiring cannot
+        promote a source by accident, which is the one failure this change could cause that nobody
+        would notice until a crawled outlet turned up in a blindspot claim."""
+        import corpus
+        host = self.config.domains[0] if self.config.domains else self.config.publisher
+        return corpus.is_shadow(self.config.publisher, f"https://{host}/")
+
+    def shadow_warning(self) -> "str | None":
+        """Why this publisher is configured but not crawling, when the reason is the shadow lane."""
+        if not (sources._bool_env("RWE_CRAWL_ENABLED") and bool(self.config.enabled)):
+            return None
+        if self.in_shadow():
+            return None
+        return (f"{self.config.publisher} is enabled for crawling but is NOT in RWE_CORPUS_SHADOW. "
+                f"Tier A is the default, so crawling it would put its articles straight into the "
+                f"clustering corpus — promotion by omission. Add it to RWE_CORPUS_SHADOW first.")
 
     def interval(self) -> float:
         return sources._float_env("RWE_CRAWL_INTERVAL", 900.0)

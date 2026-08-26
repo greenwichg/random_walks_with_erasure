@@ -70,6 +70,16 @@ services:
       # switch missing from this block cannot be turned off in an incident.
       RWE_ROBOTS_ENFORCE: ${RWE_ROBOTS_ENFORCE:-}
       RWE_ROBOTS_STRICT: ${RWE_ROBOTS_STRICT:-}
+      # The publisher CRAWLER, wired into the poller as a SourceAdapter. OFF by default: unlike the
+      # keyed adapters, which need an API key before they can do anything, a crawl config is just a
+      # file — so the flag is the safety catch. Turning it on still crawls nothing unless a
+      # publisher is BOTH enabled in examples/data/crawler_publishers.json AND named in
+      # RWE_CORPUS_SHADOW: Tier A is the default tier, so crawling an unshadowed outlet would put
+      # its articles straight into the clustering corpus, which is promotion by omission.
+      #   RWE_CRAWL_ENABLED=1   turn the crawler on
+      #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
+      RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
+      RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
       # Cheap corpus change-detection (P1-1) — ON. When the catalog fingerprint is unchanged since
       # the last candidate build, the refresh check skips its full-catalog load (measured 4,495 ms
       # at 47k rows, 2026-08-01 — a cost that otherwise grows with catalog age forever, since
@@ -734,6 +744,16 @@ services:
       # switch missing from this block cannot be turned off in an incident.
       RWE_ROBOTS_ENFORCE: ${RWE_ROBOTS_ENFORCE:-}
       RWE_ROBOTS_STRICT: ${RWE_ROBOTS_STRICT:-}
+      # The publisher CRAWLER, wired into the poller as a SourceAdapter. OFF by default: unlike the
+      # keyed adapters, which need an API key before they can do anything, a crawl config is just a
+      # file — so the flag is the safety catch. Turning it on still crawls nothing unless a
+      # publisher is BOTH enabled in examples/data/crawler_publishers.json AND named in
+      # RWE_CORPUS_SHADOW: Tier A is the default tier, so crawling an unshadowed outlet would put
+      # its articles straight into the clustering corpus, which is promotion by omission.
+      #   RWE_CRAWL_ENABLED=1   turn the crawler on
+      #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
+      RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
+      RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
       # The same block list the api poller uses — the seeding run must not import what the poller
       # would refuse. See the comment on the api service.
       RWE_CATALOG_BLOCKED_OUTLETS: ${RWE_CATALOG_BLOCKED_OUTLETS:-}

@@ -180,6 +180,8 @@ def main(argv=None) -> int:
                   + (f" — {g.detail}" if g.detail else ""))
         if r["feed"]:
             print(f"      discovered via  : {r['discoveredVia']} — {r['feed']}")
+        for u in r["samples"]:
+            print(f"      sample article  : {u}")
         for sm in r["sitemaps"]:
             print(f"      sitemap declared: {sm}")
 
@@ -202,6 +204,7 @@ def main(argv=None) -> int:
                        "hosts": [{"host": r["host"], "verdict": r["verdict"],
                                   "requests": r["requests"], "feed": r["feed"],
                                   "discoveredVia": r["discoveredVia"],
+                                  "samples": r["samples"],
                                   "sitemaps": r["sitemaps"],
                                   "gates": [{"number": g.number, "name": g.name,
                                              "status": g.status, "detail": g.detail}

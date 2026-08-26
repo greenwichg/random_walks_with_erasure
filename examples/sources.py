@@ -1365,9 +1365,31 @@ def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
     reg.register(CurrentsAdapter())
     reg.register(GoogleNewsAdapter())
     reg.register(GDELTAdapter())
+    for adapter in _crawl_adapters():
+        reg.register(adapter)
     reg.register(GDELTGKGEnricher())   # enrichment last: it annotates articles the others ingested
     reg.register(PublisherMetadataEnricher())   # …and this annotates the publishers behind them
     return reg
+
+
+def _crawl_adapters() -> list:
+    """One :class:`crawler.CrawlAdapter` per configured publisher, or none.
+
+    **Imported lazily on purpose**: ``crawler`` imports this module, so a top-level import here is a
+    cycle. The same reason `store` reaches for `corpus` inside a method.
+
+    Every failure mode returns an empty list rather than raising. A malformed or missing crawl
+    config must not take the RSS poller down with it — the crawler is a supplement to ingestion, and
+    a supplement that can break the thing it supplements is worse than one that is absent. Each
+    adapter is still gated on ``RWE_CRAWL_ENABLED``, which defaults to OFF, so registering them
+    changes nothing until an operator says so."""
+    if not _bool_env("RWE_CRAWL_ENABLED"):
+        return []
+    try:
+        import crawler
+        return [crawler.CrawlAdapter(c) for c in crawler.load_config()]
+    except Exception:
+        return []
 
 
 def config_warnings(registry: SourceRegistry) -> list:

@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Publisher crawl configuration — data, not code. Adding a publisher is an edit here.",
+    "Publisher crawl configuration \u2014 data, not code. Adding a publisher is an edit here.",
     "",
     "`publisher` MUST be the outlet registry's canonical name: it becomes FeedEntry.publisher_hint,",
     "which is how the article resolves to a lean. A name the registry does not know ingests with no",
@@ -14,15 +14,15 @@
     "ingesting a newsroom's tag pages, author pages, and shop.",
     "",
     "These five are the POC set: three large publishers with different discovery shapes (BBC, NPR,",
-    "The Guardian), one wire (AP, whose public RSS is thin — the case the sitemap rung exists for),",
+    "The Guardian), one wire (AP, whose public RSS is thin \u2014 the case the sitemap rung exists for),",
     "and one small non-profit newsroom (Texas Tribune) to check the framework is not tuned only for",
     "publishers with big infrastructure.",
     "",
     "Verified against the live sites on 2026-08-15 with verify_crawler_config.py: BBC, The Guardian,",
     "Associated Press and Texas Tribune all allow our user-agent; NPR's robots.txt timed out and is",
-    "therefore refused by the fail-closed gate (unconfirmed — retry before concluding anything).",
+    "therefore refused by the fail-closed gate (unconfirmed \u2014 retry before concluding anything).",
     "",
-    "BBC's article_pattern was WRONG on the first live run — 3% match. It assumed the legacy",
+    "BBC's article_pattern was WRONG on the first live run \u2014 3% match. It assumed the legacy",
     "/news/world-europe-12345678 form, but BBC now publishes /news/articles/<id> (e.g.",
     "/news/articles/c9982znvyk4o). Both forms are live, so the pattern accepts both. A pattern that",
     "matches almost nothing is the crawler's quietest failure: every gate reports healthy and it",
@@ -45,7 +45,7 @@
     "    but it is an alias we were never promised; the declared path is the one the publisher",
     "    commits to.",
     "",
-    "HuffPost's ToS could not be located automatically (none of the seven conventional paths hit) —",
+    "HuffPost's ToS could not be located automatically (none of the seven conventional paths hit) \u2014",
     "it still needs reading by hand, and BuzzFeed's terms may be the operative ones.",
     "",
     "Nothing here is wired into a poller: every publisher in this file is plan-mode only."
@@ -53,78 +53,173 @@
   "publishers": [
     {
       "publisher": "BBC",
-      "domains": ["bbc.co.uk", "bbc.com"],
-      "discovery_domains": ["bbci.co.uk"],
+      "domains": [
+        "bbc.co.uk",
+        "bbc.com"
+      ],
+      "discovery_domains": [
+        "bbci.co.uk"
+      ],
       "sources": [
-        {"kind": "rss", "url": "https://feeds.bbci.co.uk/news/rss.xml"},
-        {"kind": "sitemap", "url": "https://www.bbc.co.uk/sitemaps/https-index-uk-news.xml"},
-        {"kind": "section", "url": "https://www.bbc.co.uk/news"}
+        {
+          "kind": "rss",
+          "url": "https://feeds.bbci.co.uk/news/rss.xml"
+        },
+        {
+          "kind": "sitemap",
+          "url": "https://www.bbc.co.uk/sitemaps/https-index-uk-news.xml"
+        },
+        {
+          "kind": "section",
+          "url": "https://www.bbc.co.uk/news"
+        }
       ],
       "article_pattern": "/news/(articles/[a-z0-9]{8,}|[a-z-]+-\\d{6,})",
       "max_urls": 60,
       "min_interval": 2.0,
-      "enabled": true
+      "enabled": false
     },
     {
       "publisher": "NPR",
-      "domains": ["npr.org"],
+      "domains": [
+        "npr.org"
+      ],
       "sources": [
-        {"kind": "rss", "url": "https://feeds.npr.org/1001/rss.xml"},
-        {"kind": "sitemap", "url": "https://www.npr.org/sitemaps/news-sitemap.xml"},
-        {"kind": "section", "url": "https://www.npr.org/sections/news/"}
+        {
+          "kind": "rss",
+          "url": "https://feeds.npr.org/1001/rss.xml"
+        },
+        {
+          "kind": "sitemap",
+          "url": "https://www.npr.org/sitemaps/news-sitemap.xml"
+        },
+        {
+          "kind": "section",
+          "url": "https://www.npr.org/sections/news/"
+        }
       ],
       "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
       "max_urls": 60,
       "min_interval": 2.0,
-      "enabled": true
+      "enabled": false
     },
     {
       "publisher": "The Guardian",
-      "domains": ["theguardian.com"],
+      "domains": [
+        "theguardian.com"
+      ],
       "sources": [
-        {"kind": "rss", "url": "https://www.theguardian.com/world/rss"},
-        {"kind": "sitemap", "url": "https://www.theguardian.com/sitemaps/news.xml"},
-        {"kind": "section", "url": "https://www.theguardian.com/world"}
+        {
+          "kind": "rss",
+          "url": "https://www.theguardian.com/world/rss"
+        },
+        {
+          "kind": "sitemap",
+          "url": "https://www.theguardian.com/sitemaps/news.xml"
+        },
+        {
+          "kind": "section",
+          "url": "https://www.theguardian.com/world"
+        }
       ],
       "article_pattern": "/\\d{4}/[a-z]{3}/\\d{2}/",
       "max_urls": 60,
       "min_interval": 2.0,
-      "enabled": true
+      "enabled": false
     },
     {
       "publisher": "Associated Press",
-      "domains": ["apnews.com"],
+      "domains": [
+        "apnews.com"
+      ],
       "sources": [
-        {"kind": "sitemap", "url": "https://apnews.com/news-sitemap-content.xml"},
-        {"kind": "section", "url": "https://apnews.com/hub/world-news"}
+        {
+          "kind": "sitemap",
+          "url": "https://apnews.com/news-sitemap-content.xml"
+        },
+        {
+          "kind": "section",
+          "url": "https://apnews.com/hub/world-news"
+        }
       ],
       "article_pattern": "/article/[a-z0-9-]+",
       "max_urls": 40,
       "min_interval": 3.0,
-      "enabled": true
+      "enabled": false
     },
     {
       "publisher": "HuffPost",
-      "domains": ["huffpost.com", "huffingtonpost.com"],
+      "domains": [
+        "huffpost.com",
+        "huffingtonpost.com"
+      ],
       "sources": [
-        {"kind": "sitemap", "url": "https://www.huffpost.com/static-assets/isolated/huffpostsitemapgeneratorjob-prod-public/us/sitemaps/sitemap-google-news.xml"},
-        {"kind": "section", "url": "https://www.huffpost.com/news"}
+        {
+          "kind": "sitemap",
+          "url": "https://www.huffpost.com/static-assets/isolated/huffpostsitemapgeneratorjob-prod-public/us/sitemaps/sitemap-google-news.xml"
+        },
+        {
+          "kind": "section",
+          "url": "https://www.huffpost.com/news"
+        }
       ],
       "article_pattern": "/entry/[a-z0-9][a-z0-9-]{7,}",
+      "max_urls": 60,
+      "min_interval": 2.0,
+      "enabled": false
+    },
+    {
+      "publisher": "Texas Tribune",
+      "domains": [
+        "texastribune.org"
+      ],
+      "sources": [
+        {
+          "kind": "rss",
+          "url": "https://feeds.texastribune.org/feeds/main/"
+        },
+        {
+          "kind": "section",
+          "url": "https://www.texastribune.org/"
+        }
+      ],
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
+      "max_urls": 30,
+      "min_interval": 3.0,
+      "enabled": false
+    },
+    {
+      "publisher": "kait8.com",
+      "domains": [
+        "kait8.com"
+      ],
+      "sources": [
+        {
+          "kind": "sitemap",
+          "url": "https://www.kait8.com/arc/outboundfeeds/news-sitemap-index/category/news/?outputType=xml"
+        }
+      ],
+      "article_pattern": "",
+      "max_age_days": 7,
       "max_urls": 60,
       "min_interval": 2.0,
       "enabled": true
     },
     {
-      "publisher": "Texas Tribune",
-      "domains": ["texastribune.org"],
-      "sources": [
-        {"kind": "rss", "url": "https://feeds.texastribune.org/feeds/main/"},
-        {"kind": "section", "url": "https://www.texastribune.org/"}
+      "publisher": "kwch.com",
+      "domains": [
+        "kwch.com"
       ],
-      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
-      "max_urls": 30,
-      "min_interval": 3.0,
+      "sources": [
+        {
+          "kind": "sitemap",
+          "url": "https://www.kwch.com/arc/outboundfeeds/news-sitemap-index/category/news/?outputType=xml"
+        }
+      ],
+      "article_pattern": "",
+      "max_age_days": 7,
+      "max_urls": 60,
+      "min_interval": 2.0,
       "enabled": true
     }
   ]

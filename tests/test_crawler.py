@@ -745,17 +745,61 @@ def test_shadow_planning_still_writes_nothing_to_the_catalog():
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
-def test_the_shipped_config_is_clean():
-    assert crawler.lint_config(crawler.load_config()) == []
+#: Lint codes that are the EXPECTED state for a shadow-lane candidate rather than a defect.
+#: `unknown_publisher` is why the outlet is in shadow at all — it is unrated, so M8 measures it for
+#: 14 days before M9 proposes anything. `no_article_pattern` is a stated, bounded position: an
+#: INVENTED pattern is worse than none (a pattern matching 0% of discovered URLs makes the crawler
+#: ingest nothing while every gate reports healthy), and a news sitemap contains articles by
+#: specification.
+_SHADOW_EXPECTED = {"unknown_publisher", "no_article_pattern"}
 
 
-def test_every_configured_publisher_resolves_to_a_registry_canonical_name():
-    """A name the registry does not know ingests with NO lean — the crawler would be adding volume
-    the product cannot describe."""
+def _shadow_bound(cfg) -> bool:
+    import corpus
+    host = cfg.domains[0] if cfg.domains else cfg.publisher
+    return corpus.is_shadow(cfg.publisher, f"https://{host}/")
+
+
+def test_the_shipped_config_is_clean(monkeypatch):
+    """Clean for registry publishers; for shadow-bound ones, only the two expected codes.
+
+    Amended when `CrawlAdapter` was wired into the poller. The original bar assumed every configured
+    publisher was hand-picked and registry-known. M7 discovers UNRATED outlets and routes them to
+    shadow, which is the whole point of the lane — so "no lint output at all" would now forbid the
+    use case the milestone exists for."""
+    monkeypatch.setenv("RWE_CORPUS_SHADOW", "kait8.com,kwch.com")
+    import corpus
+    corpus._index.cache_clear()
+    try:
+        for problem in crawler.lint_config(crawler.load_config()):
+            cfg = next(c for c in crawler.load_config() if c.publisher == problem["publisher"])
+            assert _shadow_bound(cfg) and problem["code"] in _SHADOW_EXPECTED, problem
+    finally:
+        corpus._index.cache_clear()
+
+
+def test_every_configured_publisher_resolves_to_a_registry_canonical_name(monkeypatch):
+    """Resolves to a registry canonical name **or is bound for the shadow lane.**
+
+    The original reasoning — "a name the registry does not know ingests with NO lean, adding volume
+    the product cannot describe" — is true for Tier A and **false for shadow**: a shadow article
+    reaches no reader surface and no story (`corpus.sql_exclusions` covers shadow, and
+    `store.search_feed_articles` excludes it by default), so it describes nothing to anyone. It is
+    evidence for M8 and nothing else.
+
+    The protection is not weakened, it is relocated: `CrawlAdapter.enabled()` now REFUSES to run a
+    publisher that is not in `RWE_CORPUS_SHADOW`, so an unrated source cannot reach Tier A by
+    construction rather than by this test's vigilance."""
+    import corpus
     import outlet_registry
+    monkeypatch.setenv("RWE_CORPUS_SHADOW", "kait8.com,kwch.com")
+    corpus._index.cache_clear()
     reg = outlet_registry.default_registry()
-    for c in crawler.load_config():
-        assert reg.canonical(c.publisher) == c.publisher, c.publisher
+    try:
+        for c in crawler.load_config():
+            assert reg.canonical(c.publisher) == c.publisher or _shadow_bound(c), c.publisher
+    finally:
+        corpus._index.cache_clear()
 
 
 def test_the_poc_covers_at_least_three_publishers_with_more_than_one_discovery_shape():

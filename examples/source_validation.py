@@ -302,7 +302,8 @@ def validate(cand: dict, *, fetch: Optional[Callable[[str], str]] = None,
     sitemaps = (_declared_sitemaps(robots, host)
                 if (fetch is not None and robots is not None) else [])
     return {"host": host, "gates": gates, "verdict": verdict, "feed": feed,
-            "discoveredVia": found.get("kind", ""), "sitemaps": sitemaps, "requests": spent}
+            "discoveredVia": found.get("kind", ""), "samples": found.get("samples", []),
+            "sitemaps": sitemaps, "requests": spent}
 
 
 def _probe(host, cand, gates, fetch, robots, limiter, found: dict) -> tuple:
@@ -383,7 +384,12 @@ def _probe(host, cand, gates, fetch, robots, limiter, found: dict) -> tuple:
         return gates, spent
 
     kind = "feed" if source_url in urls else "news sitemap"
-    found.update(url=source_url, kind=kind)     # structured, not scraped back out of the detail
+    # Sample article URLs, so an `article_pattern` can be written from OBSERVATION rather than
+    # guessed. `CRAWLER_DESIGN.md`'s sharpest warning is that a pattern matching 0% of discovered
+    # URLs makes the crawler ingest nothing while every gate reports healthy — and the only way to
+    # avoid inventing one is to have looked at real URLs first. Three is enough to see the shape.
+    found.update(url=source_url, kind=kind,
+                 samples=[e.url for e in entries[:3] if getattr(e, "url", "")])
     gates.append(Gate(2, "feed or news sitemap discoverable", PASS, f"{source_url} ({kind})"))
     n = len(entries)
     gates.append(Gate(3, f"feed carries >= {MIN_FEED_ITEMS} items",
