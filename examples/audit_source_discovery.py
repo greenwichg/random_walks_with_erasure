@@ -212,8 +212,15 @@ def main(argv=None) -> int:
     admitted = [r for r in results if r["verdict"] == "ADMIT"]
     print(f"\n=== what to do with the {len(admitted)} ADMIT verdicts ===")
     print("  Nothing automatic. M7 emits a worklist, not an ingestion. Admitting a source means")
-    print("  adding its feed and putting the outlet in RWE_CORPUS_SHADOW, where M8 measures it for")
-    print("  14 days and M9 decides — and M9 emits config for a human rather than applying it.")
+    print("  wiring its discovery document and putting the outlet in RWE_CORPUS_SHADOW, where M8")
+    print("  measures it for 14 days and M9 decides — and M9 emits config for a human, not applies.")
+    if any(r["discoveredVia"] == "news sitemap" for r in admitted):
+        print()
+        print("  *** A NEWS SITEMAP IS NOT AN RSS FEED. Putting one in RWE_RSS_FEEDS ingests")
+        print("      NOTHING: a <urlset> has no <channel> and no <item>, so it parsed to zero")
+        print("      entries with no error and reported healthy forever. parse_feed now rejects")
+        print("      one loudly. Sitemap sources need the crawler ladder (crawler.py), which is")
+        print("      not wired into the poller — that is the next thing this worklist needs.")
     for r in admitted:
         print(f"    {r['host']:<34} {r['discoveredVia']:<13} {r['feed']}")
     return 0

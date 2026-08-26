@@ -121,6 +121,39 @@ def test_an_items_own_language_is_never_read_as_the_feeds():
     assert entries and entries[0].language is None
 
 
+@pytest.mark.parametrize("root", ["urlset", "sitemapindex"])
+def test_a_sitemap_is_rejected_loudly_rather_than_ingesting_nothing(root):
+    """**The trap M7's own worklist pointed into.** Discovery now ADMITs sources whose discovery
+    document is a news sitemap — kait8.com and kwch.com, and the Arc XP class generally — and the
+    obvious next step is to paste that URL into `rss_feeds.txt`.
+
+    That silently ingested NOTHING. A `<urlset>` has no `<channel>` and no `<item>`, so `parse_feed`
+    returned zero entries, raised no error, and the feed reported healthy forever — the same
+    reports-healthy-does-nothing shape this audit series keeps finding.
+
+    `ingest_all` catches per-feed errors, so a loud rejection costs one feed rather than the run."""
+    body = (f"<{root} xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
+            f"<url><loc>https://x.example/a</loc></url></{root}>").encode()
+    with pytest.raises(ValueError, match="sitemap, not an RSS/Atom feed"):
+        rss.parse_feed(body)
+
+
+def test_the_rejection_names_where_a_sitemap_source_actually_goes():
+    """An error that only says "no" leaves the reader where they started. This one names the path
+    that does handle sitemaps, because the source is legitimate — it is the destination that was
+    wrong."""
+    body = b"<urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'></urlset>"
+    with pytest.raises(ValueError, match="crawler.discover_sitemap"):
+        rss.parse_feed(body)
+
+
+def test_real_feeds_are_unaffected_by_the_sitemap_check():
+    """The check keys on the ROOT element, so nothing that is genuinely a feed can trip it."""
+    for feed in (RSS2, ATOM):
+        _title, entries = rss.parse_feed(feed)
+        assert entries
+
+
 def test_a_repoll_backfills_language_onto_a_row_that_had_none(tmp_path):
     """**Why the fix is not forward-only** — a correction to what was first claimed about it.
 

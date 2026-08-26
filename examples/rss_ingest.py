@@ -306,6 +306,16 @@ def parse_feed(data: bytes) -> "tuple[str, list[FeedEntry]]":
     except ET.ParseError as e:
         raise ValueError(f"invalid feed XML: {e}") from e
     root_name = _local(root.tag)
+    # A SITEMAP IS NOT A FEED, and saying so loudly is the point. M7's discovery now ADMITs sources
+    # whose discovery document is a news sitemap (kait8.com, kwch.com and the Arc XP class), and the
+    # obvious next step — pasting that URL into `rss_feeds.txt` — silently ingests NOTHING: a
+    # `<urlset>` has no `<channel>` and no `<item>`, so this function returned zero entries, no
+    # error, and the feed reported healthy forever. Sitemaps are ingested through `crawler.py`'s
+    # ladder, which parses them with `discover_sitemap`; they are not interchangeable here.
+    if root_name in ("urlset", "sitemapindex"):
+        raise ValueError(
+            f"this is a <{root_name}> sitemap, not an RSS/Atom feed — sitemap sources are ingested "
+            f"through the crawler ladder (crawler.discover_sitemap), not the RSS feed list")
     if root_name == "feed":                             # Atom
         title = _text(_first(root, "title"))
         entries = [_atom_entry(e) for e in _children(root, "entry")]

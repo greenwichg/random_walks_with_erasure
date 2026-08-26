@@ -1724,6 +1724,44 @@ ADMIT   via news sitemap   (4 requests)
   descended into the newest child, not the 2019 archive
 ```
 
+### The rung, verified live (2026-08-26, `0e50bf3`)
+
+```
+ADMIT  kait8.com  (4 requests)  news sitemap — 32 items, 100% dated, 100% on-host
+ADMIT  kwch.com   (4 requests)  news sitemap — 36 items, 100% dated, 100% on-host
+```
+
+**The false-negative class is closed**, verified on the exact two hosts that exposed it. And the
+descent is visible in the output: both declared `news-sitemap-index/category/news/`, and both were
+ingested from `news-sitemap/category/news/` — the *child*, reached by descending the index.
+
+Both are also **cleaner than the RSS admissions**: 100% on-host against `6abc.com`'s 80%, which sat
+exactly on the bar. The sitemap rung is not a compromise path for second-rate sources; on this
+evidence it produces better-formed evidence than the feed rung did.
+
+**US local television is reachable.** That was the open question this rung existed to settle, and it
+decides whether the 50k path goes through local news at all.
+
+### ⚠ An ADMIT verdict currently names a source with no ingestion path
+
+Acting on those two verdicts would have failed **silently**. `rss_ingest.parse_feed` on a `<urlset>`
+finds no `<channel>` and no `<item>`, so it returned **zero entries, raised no error**, and the feed
+would have reported healthy forever — the same reports-healthy-does-nothing shape this series keeps
+finding. The runner's own "what to do with the ADMIT verdicts" text said *"adding its feed"*, which
+pointed straight into it.
+
+`parse_feed` now **rejects a sitemap loudly**, naming `crawler.discover_sitemap` as the path that
+does handle one — an error that only says "no" leaves the reader where they started, and here the
+source is legitimate; it was the destination that was wrong. `ingest_all` catches per-feed errors,
+so the rejection costs one feed rather than the run.
+
+**The real gap this exposes is the next milestone, not a bug in this one.** Sitemap sources are
+ingested by `crawler.py`'s ladder, and `crawler.py` says of itself: *"This module is not wired into
+the poller. Nothing imports it from the ingestion path."* So M7 can now *find* US local television
+and cannot yet *ingest* it. Wiring `CrawlAdapter` into the poller is the staged rollout
+`CRAWLER_DESIGN.md` already describes — and it is now the thing standing between the worklist and a
+shadow cohort.
+
 ### ⚠ The cost estimate was understated, and is corrected
 
 `probe_cost` claimed **two** requests per host — `robots.txt` and one autodiscovery fetch. The live
