@@ -80,9 +80,14 @@ def main(argv=None) -> int:
     # ------------------------------------------------------------------ the language gap
     #
     # `rss_ingest.parse_feed` did not read a feed's declared <language> until it was taught to, so
-    # every RSS-ingested row carried NULL and the only values present came from GDELT/NewsAPI. The
-    # fix is FORWARD-ONLY — existing rows keep NULL — so this section is how the transition is
-    # watched rather than assumed. `rss` should climb toward the others as the window turns over.
+    # every RSS-ingested row carried NULL and the only values present came from the other adapters.
+    #
+    # The fix is NOT forward-only, which is a correction to what this section first claimed.
+    # `store.upsert_feed_article` backfills a field that was empty (`if language and not
+    # row.language`), so every re-poll fills in the articles a feed is still serving. Measured: `rss`
+    # reached 12% within minutes of the deploy, far more than new ingestion could explain. So the
+    # share should climb fast and then PLATEAU below 100% — rows that aged out of their feed before
+    # the fix landed are never revisited and keep NULL until retention removes them.
     by_type: dict = {}
     for r in rows:
         t = (r.get("sourceType") or "(none)").strip() or "(none)"
@@ -90,9 +95,12 @@ def main(argv=None) -> int:
         by_type[t] = (known + (1 if (r.get("language") or "").strip() else 0), total + 1)
     print(f"\n=== language coverage, by source ===")
     print("    RSS carried NO language at all until parse_feed was taught to read the feed's own")
-    print("    <language>. The fix is forward-only, so this is the transition to watch: `rss`")
-    print("    should climb as the window turns over. It is what gate 6 and the `?` column read,")
-    print("    and what made audit_source_cohort abandon its language analysis as too sparse.")
+    print("    <language>. A re-poll BACKFILLS an empty field, so the fix reaches articles a feed")
+    print("    is still serving — not just new ones. Expect `rss` to climb fast and then plateau")
+    print("    below 100%: rows that aged out of their feed before the fix are never revisited.")
+    print("    A source at 0% is not broken — the keyed adapters take language from the QUERY, so")
+    print("    0% means that adapter's LANGUAGE combo axis is unset. Setting it would populate the")
+    print("    field AND narrow what the API returns, which is a tradeoff, not a free win.")
     print(f"\n  {'source':<12} {'known':>8} {'rows':>8} {'share':>7}")
     for t, (known, total) in sorted(by_type.items(), key=lambda kv: -kv[1][1]):
         print(f"  {t[:12]:<12} {known:>8,} {total:>8,} {known / max(1, total):>6.0%}")

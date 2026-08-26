@@ -785,18 +785,26 @@ class CrawlAdapter(sources.SourceAdapter):
 # --------------------------------------------------------------------------- #
 # Read-only planning — what a cycle WOULD ingest, without ingesting it.
 # --------------------------------------------------------------------------- #
-def plan(configs, *, robots=None, limiter=None, fetch=None, store_=None) -> "list[dict]":
+def plan(configs, *, robots=None, limiter=None, fetch=None, store_=None,
+         now=None) -> "list[dict]":
     """Run every configured publisher's discovery and report, WITHOUT calling ``ingest_entries``.
 
     This is the POC's default mode and the reason the module is safe to run against production
     data: the only store access is the read-only ``existing_feed_urls`` lookup.
+
+    ``now`` is passed through to :class:`PublisherCrawler` so the **age filter can be pinned**. It
+    exists because a test that reached this function could not pin it and therefore ran against the
+    real clock: a fixture dated seven days before a hard-coded "recent" date passed for a week and
+    then began failing, mid-session, when the wall clock crossed the boundary. A test that expires
+    is a latent failure, and the seam was already there one layer down.
     """
     out = []
     for c in configs:
         if not c.enabled:
             out.append({"publisher": c.publisher, "skipped": "disabled"})
             continue
-        crawler = PublisherCrawler(c, robots=robots, limiter=limiter, fetch=fetch, store_=store_)
+        crawler = PublisherCrawler(c, robots=robots, limiter=limiter, fetch=fetch, store_=store_,
+                                   **({"now": now} if now is not None else {}))
         entries, report = crawler.crawl()
         row = report.as_dict()
         row["genuinelyNew"] = max(report.candidates - report.already_in_catalog, 0)

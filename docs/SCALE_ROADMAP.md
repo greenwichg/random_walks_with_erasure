@@ -1542,7 +1542,60 @@ other never reached the branch because it had only one known language). A guard 
 fail is the same defect as a gate that cannot fire.
 
 `audit_source_discovery` now prints **language coverage by source type**, so the transition is
-watched rather than assumed: `rss` should climb toward the others as the window turns over.
+watched rather than assumed.
+
+### ⚠ Measured on production, and it corrected my own claim
+
+**Run on `790736d`**, over a 27,932-article window:
+
+```
+  source          known     rows   share
+  currents        9,023    9,023   100%
+  newsdata        4,170    4,664    89%
+  gnews               0    4,562     0%
+  googlenews      3,787    3,787   100%
+  rss               389    3,327    12%
+  gdelt             989      989   100%
+  guardian          932      932   100%
+  newsapi             0      648     0%
+```
+
+**The fix is not forward-only, as I had said it was.** `rss` reached **12% within minutes** of the
+deploy — far more than new ingestion could explain at ~554 RSS rows/day. The mechanism is
+`store.upsert_feed_article`'s `if language and not row.language`: **a re-poll backfills an empty
+field**, so every poll cycle fills in the articles a feed is still serving, not just new ones.
+
+That changes the expected shape from a ramp to a curve: coverage climbs fast, then **plateaus below
+100%** — rows that aged out of their feed before the fix landed are never revisited and keep NULL
+until retention removes them. Pinned by a test.
+
+**`gnews` 0% and `newsapi` 0% are configuration, not a code gap.** Both adapters already read
+`combo.get("lang")` / `combo.get("language")` — the *query* parameters. `KeyedJSONAdapter._combos`
+omits an axis whose env list is unset, so 0% means those adapters' `LANGUAGE` combo axis is not
+configured. Setting it would populate the field **and narrow what the API returns to that language**
+— a real product tradeoff between metadata and breadth, not a free win, so it is the operator's call
+and no code change is proposed here.
+
+That is 5,210 rows, **18.7% of the window**, whose language is genuinely unknown rather than merely
+unrecorded: if the query did not pin a language, we do not know what came back, and writing the
+query's language onto the rows would be inventing data.
+
+### An unrelated test expired mid-session, and it is worth naming
+
+`test_crawler.py::test_the_summary_reports_age_drops_per_publisher_and_in_total` began failing
+between two full-suite runs an hour apart. Not caused by any change here — **verified by stashing
+the working tree and reproducing it on a clean checkout.**
+
+The fixture was dated `2026-08-19T09:00:00Z` against `max_age_days=7`, and the wall clock crossed
+`2026-08-26T09:00:00Z`. The test had been passing for a week and would have failed on every run from
+then on. The cause was one seam: `_aged_plan` pins `now=lambda: _NOW`, but this test reached
+`crawler.plan()` directly — and `plan` had no `now` parameter, so it ran against the real clock.
+
+`plan` now takes `now` and passes it through to `PublisherCrawler`, which already accepted one. **A
+test that expires is a latent failure**, and this repo already knows it — `conftest.py` widens
+`RWE_STORIES_SCAN_DAYS` to 36,500 days for precisely this reason. The crawler was the gap because it
+carries its own age filter rather than the story window's. Swept the rest of the suite for the same
+shape: the other unpinned fixtures sit ~47 days from any boundary, so this was the only live one.
 
 | bar | where | status |
 |---|---|---|

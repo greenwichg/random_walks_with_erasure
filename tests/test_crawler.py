@@ -687,7 +687,7 @@ def test_the_summary_reports_age_drops_per_publisher_and_in_total():
     body = _aged_sitemap("2026-08-19T09:00:00Z", "2026-01-05T09:00:00Z", None)
     cfg = _cfg(max_age_days=7)
     rows = crawler.plan([cfg], robots=_policy(ALLOW), limiter=_no_wait(),
-                        fetch=_fetcher({"https://www.npr.org/s.xml": body}))
+                        fetch=_fetcher({"https://www.npr.org/s.xml": body}), now=lambda: _NOW)
     out = crawler.shadow_summary(rows)
     p = out["publishers"][0]
     # three entries: one recent, one older than the limit, one with no date at all

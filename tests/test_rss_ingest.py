@@ -121,6 +121,32 @@ def test_an_items_own_language_is_never_read_as_the_feeds():
     assert entries and entries[0].language is None
 
 
+def test_a_repoll_backfills_language_onto_a_row_that_had_none(tmp_path):
+    """**Why the fix is not forward-only** — a correction to what was first claimed about it.
+
+    ``upsert_feed_article`` backfills a field that was empty (``if language and not row.language``),
+    so re-polling a feed fills in the articles it is still serving, not just new ones. Measured on
+    production: RSS language coverage reached 12% within minutes of the deploy, far more than new
+    ingestion could explain.
+
+    The consequence is a curve, not a ramp: coverage climbs fast and then plateaus below 100%,
+    because rows that aged out of their feed before the fix are never revisited."""
+    st = store.Store(f"sqlite:///{tmp_path}/backfill.db")
+    common = dict(canonical_url="x.example/a", url="https://x.example/a", publisher="X",
+                  source_publisher=None, title="t", description="", body=None,
+                  published_at="2026-08-01T00:00:00+00:00", source_feed="f", scored={},
+                  source_type="rss")
+    assert st.upsert_feed_article(**common, language=None) is True
+    assert st.list_feed_articles()[0]["language"] is None
+
+    assert st.upsert_feed_article(**common, language="vi") is False      # a re-poll
+    assert st.list_feed_articles()[0]["language"] == "vi"
+
+    # First-seen metadata is never rewritten: a later, different value does not overwrite.
+    st.upsert_feed_article(**common, language="fr")
+    assert st.list_feed_articles()[0]["language"] == "vi"
+
+
 def test_parse_atom():
     title, entries = rss.parse_feed(ATOM)
     assert title == "NYT Politics" and len(entries) == 1
