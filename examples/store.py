@@ -52,6 +52,23 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _iso_gap_days(earlier: "str | None", later: "str | None") -> "float | None":
+    """Days between two ISO timestamps, or ``None`` when either is missing or unparseable.
+
+    ``None`` rather than 0.0, so an absent previous evaluation reads as "no interval to judge"
+    rather than as "zero days apart" — the latter would hold every first sample forever."""
+    def _p(v):
+        if not v:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    a, b = _p(earlier), _p(later)
+    return None if a is None or b is None else (b - a).total_seconds() / 86400.0
+
+
 def _improvement_lifecycle_to_dict(r) -> dict:
     """One ``ImprovementLifecycle`` row → the camelCase dict the reconciler and web tier speak (RC2.3)."""
     return {"recKey": r.rec_key, "metric": r.metric, "state": r.state,
@@ -2445,17 +2462,26 @@ class Store:
                                  evidence: "dict | None" = None, at: "str | None" = None,
                                  first_observed: "str | None" = None,
                                  last_seen: "str | None" = None,
-                                 initial_state: str = "shadow") -> dict:
+                                 initial_state: str = "shadow",
+                                 min_spacing_days: float = 0.0) -> dict:
         """Record one evaluation and return the updated row. Idempotent per identity, not per run.
 
         **``streak`` is maintained here because hysteresis needs memory and a run is a fresh
-        process.** It increments while the target is unchanged and resets the moment it differs, so
-        two evaluations pointing at different states never add up to a confirmation.
+        process**, but the arithmetic itself lives in `source_lifecycle.next_streak` so there is one
+        definition rather than one here and another in the runner's dry-run path.
+
+        ``min_spacing_days`` is the interval below which a second evaluation does not count — two
+        runs minutes apart evaluate the same corpus and confirm nothing. See `next_streak`; the
+        returned row carries ``held`` when a sample was redundant. ``0.0`` disables the check, which
+        is what unit tests of the streak arithmetic itself want.
 
         ``first_observed`` is written on first sight and then only ever moved **earlier**, never
         later. That is the retention-erosion fix: `MIN(created_at)` shrinks an outlet's apparent
         history as its oldest rows are trimmed, and an observation window that shortens on its own
         would let a long-observed outlet fall back below the evaluation gate."""
+        # Local import: policy, and a store built for a migration should not pay for loading it.
+        # The same reason `search_feed_articles` reaches for `corpus` locally.
+        import source_lifecycle as _sl
         now = at or _utcnow().isoformat()
         with self.session() as s:
             row = s.get(SourceLifecycle, identity)
@@ -2465,7 +2491,9 @@ class Store:
                 s.add(row)
             elif first_observed and first_observed < (row.first_observed or first_observed):
                 row.first_observed = first_observed         # earlier only
-            row.streak = (int(row.streak or 0) + 1) if row.last_target == target else 1
+            gap = _iso_gap_days(row.last_evaluated_at, now)
+            row.streak, held = _sl.next_streak(row.last_target, row.streak, gap, target,
+                                               min_spacing_days=min_spacing_days)
             row.last_target = target
             row.last_verdict = verdict
             row.last_evaluated_at = now
@@ -2473,7 +2501,7 @@ class Store:
                 row.last_seen = last_seen
             row.evidence = json.dumps(evidence or {}, sort_keys=True, default=str)
             s.flush()
-            return self._lifecycle_row(row)
+            return dict(self._lifecycle_row(row), held=held, gapDays=gap)
 
     def apply_source_transition(self, identity: str, *, to: str, reason: str,
                                 automatic: bool = False, applied: bool = False,

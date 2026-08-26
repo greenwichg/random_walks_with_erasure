@@ -80,6 +80,10 @@ DEFAULT_CONFIRMATIONS = 2
 #: design value rather than a measured one, and :func:`plan` says so in the reason it returns.
 DEFAULT_SILENT_DAYS = 30
 
+#: ``None`` means "one full clustering window", which is what :func:`next_streak` uses when the
+#: caller does not say otherwise. See that function: the interval is derived, not chosen.
+DEFAULT_MIN_SPACING_DAYS = None
+
 #: What a human must supply before a Tier A crossing can be applied.
 NEEDS_COUNTERFACTUAL = "clustering counterfactual (audit_clustering_change.py)"
 NEEDS_LEAN = "a sourced lean — an unattributed rating is indistinguishable from a guess"
@@ -99,6 +103,36 @@ class Transition(NamedTuple):
     @property
     def is_move(self) -> bool:
         return self.frm != self.to
+
+
+def next_streak(prior_target: Optional[str], prior_streak: int, gap_days: Optional[float],
+                target: Optional[str], *, min_spacing_days: float) -> "tuple[int, bool]":
+    """``(streak, held)`` — the hysteresis arithmetic, in ONE place.
+
+    **Two evaluations taken minutes apart are one sample, not two, and the first version of M9 could
+    not tell the difference.** The cohort is the last ``scan_days`` of articles; run the harness
+    twice in the same minute and the two runs share essentially every row, so the second confirms
+    nothing. My own verification of M9 did exactly that — two ``--commit`` runs seconds apart, and
+    the transition fired. M8's production history shows the same thing from the other side: four
+    runs within the hour reported near-identical numbers, which would have counted as four
+    independent confirmations of a single measurement.
+
+    So a sample only counts once the evaluated corpus has actually turned over. ``min_spacing_days``
+    defaults to **one full clustering window**, and that number is derived rather than picked: after
+    ``scan_days`` no article is shared between the two cohorts, which is exactly the point at which
+    the samples become independent. Anything shorter would be a fraction somebody chose.
+
+    A too-soon evaluation **holds** the streak — it neither increments nor resets. Resetting would
+    be wrong (the verdict did not change; we simply learned nothing new), and incrementing is the
+    bug this exists to prevent.
+
+    Returns ``held=True`` when the sample was redundant, so a caller can say so instead of printing
+    a streak that silently failed to move."""
+    if prior_target != target:
+        return 1, False                     # a different answer is always news
+    if gap_days is not None and gap_days < min_spacing_days:
+        return max(1, int(prior_streak or 0)), True
+    return int(prior_streak or 0) + 1, False
 
 
 def crosses_tier_a(frm: str, to: str) -> bool:

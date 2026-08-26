@@ -103,6 +103,10 @@ def main(argv=None) -> int:
     ap.add_argument("--silent-days", type=int, default=sl.DEFAULT_SILENT_DAYS,
                     help="days without an article before an outlet goes dormant (default: "
                          "%(default)s)")
+    ap.add_argument("--min-spacing-days", type=float, default=None,
+                    help="days that must pass before a second evaluation counts toward the streak. "
+                         "Defaults to one clustering window, after which the two cohorts share no "
+                         "article and the samples are genuinely independent.")
     ap.add_argument("--show", type=int, default=30, help="rows to list")
     args = ap.parse_args(argv)
 
@@ -151,7 +155,14 @@ def main(argv=None) -> int:
     last_seen = st.publisher_last_seen(
         {(r.get("publisher") or "").strip().lower() for r in m["cohort"]})
     states = st.source_lifecycle_states()
-    now = story_service._window_start()          # any stable ISO; only used for the ledger stamp
+    now = store_mod._utcnow().isoformat()
+
+    # One full clustering window between samples that count. Derived, not chosen: after `scan_days`
+    # the two cohorts share no article, which is exactly where the samples become independent. Two
+    # runs minutes apart evaluate the same corpus and confirm nothing — the defect the first
+    # production run of M9 made visible, and which my own two-runs-in-a-row verification had
+    # exercised without noticing.
+    spacing = args.min_spacing_days if args.min_spacing_days is not None else scan
 
     plans, moves = [], {}
     for ident, s in sorted(table.items(), key=lambda kv: -kv[1]["articles"]):
@@ -164,17 +175,22 @@ def main(argv=None) -> int:
                    if asc._identity(reg, a) == ident} if k in last_seen]
         silent = se.days_since(max(stamps)) if stamps else None
 
+        prior = states.get(ident, {})
         if args.commit:
             row = st.record_source_evaluation(
                 ident, target=target, verdict=verdict, evidence=s,
                 first_observed=s.get("firstSeen"), last_seen=max(stamps) if stamps else None,
-                initial_state=s["tier"])
+                initial_state=s["tier"], min_spacing_days=spacing)
         else:
-            # Dry run: what the streak WOULD become, without writing it.
-            prior = states.get(ident, {})
-            row = {"state": prior.get("state", s["tier"]),
-                   "streak": (int(prior.get("streak", 0)) + 1)
-                             if prior.get("lastTarget") == target else 1}
+            # Dry run: what the streak WOULD become, without writing it. Through the same
+            # `next_streak` the store uses — a second copy of the arithmetic here is exactly the
+            # drift this series keeps correcting.
+            gap = store_mod._iso_gap_days(prior.get("lastEvaluatedAt"), now)
+            streak, held = sl.next_streak(prior.get("lastTarget"), prior.get("streak", 0), gap,
+                                          target, min_spacing_days=spacing)
+            row = {"state": prior.get("state", s["tier"]), "streak": streak, "held": held,
+                   "gapDays": gap}
+        row["known"] = bool(prior)
 
         t = sl.plan(row["state"], verdict, streak=row["streak"], days_silent=silent,
                     confirmations=args.confirmations, silent_days=args.silent_days,
@@ -186,14 +202,23 @@ def main(argv=None) -> int:
     print(f"\n=== evaluations ===")
     print("    `state` is the ledger's record; `now` is the tier the running config puts it in.")
     print("    They differ exactly when a decision has been recorded and not yet deployed — which")
-    print("    is a fact worth seeing, not an inconsistency to paper over.")
-    print(f"\n  {'arts':>6} {'obs_d':>6} {'silent':>7} {'state':>7} {'now':>5} {'streak':>7}  "
+    print("    is a fact worth seeing, not an inconsistency to paper over. A state in (parentheses)")
+    print("    is NOT from the ledger: the outlet has never been recorded, so it reads as wherever")
+    print(f"    the config puts it. `streak` needs {spacing:g}d between samples to advance — two")
+    print("    runs minutes apart evaluate the same corpus and confirm nothing.")
+    print(f"\n  {'arts':>6} {'obs_d':>6} {'silent':>7} {'state':>9} {'now':>5} {'streak':>7}  "
           f"outlet")
     for ident, s, verdict, _why, row, silent, _t in plans[:args.show]:
         obs = f"{s['observedDays']:.1f}" if s["observedDays"] is not None else "?"
         sil = f"{silent:.0f}d" if silent is not None else "?"
-        print(f"  {s['articles']:>6} {obs:>6} {sil:>7} {row['state']:>7} {s['tier']:>5} "
-              f"{row['streak']:>7}  {s['canonical'][:28]:<28} {verdict}")
+        state = row["state"] if row["known"] else f"({row['state']})"
+        streak = f"{row['streak']}{'*' if row.get('held') else ''}"
+        print(f"  {s['articles']:>6} {obs:>6} {sil:>7} {state:>9} {s['tier']:>5} "
+              f"{streak:>7}  {s['canonical'][:28]:<28} {verdict}")
+    if any(r.get("held") for _i, _s, _v, _w, r, _sl, _t in plans):
+        print(f"\n  * HELD: evaluated again less than {spacing:g}d after the last one. The streak")
+        print("    neither advanced nor reset — the verdict did not change, we simply learned")
+        print("    nothing new. Resetting would be wrong; advancing is the bug this prevents.")
 
     print(f"\n=== transitions ===")
     auto = [(i, t) for i, _s, _v, _w, _r, _sl, t in plans if t and t.is_move and t.automatic]

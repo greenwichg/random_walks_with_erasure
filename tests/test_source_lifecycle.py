@@ -95,6 +95,41 @@ def test_a_transition_waits_for_confirmations(streak, moves):
     assert t.is_move is moves
 
 
+def test_two_evaluations_minutes_apart_are_one_sample():
+    """**The defect the first production run of M9 made visible.** The cohort is the last
+    `scan_days` of articles, so two runs in the same minute share essentially every row and the
+    second confirms nothing. My own verification did exactly that — two `--commit` runs seconds
+    apart, and the transition fired. M8's history shows it from the other side: four runs within the
+    hour reported near-identical numbers, which would have counted as four confirmations."""
+    streak, held = sl.next_streak("B", 1, gap_days=0.01, target="B", min_spacing_days=6.0)
+    assert (streak, held) == (1, True)
+
+
+def test_a_sample_taken_after_a_full_window_counts():
+    """The interval is derived, not chosen: after `scan_days` the two cohorts share no article,
+    which is exactly where the samples become independent."""
+    assert sl.next_streak("B", 1, gap_days=6.0, target="B", min_spacing_days=6.0) == (2, False)
+
+
+def test_a_held_sample_does_not_RESET_the_streak_either():
+    """Resetting would be wrong — the verdict did not change, we simply learned nothing new. Only a
+    DIFFERENT answer resets."""
+    assert sl.next_streak("B", 4, gap_days=0.01, target="B", min_spacing_days=6.0) == (4, True)
+
+
+def test_a_changed_target_resets_immediately_however_soon_it_arrives():
+    """A different answer is always news. Spacing governs corroboration, not contradiction — an
+    outlet that just flipped to REJECT must not keep a promotion streak because the sample was
+    early."""
+    assert sl.next_streak("B", 4, gap_days=0.01, target="shadow", min_spacing_days=6.0) == (1, False)
+
+
+def test_a_first_evaluation_is_never_held():
+    """No previous evaluation means no interval to judge. Treating that as "zero days apart" would
+    hold every first sample forever and the streak could never start."""
+    assert sl.next_streak(None, 0, gap_days=None, target="B", min_spacing_days=6.0) == (1, False)
+
+
 def test_an_unconfirmed_transition_says_what_would_unblock_it():
     """A blocked transition that only refuses is an unhelpful instrument; it must say how many more
     agreeing evaluations it needs."""

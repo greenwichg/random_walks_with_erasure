@@ -1167,6 +1167,50 @@ The default of 2 is the smallest value that means anything, and it is the argume
 corroboration. It costs nothing where the evidence is stable, and M8's production verdicts were
 identical across four consecutive runs.
 
+## ⚠ The first production run found the flaw in that argument
+
+**Run on `3dcbe8b`, `--as-if "sportskeeda.com"`.** The output was exactly as designed — `WAITING` at
+1 of 2, empty config diff, a Tier A outlet so nothing could move automatically. What it made visible
+is that **the streak advances per committed evaluation, not per independent sample.**
+
+The cohort is the last `scan_days` of articles. Run the harness twice in the same minute and the two
+runs share essentially every row, so the second confirms nothing — yet it would have incremented the
+streak. **My own end-to-end verification of M9 did precisely that**: two `--commit` runs seconds
+apart, and the transition fired. M8's production history shows it from the other side — four runs
+within the hour reporting near-identical numbers, which would have counted as four confirmations of
+a single measurement.
+
+So "one witness is an anecdote, two is corroboration" was right, and my implementation was counting
+the *same* witness twice.
+
+**The fix, and the interval is derived rather than picked.** `next_streak` requires
+`min_spacing_days` between samples that count, defaulting to **one full clustering window**: after
+`scan_days` the two cohorts share no article, which is exactly the point at which the samples become
+independent. Anything shorter would be a fraction somebody chose.
+
+A too-soon evaluation **holds** the streak — neither incrementing nor resetting. Resetting would be
+wrong (the verdict did not change; we simply learned nothing new), and incrementing is the bug. The
+run marks it, so a streak that failed to move never does so silently:
+
+```
+  arts  obs_d  silent     state   now  streak  outlet
+    12   40.0      0d    shadow shadow      1*  vertical.example   PROMOTE TO TIER B
+
+  * HELD: evaluated again less than 6d after the last one. The streak neither advanced nor
+    reset — the verdict did not change, we simply learned nothing new.
+```
+
+A **changed** target still resets immediately, however soon it arrives: spacing governs
+corroboration, not contradiction. An outlet that just flipped to `REJECT` must not keep a promotion
+streak because the sample was early.
+
+The arithmetic lives in `source_lifecycle.next_streak` and **both** the store and the runner's
+dry-run path call it. Two copies is how the four drifted definitions in this series started.
+
+**A second, smaller gap in the same run:** `state A` read identically whether the ledger recorded
+"A" or had never seen the outlet at all — different facts. A state the ledger does not know is now
+printed in `(parentheses)`.
+
 ## Why the ledger is a table and not an env var
 
 Two columns earn it on their own:
@@ -1231,6 +1275,11 @@ and the Tier A case held, as it must:
 | `INSUFFICIENT *` produces no transition in any state | unit (12 cases) | ✅ |
 | an unknown state raises rather than defaulting | unit | ✅ |
 | `streak` resets when the target changes — two different targets never confirm | unit | ✅ |
+| **two evaluations inside one clustering window are one sample** — the streak holds, does not advance | unit + store + fixture run | ✅ (after the first production run) |
+| a held sample does not RESET either; only a different answer does | unit | ✅ |
+| a first evaluation is never held — no previous sample means no interval to judge | unit | ✅ |
+| the store and the dry-run path share **one** streak implementation | unit on both seams | ✅ |
+| a state the ledger does not know prints in `(parentheses)` | fixture run | ✅ |
 | `first_observed` only ever moves **earlier** | unit | ✅ |
 | events are append-only and keep the evidence of superseded decisions | unit | ✅ |
 | a promotion out of shadow **removes** from `RWE_CORPUS_SHADOW` as well as adding to `TIER_B` | unit | ✅ |

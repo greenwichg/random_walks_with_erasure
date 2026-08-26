@@ -40,6 +40,21 @@ def test_streak_counts_consecutive_agreement_and_resets_on_disagreement(st):
                                        verdict="TIER A CANDIDATE")["streak"] == 1
 
 
+def test_the_store_enforces_sample_spacing_through_the_same_arithmetic(st):
+    """The store must not carry its own copy of the streak rule. Both it and the runner's dry-run
+    path go through `source_lifecycle.next_streak`, because two copies is how the four drifted
+    definitions in this series started."""
+    a = st.record_source_evaluation("a.example", target="B", verdict="v",
+                                    at="2026-08-01T00:00:00+00:00", min_spacing_days=6.0)
+    soon = st.record_source_evaluation("a.example", target="B", verdict="v",
+                                       at="2026-08-01T00:05:00+00:00", min_spacing_days=6.0)
+    later = st.record_source_evaluation("a.example", target="B", verdict="v",
+                                        at="2026-08-08T00:00:00+00:00", min_spacing_days=6.0)
+    assert (a["streak"], a["held"]) == (1, False)
+    assert (soon["streak"], soon["held"]) == (1, True), "five minutes later is the same sample"
+    assert (later["streak"], later["held"]) == (2, False), "a week later is a new one"
+
+
 def test_first_observed_only_ever_moves_earlier(st):
     """**The retention-erosion fix.** `MIN(created_at)` shrinks an outlet's apparent history as its
     oldest rows are trimmed. Once seen, the date is pinned, so an outlet cannot fall back below the
