@@ -2296,6 +2296,16 @@ class Store:
         cannot be observed for longer than its oldest surviving row. With age-based retention off
         (the shipped default) that is the count cap, which currently reaches back months.
 
+        **The ceiling is per-outlet, not global, and the reason is a column mismatch worth knowing.**
+        ``corpus_health.plan_retention`` orders candidates by ``publishedAt`` (falling back to
+        ``fetchedAt``); this method measures ``created_at``. Those are different orderings, so
+        retention can remove the rows carrying an outlet's oldest ``created_at`` while the catalog's
+        *global* ``MIN(created_at)`` — :meth:`catalog_first_seen` — does not move at all. Observed on
+        production: sportskeeda's first-seen advanced 50 minutes between two runs 18 minutes apart
+        while the global floor stayed byte-identical. So a floor comparison shows whether an outlet
+        is pinned to the oldest surviving row; it does **not** prove the outlet's own history is
+        untrimmed. The whole-catalog row count reported beside it is what answers that.
+
         ``publishers`` optionally narrows to a set of lower-cased names — the cohort, so a run over
         20 outlets does not aggregate the whole catalog."""
         q = (select(FeedArticle.publisher, func.min(FeedArticle.created_at))

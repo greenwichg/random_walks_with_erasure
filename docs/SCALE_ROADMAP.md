@@ -967,14 +967,52 @@ but a first-seen that can move for reasons other than the outlet's history is th
 as the two already corrected in this Part, and it now has an instrument pointed at it instead of an
 explanation.
 
+## The fourth run: the drift resolved, and the history is intact
+
+**Run on `8bcf58c`, `--as-if "sportskeeda.com"`:**
+
+```
+   window  catalog  first seen                   outlet
+      999    4,911  2026-07-29T04:38:01.236987   sportskeeda.com
+retention floor: 2026-07-20T21:07:55.297873
+```
+
+**The spelling bug was not the cause.** Run 3 (windowed lookup) and run 4 (identity-resolved from
+the catalog) report the same first-seen to the microsecond — `04:38:01.236987`. sportskeeda arrives
+under one spelling, so the two methods agree, and the fix changed nothing for *this* outlet. It was
+still worth making: the mechanism it removes is real, it just was not what happened here.
+
+**So rows really were deleted** between run 2 and run 3, and **nothing was deleted** between run 3
+and run 4 — first-seen and floor both byte-identical over that 18.5-minute interval.
+
+**The mechanism, verified in the code rather than guessed:** `corpus_health.plan_retention` orders
+prune candidates by **`publishedAt`** (falling back to `fetchedAt`); `publisher_first_seen` measures
+**`created_at`**. Different orderings. So retention can remove the rows carrying an outlet's oldest
+`created_at` while the catalog's *global* `MIN(created_at)` never moves — which is exactly the
+pattern observed. What remains unverifiable from here is whether retention is switched on at all:
+`RWE_RETENTION_MAX_COUNT` defaults to `0` and its value lives in `deploy/.env`.
+
+**And the history is intact, which the new column settles directly.** 999 window articles are
+**20.3%** of the 4,911 the catalog holds, while 6 days are **21.4%** of the 28.1-day span — a
+1.1-point difference. Uniform publishing over the whole span would predict 4,679 catalog rows and
+there are 4,911, i.e. **5% more history than a flat rate implies**, not less. The rates agree too:
+174.8/day over the catalog, 166.5/day over the window. There is no erosion signal. The 50-minute
+jump was a marginal trim at the very oldest edge, not a shrinking observation.
+
+**Consequence for the instrument, now stated in `publisher_first_seen`:** a floor comparison shows
+whether an outlet is *pinned* to the oldest surviving row; it does **not** prove the outlet's own
+history is untrimmed, because the two use different columns. The whole-catalog row count beside it
+is what answers that, and it is why the column earns its place.
+
 ## What the run does say, now that the numbers can be read
 
-The four measurements that were **not** window-bound stand, and sportskeeda's profile is coherent:
-0% syndication, 100% host stability, 0.1h median fetch lag, 989 articles in 6 days (~165/day). That
-is an original publisher on its own domain, polled fast — not a republisher, and not a redirect
-farm. The two `REJECT` criteria correctly do not fire.
+The four measurements that were **not** window-bound stand, and they were **stable across four
+consecutive production runs**: 0% syndication, 100% host stability, 0.1h median fetch lag, ~999
+articles per 6-day window (~166/day, and 174.8/day over the full 28-day catalog history). That is an
+original publisher on its own domain, polled fast — not a republisher, and not a redirect farm. The
+two `REJECT` criteria correctly do not fire.
 
-Its attach rate is **74 of 989 (7.5%)**, touching 35 of 1,494 stories. Stated as capacity: it is
+Its attach rate is **75 of 999 (7.5%)**, touching 35 of ~1,497 stories. Stated as capacity: it is
 **3.7% of the Tier A corpus** contributing **1.2% of coverage**. That is the profile of a vertical —
 high volume, genuine reporting, low overlap with the general-news spine.
 
