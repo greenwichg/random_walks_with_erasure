@@ -1607,6 +1607,66 @@ shape: the other unpinned fixtures sit ~47 days from any boundary, so this was t
 | the refusal still fires once the coverage is actually known | unit | ✅ |
 | `only_<lang>` is not claimed from a minority of the coverage | unit, **verified to flip** | ✅ |
 
+## The first live crawl (2026-08-26, `e24d754`) — and the false negative it found
+
+Authorised under the beta-development policy. Five US hosts, **11 requests, 11.3s of politeness
+waiting**, no ingestion, no writes.
+
+| host | verdict | reqs | what it said |
+|---|---|---|---|
+| `decider.com` | **ADMIT** | 3 | allows; feed `/feed/`, 10 items, 100% dated, 100% on-host; 22 sitemaps |
+| `6abc.com` | **ADMIT** | 3 | allows; feed `/feed/`, 20 items, 100% dated, **80% on-host — exactly at the bar** |
+| `kait8.com` | REJECT | 2 | **allows**; 4 sitemaps declared; no `<link rel=alternate>` |
+| `kwch.com` | REJECT | 2 | **allows**; 4 sitemaps declared; no `<link rel=alternate>` |
+| `nysun.com` | REJECT | 1 | robots.txt unavailable → fail-closed |
+
+**The transport works.** `crawler._fetch_text` had never contacted a real host in this project's
+history; `CRAWLER_DESIGN.md` recorded that as an open unknown. It is now closed.
+
+**Not one publisher disallowed us.** Every host that served a readable robots.txt permitted
+`HiddenView-Crawler`. The robots gate rejected nobody — the one REJECT at gate 1 was an
+*unavailable* file, not a refusal.
+
+### ⚠ Gate 2 has a false-negative class, and it is exactly the cohort we want
+
+`kait8.com` and `kwch.com` produced **byte-identical discovery shapes**: both Gray Media, both on
+Arc XP (`/arc/outboundfeeds/…`), both declaring four sitemaps including a **news sitemap**, and
+neither advertising `<link rel="alternate">` on the home page.
+
+They are not undiscoverable. They publish machine-readable discovery documents *for exactly this
+purpose* — just not the one gate 2 looks for. **Gate 2 asks "is there an RSS feed link?" when the
+question is "is there a discovery document?"**
+
+That matters far beyond two hosts. Arc XP and its peers run a large share of US local television,
+which is precisely the cohort `SOURCE_COVERAGE_AUDIT.md`'s curation work targeted and which
+discovery keeps surfacing (`kait8`, `kwch`, `6abc` all appear in the worklist unprompted). Left as
+is, a full 182-host run would report a misleadingly low ADMIT rate and we would wrongly conclude
+local TV is unreachable.
+
+**The machinery already exists and is unused here.** `crawler.discover_sitemap` parses both
+`urlset` and `sitemapindex`, and reads `news:title` / `news:publication_date` — a real headline and
+a real timestamp, which is what gates 3–5 need. The crawler's ladder has always been *rss → sitemap
+→ section*; M7's validation implemented only the first rung.
+
+Adding the sitemap rung is a real piece of work rather than a one-liner (a sitemap index costs one
+more fetch to descend, and gates 3–5 must read sitemap entries), so it is recorded here as the next
+M7 decision rather than slipped in.
+
+### A smaller fix, made immediately
+
+`nysun.com` reported `robots.txt unavailable (HTTPError)`, and **that string cannot be acted on**:
+`HTTPError` covers 404 (no robots.txt at all — RFC 9309 reads it as no restrictions), 403 (the
+origin refused *us*, a **stronger** signal than a `Disallow`), and 5xx (an outage, which says
+nothing). Filing all three under one label loses the only distinction an operator would act on.
+The reason now carries the status code. **The posture is unchanged** — a 404 still fails closed for
+discovery, because `CRAWLER_DESIGN.md` declines the 404-means-crawl-freely convention deliberately,
+and reporting a code more precisely is not a licence to act on it differently.
+
+### Read with care
+
+`6abc.com` passes gate 5 at **exactly 80%**, the bar itself. Four of its twenty items sit off-host.
+It is an admission, not a comfortable one, and worth knowing before anything is promoted.
+
 ## What M7 does NOT do
 
 It does not ingest. `--probe` reads `robots.txt`, one landing page and at most one feed per host, and

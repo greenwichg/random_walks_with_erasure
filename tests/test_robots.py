@@ -125,6 +125,36 @@ def test_an_unreadable_policy_is_UNKNOWN_and_does_not_refuse_by_default():
     robots.enforce("https://x.example/feed.xml")          # reported, not enforced
 
 
+@pytest.mark.parametrize("code, expect", [(404, "HTTP 404"), (403, "HTTP 403"), (503, "HTTP 503")])
+def test_an_http_failure_reports_its_status_not_just_its_exception_type(code, expect):
+    """**From the first live probe.** It reported `robots.txt unavailable (HTTPError)` for a host,
+    and that string cannot be acted on: `HTTPError` covers 404 (no robots.txt at all — RFC 9309
+    reads it as no restrictions), 403 (the origin refused US, a *stronger* signal than a Disallow),
+    and 5xx (an outage, which says nothing). Filing all three under one label loses the only
+    distinction an operator would act on."""
+    import urllib.error
+
+    def fetch(url):
+        raise urllib.error.HTTPError(url, code, "nope", {}, None)
+
+    robots.reset_cache(fetch=fetch)
+    d = robots.check("https://x.example/feed.xml")
+    assert expect in d.reason and d.known is False
+
+
+def test_the_posture_is_unchanged_by_the_more_precise_reason():
+    """A 404 is still a refusal for discovery. `CRAWLER_DESIGN.md` declines the
+    404-means-crawl-freely convention for a commercial reader of newsrooms, and reporting the
+    status code more precisely is not a licence to start acting on it differently."""
+    import crawler
+    import urllib.error
+
+    def fetch(url):
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+    assert crawler.RobotsPolicy(fetch=fetch).check("https://x.example/").allowed is False
+
+
 def test_a_200_that_is_not_a_robots_policy_is_UNKNOWN_not_permission():
     """The most common way robots.txt is "missing" is an origin that returns 200 and an HTML page
     for every path. `RobotFileParser` reads that as a policy with no rules, and no rules means

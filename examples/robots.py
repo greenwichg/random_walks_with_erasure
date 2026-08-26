@@ -136,6 +136,29 @@ def _plain_fetch(url: str, *, timeout: float = 10.0) -> str:
         return resp.read().decode("utf-8", errors="replace")
 
 
+def _why_unreachable(exc: Exception) -> str:
+    """A reason precise enough to act on.
+
+    The first live probe reported ``robots.txt unavailable (HTTPError)`` for a host, and that string
+    cannot be acted on: ``HTTPError`` covers 404, 403 and 5xx, which mean entirely different things.
+
+      * **404** — there is no robots.txt. RFC 9309 reads that as no restrictions, and it is the
+        single most common case on small sites.
+      * **403** — the origin refused *us*. That is a **stronger** signal than a ``Disallow`` line,
+        not a weaker one, and it should never be filed under "temporarily unavailable".
+      * **5xx / timeout / TLS** — an outage. It says nothing about permission either way.
+
+    The posture does not change here: `CRAWLER_DESIGN.md` deliberately declines the
+    404-means-crawl-freely convention for a commercial reader of newsrooms, so all three still fail
+    closed for discovery. What changes is that the operator can now tell them apart, which is the
+    difference between "this publisher has no robots.txt" and "this publisher blocked us"."""
+    code = getattr(exc, "code", None)
+    if code is not None:
+        return f"HTTP {code}"
+    reason = getattr(exc, "reason", None)
+    return f"{type(exc).__name__}: {reason}" if reason else type(exc).__name__
+
+
 def read_policy(host: str, fetch: Callable[[str], str]) -> tuple:
     """``(RobotFileParser | None, reason)`` for one host. The single fetch-and-parse definition,
     shared by :class:`RobotsPolicy` and the live gate so the two cannot drift on what counts as a
@@ -143,8 +166,8 @@ def read_policy(host: str, fetch: Callable[[str], str]) -> tuple:
     url = f"https://{host}/robots.txt"
     try:
         body = fetch(url)
-    except Exception as e:                       # unreachable, 5xx, TLS failure, timeout
-        return None, f"robots.txt unavailable ({type(e).__name__})"
+    except Exception as e:                       # unreachable, 4xx/5xx, TLS failure, timeout
+        return None, f"robots.txt unavailable ({_why_unreachable(e)})"
     if not _looks_like_robots(body):
         return None, "robots.txt is not a robots policy"
     rp = urllib.robotparser.RobotFileParser()
