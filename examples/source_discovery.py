@@ -172,13 +172,17 @@ def census(cands: list) -> dict:
     return dict(c)
 
 
-def probe_cost(cands: list, *, requests_per_host: int = 2,
+def probe_cost(cands: list, *, requests_per_host: int = 3,
                seconds_per_request: float = 2.0) -> dict:
     """What Stage 2 would cost in requests and wall time, stated BEFORE it is authorised.
 
-    Two requests per host — ``robots.txt`` and one autodiscovery fetch — at the crawler's configured
-    politeness interval. This is the number that goes in front of a human, because "how much of a
-    publisher's bandwidth are we about to spend" is the question a ToS review is actually asking."""
+    **Three** per host, corrected from two against what the first live crawl actually spent:
+    ``robots.txt``, the landing page, and the discovery document. The old figure omitted the landing
+    page and would have understated a 182-host run by 182 requests — an estimate put in front of a
+    human to authorise crawling has to be the real number, not the optimistic one.
+
+    Up to **five** where the sitemap rung fires and its target is an index needing one descent. That
+    is the worst case, not the typical one: it only runs when there is no feed to find."""
     n = len(worklist(cands))
     reqs = n * requests_per_host
     return {"hosts": n, "requests": reqs, "seconds": reqs * seconds_per_request,

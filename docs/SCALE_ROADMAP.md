@@ -1683,6 +1683,56 @@ It is also the **only** status that means "later" rather than "never", so it is 
 deserves a re-probe rather than a conclusion. If it repeats, `nysun.com` is not answerable by
 machine and wants a human or an email — not a workaround.
 
+### The sitemap rung, built
+
+Gate 2 now reads **"is there a discovery document?"** rather than "is there an RSS feed?" The ladder
+is RSS first, then the best sitemap robots.txt already declared.
+
+**Choosing which sitemap** is a heuristic, and named as one — but not an arbitrary one. `news`
+scores positively because the Google News convention is what carries `news:title` and
+`news:publication_date`: a real headline and a real timestamp, which is exactly what gates 3–5 need
+and what a bare `<urlset>` of `<loc>` + `<lastmod>` does not have. It is also bounded to recent
+content by that spec, where a site's full index spans years.
+
+The negatives are `video`, `image`, `author`, `tag` — document types that are not articles.
+Deliberately **not** `category` or `index`: kait8 declares its news sitemap as
+`news-sitemap-index/category/news/`, so a negative on either word would reject the very file we
+want. Positive signal outranks negative by construction, and ranked against kait8's real declared
+list the news sitemap comes first and the video sitemap last.
+
+**Descending an index goes newest child first**, and that is not a preference — it is a defect
+`crawler._run_ladder` already had to fix. An index is conventionally oldest-first, so document order
+spends the whole budget on the deepest archive and never reaches this week; Daily Maverick and
+Premium Times both returned 100% `too_old` for exactly that. Re-deriving the rung here would have
+re-earned the bug, so it reuses `crawler._published_utc` and `_UNDATED_SORTS_LAST`.
+
+**A sitemap of bare `<loc>` + `<lastmod>` is rejected.** Those URLs have no headline, and
+`clustering.MIN_TITLE_TOKENS` means a title-less article can never join a story — so such a document
+is not a usable source however many URLs it lists.
+
+**It is a fallback, not a replacement.** RSS runs first (one fetch, no descent) and the sitemap rung
+fires only when the RSS rung yields nothing. A feed that parses but is short is reported by gate 3
+rather than silently swapped for another source: switching rungs on a threshold would make the
+answer depend on which document we happened to prefer, which is invisible in a report.
+
+Verified against kait8's exact shape — its four real declared sitemaps, an oldest-first index, and
+no `<link rel=alternate>`:
+
+```
+ADMIT   via news sitemap   (4 requests)
+  robots.txt -> landing page -> news-sitemap-index -> sm/this-week.xml
+  descended into the newest child, not the 2019 archive
+```
+
+### ⚠ The cost estimate was understated, and is corrected
+
+`probe_cost` claimed **two** requests per host — `robots.txt` and one autodiscovery fetch. The live
+crawl spent **three** for every ADMIT: robots.txt, the landing page, the discovery document. The
+landing page was simply missing from the estimate, which would have understated a 182-host run by
+182 requests. It now reads three, with the worst case (five, where the sitemap rung fires and needs
+a descent) stated separately. **An estimate put in front of a human to authorise crawling has to be
+the real number, not the optimistic one.**
+
 ### Read with care
 
 `6abc.com` passes gate 5 at **exactly 80%**, the bar itself. Four of its twenty items sit off-host.

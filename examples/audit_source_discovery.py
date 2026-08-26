@@ -116,7 +116,9 @@ def main(argv=None) -> int:
     print(f"\n=== what Stage 2 would cost ===")
     print("    Stated BEFORE any request, because 'how much of a publisher's bandwidth are we")
     print("    about to spend' is the question a ToS review is actually asking.")
-    print(f"  {cost['hosts']:,} hosts x 2 requests = {cost['requests']:,} requests")
+    print(f"  {cost['hosts']:,} hosts x 3 requests = {cost['requests']:,} requests "
+          f"(robots.txt, landing page, discovery document)")
+    print(f"  up to {cost['hosts'] * 5:,} if every host needs the sitemap rung and a descent")
     print(f"  at {args.interval:g}s politeness  = {cost['minutes']:.1f} minutes of crawling")
 
     print(f"\n=== the candidates ===")
@@ -177,7 +179,7 @@ def main(argv=None) -> int:
             print(f"      [{mark}] gate {g.number} {g.name}"
                   + (f" — {g.detail}" if g.detail else ""))
         if r["feed"]:
-            print(f"      feed discovered : {r['feed']}")
+            print(f"      discovered via  : {r['discoveredVia']} — {r['feed']}")
         for sm in r["sitemaps"]:
             print(f"      sitemap declared: {sm}")
 
@@ -199,6 +201,7 @@ def main(argv=None) -> int:
                        "waitedSeconds": round(limiter.waited_seconds, 1),
                        "hosts": [{"host": r["host"], "verdict": r["verdict"],
                                   "requests": r["requests"], "feed": r["feed"],
+                                  "discoveredVia": r["discoveredVia"],
                                   "sitemaps": r["sitemaps"],
                                   "gates": [{"number": g.number, "name": g.name,
                                              "status": g.status, "detail": g.detail}
@@ -212,7 +215,7 @@ def main(argv=None) -> int:
     print("  adding its feed and putting the outlet in RWE_CORPUS_SHADOW, where M8 measures it for")
     print("  14 days and M9 decides — and M9 emits config for a human rather than applying it.")
     for r in admitted:
-        print(f"    {r['host']:<34} {r['feed']}")
+        print(f"    {r['host']:<34} {r['discoveredVia']:<13} {r['feed']}")
     return 0
 
 

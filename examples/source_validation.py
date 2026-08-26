@@ -188,6 +188,83 @@ def _declared_sitemaps(policy, host: str) -> list:
         return []
 
 
+#: Ranking signals for choosing WHICH declared sitemap to read. A heuristic, and named as one — but
+#: not an arbitrary one.
+#:
+#: ``news`` scores positively because the Google News sitemap convention is what carries
+#: ``news:title`` and ``news:publication_date`` — a real headline and a real timestamp, which is
+#: exactly what gates 3-5 need and what a bare ``<urlset>`` of ``<loc>`` + ``<lastmod>`` does not
+#: have. It is also bounded to recent content by that spec, where a site's full index spans years.
+#:
+#: The negatives are document types that are not articles at all. Deliberately NOT including
+#: "category" or "index": `kait8.com` declares its news sitemap as
+#: ``news-sitemap-index/category/news/``, so a negative on either word would reject the very file we
+#: want. Positive signal outranks negative by construction.
+_SITEMAP_PREFER = ("news",)
+_SITEMAP_AVOID = ("video", "image", "author", "tag")
+
+
+def rank_sitemaps(urls) -> list:
+    """Declared sitemaps, best candidate first.
+
+    Stable: ties keep declaration order, so the choice does not move between runs on a site whose
+    robots.txt lists several equally-plausible files."""
+    def score(u: str) -> int:
+        low = u.lower()
+        return (2 * sum(k in low for k in _SITEMAP_PREFER)
+                - sum(k in low for k in _SITEMAP_AVOID))
+    return [u for _s, _i, u in sorted(((-score(u), i, u) for i, u in enumerate(urls)))]
+
+
+def _sitemap_entries(host: str, sitemaps, fetch, limiter, delay) -> tuple:
+    """``(entries, source_url, requests_spent, reason)`` from the best declared sitemap.
+
+    **The second rung of the ladder, and the reason kait8.com and kwch.com were false negatives.**
+    Both allow us and both declare a news sitemap; neither advertises ``<link rel=alternate>``. Gate
+    2 was asking "is there an RSS feed?" when the question is "is there a discovery document?"
+
+    Descends one level into a ``sitemapindex``, **newest child first**. That ordering is not a
+    preference — it is a defect `crawler._run_ladder` already had to fix: an index is conventionally
+    oldest-first, so document order spends the whole budget on the deepest archive and never reaches
+    this week. Daily Maverick and Premium Times both returned 100% `too_old` for exactly that.
+    Re-deriving it here would have re-earned the same bug.
+
+    At most two fetches: the chosen sitemap, and one child if it turns out to be an index."""
+    if not sitemaps:
+        return [], "", 0, "no sitemap declared in robots.txt"
+    target = rank_sitemaps(sitemaps)[0]
+    spent = 0
+    try:
+        limiter.wait(target, delay)
+        entries = crawler.discover_sitemap(fetch(target), target)
+        spent += 1
+    except Exception as e:
+        return [], target, spent, f"{target} did not parse as a sitemap ({type(e).__name__})"
+
+    children = [e for e in entries if e.source_type == "sitemap-index"]
+    if children:
+        children.sort(key=lambda e: crawler._published_utc(e.published_at)
+                      or crawler._UNDATED_SORTS_LAST, reverse=True)
+        child = children[0].url
+        try:
+            limiter.wait(child, delay)
+            entries = [e for e in crawler.discover_sitemap(fetch(child), child)
+                       if e.source_type != "sitemap-index"]
+            spent += 1
+            target = child
+        except Exception as e:
+            return [], target, spent, f"sitemap child {child} failed ({type(e).__name__})"
+
+    # A sitemap of bare <loc> + <lastmod> yields URLs with no headline. Those cannot cluster —
+    # `clustering.MIN_TITLE_TOKENS` means a title-less article can never join a story — so a
+    # document that supplies none is not a usable source however many URLs it lists.
+    titled = [e for e in entries if (e.title or "").strip()]
+    if not titled:
+        return [], target, spent, (f"{target} lists {len(entries)} URL(s) but no headlines — a "
+                                   f"news sitemap carries news:title; a plain urlset does not")
+    return titled, target, spent, ""
+
+
 def validate(cand: dict, *, fetch: Optional[Callable[[str], str]] = None,
              robots=None, limiter=None) -> dict:
     """Run the gates for one candidate. **Touches the network only when ``fetch`` is given.**
@@ -201,6 +278,7 @@ def validate(cand: dict, *, fetch: Optional[Callable[[str], str]] = None,
     host = cand["host"]
     gates = list(_offline_gates(cand))
     spent = 0
+    found: dict = {}
 
     if fetch is None:
         gates.extend(_online_gates_unknown())
@@ -212,7 +290,7 @@ def validate(cand: dict, *, fetch: Optional[Callable[[str], str]] = None,
     else:
         robots = robots or crawler.RobotsPolicy(fetch=fetch)
         limiter = limiter or crawler.RateLimiter()
-        gates, spent = _probe(host, cand, gates, fetch, robots, limiter)
+        gates, spent = _probe(host, cand, gates, fetch, robots, limiter, found)
         # `robots` now holds the policy whose cache gate 1 populated, so the Sitemap: lines below
         # cost nothing. Bound here rather than at the top so an offline run cannot report sitemaps
         # it never fetched.
@@ -220,14 +298,14 @@ def validate(cand: dict, *, fetch: Optional[Callable[[str], str]] = None,
     verdict = ("ADMIT" if all(g.status == PASS for g in gates)
                else "REJECT" if any(g.status == FAIL for g in gates)
                else "INCOMPLETE")
-    feed = next((g.detail for g in gates if g.number == 2 and g.status == PASS), "")
+    feed = found.get("url", "")
     sitemaps = (_declared_sitemaps(robots, host)
                 if (fetch is not None and robots is not None) else [])
     return {"host": host, "gates": gates, "verdict": verdict, "feed": feed,
-            "sitemaps": sitemaps, "requests": spent}
+            "discoveredVia": found.get("kind", ""), "sitemaps": sitemaps, "requests": spent}
 
 
-def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
+def _probe(host, cand, gates, fetch, robots, limiter, found: dict) -> tuple:
     """The network pass. Ordered so the cheapest refusal comes first: robots before anything else,
     and nothing at all if robots says no."""
     spent = 0
@@ -264,26 +342,49 @@ def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
                      for g in _online_gates_unknown()[2:])
         return gates, spent
 
+    # --- the ladder: RSS first, then the declared sitemap ------------------------------------
+    #
+    # RSS first because it is one fetch and needs no descent. The sitemap rung is the FALLBACK, and
+    # it exists because the first live crawl found gate 2 rejecting publishers who allow us and
+    # publish a news sitemap but no <link rel=alternate> — kait8.com and kwch.com, byte-identical
+    # Arc XP shapes, which is a large share of US local television.
+    #
+    # The fallback fires only when the RSS rung yields NOTHING (no link, or unparseable). A feed
+    # that parses but is short is reported by gate 3 rather than silently swapped for another
+    # source: switching rungs on a threshold would make the answer depend on which document we
+    # happened to prefer, which is the kind of thing that is invisible in a report.
+    entries, source_url, why = None, "", ""
     urls = feed_urls(body, host)
-    if not urls:
-        gates.append(Gate(2, "feed discoverable and parses", FAIL,
-                          "no <link rel=alternate> feed on the landing page"))
-        gates.extend(Gate(g.number, g.name, UNKNOWN, "not probed — no feed found")
+    if urls:
+        try:
+            limiter.wait(urls[0], decision.crawl_delay)
+            entries = crawler.discover_rss(fetch(urls[0]))
+            spent += 1
+            source_url = urls[0]
+        except Exception as e:
+            why = f"{urls[0]} did not parse as a feed ({type(e).__name__})"
+    else:
+        why = "no <link rel=alternate> feed on the landing page"
+
+    if entries is None:
+        sm_entries, sm_url, sm_spent, sm_why = _sitemap_entries(
+            host, sitemaps, fetch, limiter, decision.crawl_delay)
+        spent += sm_spent
+        if sm_entries:
+            entries, source_url = sm_entries, sm_url
+            why = ""
+        else:
+            why = f"{why}; sitemap rung: {sm_why}"
+
+    if not entries:
+        gates.append(Gate(2, "feed or news sitemap discoverable", FAIL, why))
+        gates.extend(Gate(g.number, g.name, UNKNOWN, "not probed — no discovery document")
                      for g in _online_gates_unknown()[2:])
         return gates, spent
 
-    try:
-        limiter.wait(urls[0], decision.crawl_delay)
-        entries = crawler.discover_rss(fetch(urls[0]))
-        spent += 1
-    except Exception as e:
-        gates.append(Gate(2, "feed discoverable and parses", FAIL,
-                          f"{urls[0]} did not parse as a feed ({type(e).__name__})"))
-        gates.extend(Gate(g.number, g.name, UNKNOWN, "not probed — feed unparseable")
-                     for g in _online_gates_unknown()[2:])
-        return gates, spent
-
-    gates.append(Gate(2, "feed discoverable and parses", PASS, urls[0]))
+    kind = "feed" if source_url in urls else "news sitemap"
+    found.update(url=source_url, kind=kind)     # structured, not scraped back out of the detail
+    gates.append(Gate(2, "feed or news sitemap discoverable", PASS, f"{source_url} ({kind})"))
     n = len(entries)
     gates.append(Gate(3, f"feed carries >= {MIN_FEED_ITEMS} items",
                       PASS if n >= MIN_FEED_ITEMS else FAIL, f"{n} items"))

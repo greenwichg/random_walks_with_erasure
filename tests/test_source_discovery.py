@@ -119,11 +119,16 @@ def test_the_census_counts_every_rejection_reason(reg):
 
 def test_probe_cost_is_computed_from_the_eligible_hosts_only(reg):
     """The number that goes in front of a human before any request. Counting rejected hosts would
-    overstate it and make the review harder to grant than it needs to be."""
+    overstate it and make the review harder to grant than it needs to be.
+
+    **Three per host, corrected from two against what the first live crawl actually spent**:
+    robots.txt, the landing page, and the discovery document. The old figure omitted the landing
+    page and would have understated a 182-host run by 182 requests. An estimate put in front of a
+    human to authorise crawling has to be the real number, not the optimistic one."""
     rows = ([_row(f"https://reuters.com/a{i}", "Reuters") for i in range(20)]
             + [_row(f"https://vertical.example/a{i}", "Vertical") for i in range(20)])
     cost = sd.probe_cost(sd.candidates(rows, reg, floor=10), seconds_per_request=2.0)
-    assert cost == {"hosts": 1, "requests": 2, "seconds": 4.0, "minutes": 0.1}
+    assert cost == {"hosts": 1, "requests": 3, "seconds": 6.0, "minutes": 0.1}
 
 
 # --------------------------------------------------------------------------- validation, offline
@@ -377,6 +382,116 @@ def test_a_publishers_crawl_delay_is_honoured_not_just_printed():
                       "/feed.xml": FEED % _items(12), "vertical.example/": LANDING})
     sv.validate(_cand(), fetch=fetch, limiter=limiter)
     assert max(slept) >= 30, f"the publisher asked for 30s between requests; waits were {slept}"
+
+
+# --------------------------------------------------------------------------- the sitemap rung
+
+KAIT_SITEMAPS = [
+    "https://www.kait8.com/arc/outboundfeeds/sitemap-index/?outputType=xml",
+    "https://www.kait8.com/arc/outboundfeeds/news-sitemap-index/category/news/?outputType=xml",
+    "https://www.kait8.com/arc/outboundfeeds/video-sitemap/?outputType=xml",
+    "https://www.kait8.com/arc/outboundfeeds/sitemap-section-index/?outputType=xml",
+]
+INDEX = ("<sitemapindex xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
+         "<sitemap><loc>https://vertical.example/sm/archive-2019.xml</loc>"
+         "<lastmod>2019-01-01</lastmod></sitemap>"
+         "<sitemap><loc>https://vertical.example/sm/this-week.xml</loc>"
+         "<lastmod>2026-08-26</lastmod></sitemap></sitemapindex>")
+
+
+def _news_sitemap(n, *, host="vertical.example", titled=True):
+    items = "".join(
+        f"<url><loc>https://{host}/2026/08/26/story-{i}/</loc>"
+        + (f"<news:news><news:title>School board votes on the budget {i}</news:title>"
+           f"<news:publication_date>2026-08-26T12:0{i % 10}:00Z</news:publication_date>"
+           f"</news:news>" if titled else "<lastmod>2026-08-26</lastmod>")
+        + "</url>" for i in range(n))
+    return ("<urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9' "
+            "xmlns:news='http://www.google.com/schemas/sitemap-news/0.9'>" + items + "</urlset>")
+
+
+def test_the_news_sitemap_outranks_the_archive_video_and_section_indexes():
+    """kait8.com's REAL declared list. The news sitemap is what carries `news:title` and
+    `news:publication_date` — a real headline and a real timestamp, which is exactly what gates 3-5
+    need and what a bare `<urlset>` of `<loc>` + `<lastmod>` does not have.
+
+    Note the file we want is `news-sitemap-index/category/news/`: a negative signal on "category"
+    or "index" would reject it, which is why the ranking scores the positive signal and does not
+    blocklist those words."""
+    assert sd  # module in use
+    ranked = sv.rank_sitemaps(KAIT_SITEMAPS)
+    assert "news-sitemap-index" in ranked[0]
+    assert "video-sitemap" in ranked[-1]
+
+
+def test_ranking_is_stable_so_the_choice_does_not_move_between_runs():
+    assert sv.rank_sitemaps(KAIT_SITEMAPS) == sv.rank_sitemaps(KAIT_SITEMAPS)
+
+
+def test_a_host_with_a_news_sitemap_and_no_feed_link_is_ADMITted():
+    """**The false negative the first live crawl found.** kait8.com and kwch.com allow us and
+    declare a news sitemap; neither advertises `<link rel=alternate>`. Gate 2 was asking "is there
+    an RSS feed?" when the question is "is there a discovery document?" — and Arc XP runs a large
+    share of US local television."""
+    fetch = _fetcher({"/robots.txt": ("Sitemap: https://vertical.example/news-sitemap.xml\n"
+                                      "User-agent: *\nAllow: /\n"),
+                      "vertical.example/": "<html><body>no feed link</body></html>",
+                      "/news-sitemap.xml": _news_sitemap(14)})
+    r = sv.validate(_cand(), fetch=fetch)
+    assert r["verdict"] == "ADMIT", [g for g in r["gates"] if g.blocking]
+    assert r["discoveredVia"] == "news sitemap"
+    assert r["feed"] == "https://vertical.example/news-sitemap.xml"
+
+
+def test_a_sitemap_index_is_descended_NEWEST_child_first():
+    """Not a preference — a defect `crawler._run_ladder` already had to fix. An index is
+    conventionally oldest-first, so document order spends the whole budget on the deepest archive
+    and never reaches this week; Daily Maverick and Premium Times both returned 100% `too_old` for
+    exactly that. Re-deriving the rung here would have re-earned the bug."""
+    fetch = _fetcher({"/robots.txt": ("Sitemap: https://vertical.example/news-index.xml\n"
+                                      "User-agent: *\nAllow: /\n"),
+                      "vertical.example/": "<html><body>no feed link</body></html>",
+                      "/news-index.xml": INDEX,
+                      "/sm/this-week.xml": _news_sitemap(14),
+                      "/sm/archive-2019.xml": _news_sitemap(3)})
+    r = sv.validate(_cand(), fetch=fetch)
+    assert r["verdict"] == "ADMIT"
+    assert r["feed"].endswith("this-week.xml"), "descended into the archive instead of this week"
+    assert not any("archive-2019" in c for c in fetch.calls), "the archive must not be fetched"
+
+
+def test_a_sitemap_of_bare_locs_with_no_headlines_is_rejected():
+    """A plain `<urlset>` of `<loc>` + `<lastmod>` yields URLs with no headline. Those cannot
+    cluster — `clustering.MIN_TITLE_TOKENS` means a title-less article can never join a story — so
+    such a document is not a usable source however many URLs it lists."""
+    fetch = _fetcher({"/robots.txt": ("Sitemap: https://vertical.example/sitemap.xml\n"
+                                      "User-agent: *\nAllow: /\n"),
+                      "vertical.example/": "<html><body>no feed link</body></html>",
+                      "/sitemap.xml": _news_sitemap(40, titled=False)})
+    r = sv.validate(_cand(), fetch=fetch)
+    assert r["verdict"] == "REJECT"
+    assert "no headlines" in next(g for g in r["gates"] if g.number == 2).detail
+
+
+def test_the_sitemap_rung_is_a_FALLBACK_and_does_not_preempt_a_working_feed():
+    """RSS first: it is one fetch and needs no descent. Switching rungs on a threshold would make
+    the answer depend on which document we happened to prefer, which is invisible in a report."""
+    fetch = _fetcher({"/robots.txt": ("Sitemap: https://vertical.example/news-sitemap.xml\n"
+                                      "User-agent: *\nAllow: /\n"),
+                      "vertical.example/": LANDING,
+                      "/feed.xml": FEED % _items(12),
+                      "/news-sitemap.xml": _news_sitemap(50)})
+    r = sv.validate(_cand(), fetch=fetch)
+    assert r["discoveredVia"] == "feed" and r["requests"] == 3
+    assert not any("news-sitemap" in c for c in fetch.calls), "the sitemap must not be fetched"
+
+
+def test_a_host_with_neither_reports_both_rungs_failing():
+    """One combined reason, so the report says what was tried rather than only what was missing."""
+    fetch = _fetcher({"/robots.txt": "User-agent: *\nAllow: /\n",
+                      "vertical.example/": "<html><body>nothing</body></html>"})
+    detail = next(g for g in sv.validate(_cand(), fetch=fetch)["gates"] if g.number == 2).detail
+    assert "no <link rel=alternate>" in detail and "sitemap rung" in detail
 
 
 def test_the_probe_is_rate_limited_per_host():
