@@ -57,6 +57,14 @@ def main(argv=None) -> int:
                          "reports UNKNOWN.")
     ap.add_argument("--limit", type=int, default=0,
                     help="with --probe, stop after this many hosts (0 = all). Start small.")
+    ap.add_argument("--hosts", default="",
+                    help="with --probe, probe exactly these comma-separated hosts instead of the "
+                         "top N by volume. --limit takes hosts by article count, which mixes "
+                         "jurisdictions on the first run; this lets a first batch be chosen "
+                         "deliberately.")
+    ap.add_argument("--json", default="",
+                    help="with --probe, write the full result to this path. A run that touches "
+                         "publishers should leave a record of exactly what it asked and was told.")
     ap.add_argument("--interval", type=float, default=crawler.DEFAULT_MIN_INTERVAL,
                     help="seconds between requests to the same host (default: %(default)s)")
     args = ap.parse_args(argv)
@@ -140,7 +148,15 @@ def main(argv=None) -> int:
         return 0
 
     # ---------------------------------------------------------------- Stage 2
-    targets = work[:args.limit] if args.limit else work
+    if args.hosts:
+        wanted = {h.strip().lower() for h in args.hosts.split(",") if h.strip()}
+        targets = [c for c in work if c["host"] in wanted]
+        missing = sorted(wanted - {c["host"] for c in targets})
+        if missing:
+            print(f"\n*** NOT IN THE ELIGIBLE WORKLIST, so not probed: {', '.join(missing)}")
+            print("    A host is only probed if it cleared the offline gates. Check the table above.")
+    else:
+        targets = work[:args.limit] if args.limit else work
     print(f"\n=== STAGE 2: PROBING {len(targets):,} HOSTS ===")
     print(f"    User-Agent: {crawler.USER_AGENT}")
     print(f"    robots.txt is fail-CLOSED: absent or unparseable is a refusal, not permission.")
@@ -153,12 +169,17 @@ def main(argv=None) -> int:
         r = sv.validate(c, fetch=crawler._fetch_text, robots=robots, limiter=limiter)
         results.append(r)
         spent += r["requests"]
-        print(f"\n  {r['verdict']:<11} {c['host']}")
-        for g in r["gates"]:
-            if g.status != sv.PASS:
-                print(f"      gate {g.number} {g.name}: {g.status} — {g.detail}")
+        print(f"\n  {r['verdict']:<11} {c['host']}   ({r['requests']} request(s))")
+        # EVERY gate, not only the failures. "What does this host allow and reject" is the whole
+        # question a probe is run to answer, and a host that passes silently answers none of it.
+        for g in sorted(r["gates"], key=lambda g: g.number):
+            mark = {sv.PASS: "ok  ", sv.FAIL: "FAIL", sv.UNKNOWN: "??  "}[g.status]
+            print(f"      [{mark}] gate {g.number} {g.name}"
+                  + (f" — {g.detail}" if g.detail else ""))
         if r["feed"]:
-            print(f"      feed: {r['feed']}")
+            print(f"      feed discovered : {r['feed']}")
+        for sm in r["sitemaps"]:
+            print(f"      sitemap declared: {sm}")
 
     census = Counter(r["verdict"] for r in results)
     print(f"\n=== results ===")
@@ -166,6 +187,24 @@ def main(argv=None) -> int:
         print(f"  {n:>5} hosts  {name}")
     print(f"\n  requests actually spent : {spent:,}")
     print(f"  waited for politeness   : {limiter.waited_seconds:.1f}s")
+
+    if args.json:
+        # The audit record. A run that touched publishers should be reconstructable later without
+        # re-asking them — that is the whole reason the evidence travels with the decision in M9.
+        import json
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump({"userAgent": crawler.USER_AGENT,
+                       "intervalSeconds": args.interval,
+                       "requestsSpent": spent,
+                       "waitedSeconds": round(limiter.waited_seconds, 1),
+                       "hosts": [{"host": r["host"], "verdict": r["verdict"],
+                                  "requests": r["requests"], "feed": r["feed"],
+                                  "sitemaps": r["sitemaps"],
+                                  "gates": [{"number": g.number, "name": g.name,
+                                             "status": g.status, "detail": g.detail}
+                                            for g in sorted(r["gates"], key=lambda g: g.number)]}
+                                 for r in results]}, fh, indent=2, sort_keys=True)
+        print(f"\n  record written: {args.json}")
 
     admitted = [r for r in results if r["verdict"] == "ADMIT"]
     print(f"\n=== what to do with the {len(admitted)} ADMIT verdicts ===")

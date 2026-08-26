@@ -175,6 +175,19 @@ def _link_feeds(body: str) -> "list[str]":
     return p.found
 
 
+def _declared_sitemaps(policy, host: str) -> list:
+    """``Sitemap:`` lines the host's robots.txt declares, from the policy already in hand.
+
+    Free — the file was fetched for gate 1. A declared sitemap is also the strongest hint that our
+    guessed discovery paths are wrong: `CRAWLER_DESIGN.md` notes that robots.txt naming sitemaps we
+    are not using "usually means our configured path was a guess"."""
+    try:
+        rp, _reason = policy._policy_for(host)      # cached from gate 1 — no second fetch
+        return list(rp.site_maps() or []) if rp is not None else []
+    except Exception:
+        return []
+
+
 def validate(cand: dict, *, fetch: Optional[Callable[[str], str]] = None,
              robots=None, limiter=None) -> dict:
     """Run the gates for one candidate. **Touches the network only when ``fetch`` is given.**
@@ -200,12 +213,18 @@ def validate(cand: dict, *, fetch: Optional[Callable[[str], str]] = None,
         robots = robots or crawler.RobotsPolicy(fetch=fetch)
         limiter = limiter or crawler.RateLimiter()
         gates, spent = _probe(host, cand, gates, fetch, robots, limiter)
+        # `robots` now holds the policy whose cache gate 1 populated, so the Sitemap: lines below
+        # cost nothing. Bound here rather than at the top so an offline run cannot report sitemaps
+        # it never fetched.
 
     verdict = ("ADMIT" if all(g.status == PASS for g in gates)
                else "REJECT" if any(g.status == FAIL for g in gates)
                else "INCOMPLETE")
     feed = next((g.detail for g in gates if g.number == 2 and g.status == PASS), "")
-    return {"host": host, "gates": gates, "verdict": verdict, "feed": feed, "requests": spent}
+    sitemaps = (_declared_sitemaps(robots, host)
+                if (fetch is not None and robots is not None) else [])
+    return {"host": host, "gates": gates, "verdict": verdict, "feed": feed,
+            "sitemaps": sitemaps, "requests": spent}
 
 
 def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
@@ -217,8 +236,18 @@ def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
     limiter.wait(landing)
     decision = robots.check(landing)
     spent += 1                                          # robots.txt itself
+    # The Sitemap: lines and Crawl-delay come out of the policy we ALREADY fetched, so reporting
+    # them costs zero extra requests. Both are things the publisher chose to tell crawlers, and a
+    # probe that fetched robots.txt and then discarded half of what it said would be leaving the
+    # cheapest evidence on the floor.
+    detail = decision.reason or "allowed"
+    if decision.crawl_delay is not None:
+        detail += f"; Crawl-delay: {decision.crawl_delay:g}s"
+    sitemaps = _declared_sitemaps(robots, host)
+    if sitemaps:
+        detail += f"; declares {len(sitemaps)} sitemap(s)"
     gates.append(Gate(1, "robots.txt permits our agent", PASS if decision.allowed else FAIL,
-                      decision.reason or "allowed"))
+                      detail))
     if not decision.allowed:
         gates.extend(Gate(g.number, g.name, UNKNOWN, "not probed — robots.txt refused")
                      for g in _online_gates_unknown()[1:])

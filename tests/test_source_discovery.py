@@ -344,6 +344,41 @@ def test_feed_urls_never_leave_the_declared_host():
         "https://vertical.example/mine.xml", "https://cdn.vertical.example/y.xml"]
 
 
+def test_sitemaps_and_crawl_delay_are_reported_from_the_policy_already_fetched():
+    """Both come out of the robots.txt gate 1 already read, so reporting them costs ZERO extra
+    requests. A probe that fetched the file and discarded half of what the publisher chose to say
+    would be leaving the cheapest evidence on the floor — and a declared sitemap we are not using is
+    `CRAWLER_DESIGN.md`'s own signal that a configured path was a guess."""
+    robots_body = ("Sitemap: https://vertical.example/news.xml\n"
+                   "User-agent: *\nAllow: /\nCrawl-delay: 5\n")
+    fetch = _fetcher({"/robots.txt": robots_body, "/feed.xml": FEED % _items(12),
+                      "vertical.example/": LANDING})
+    r = sv.validate(_cand(), fetch=fetch)
+    assert r["sitemaps"] == ["https://vertical.example/news.xml"]
+    gate1 = next(g for g in r["gates"] if g.number == 1)
+    assert "Crawl-delay: 5s" in gate1.detail and "1 sitemap" in gate1.detail
+    # Three requests and no more: robots.txt, the landing page, the feed. Never an article.
+    assert r["requests"] == 3
+
+
+def test_an_offline_run_reports_no_sitemaps_it_never_fetched():
+    """The symmetric honesty rule. Sitemaps are evidence from a file we read; with no fetcher there
+    is no file, so the list must be empty rather than stale or invented."""
+    assert sv.validate(_cand())["sitemaps"] == []
+
+
+def test_a_publishers_crawl_delay_is_honoured_not_just_printed():
+    """Reporting a `Crawl-delay` we then ignore would be worse than not reading it. The limiter
+    takes the publisher's number for every request after the one that revealed it."""
+    slept = []
+    limiter = __import__("crawler").RateLimiter(default_interval=2.0, sleep=slept.append,
+                                                clock=iter([0.0] * 12).__next__)
+    fetch = _fetcher({"/robots.txt": "User-agent: *\nAllow: /\nCrawl-delay: 30\n",
+                      "/feed.xml": FEED % _items(12), "vertical.example/": LANDING})
+    sv.validate(_cand(), fetch=fetch, limiter=limiter)
+    assert max(slept) >= 30, f"the publisher asked for 30s between requests; waits were {slept}"
+
+
 def test_the_probe_is_rate_limited_per_host():
     """The limit protects the publisher's SERVER, so it is keyed on host — `crawler.RateLimiter`'s
     rule, reused rather than restated."""
