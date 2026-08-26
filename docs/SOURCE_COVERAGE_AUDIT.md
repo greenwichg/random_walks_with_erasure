@@ -117,6 +117,51 @@ unlocks **zero**.
 The reason is structural: a blindspot claim needs ≥ N rated publishers, and stories reaching that
 threshold already have them. Rating the tail does not convert stories that were never close.
 
+> ## ⚠ CORRECTION 2026-08-25 — the 0.85% was an instrument defect, and it was 17× low
+>
+> **Every number in this section is an undercount. `sportskeeda.com` does not unlock zero; it
+> unlocks ten.** Two defects in `audit_registry_coverage.py`, both fixed and both regression-tested:
+>
+> **The join.** `analyse` keyed its per-story sets on the coverage row's `publisher`, but that field
+> carries `engine._prettify(outlet)` while the identity map is built from the RAW row publisher. For
+> a registry-resolved outlet the two agree — `NPR` prettifies to `NPR` — so the numbers looked
+> plausible. For an **untracked** outlet stored as a bare host they do not: `somdnews.com` becomes
+> `Somdnews.Com` and never matches its `d:somdnews.com` identity. So every untracked outlet with a
+> host-form name scored **zero unlocks by construction**, and only prettify-stable names (`BelTA`,
+> `NL Times`, `PerthNow`) were ever counted. The audit was blind to most of the backlog it exists to
+> measure. It now joins on the article URL, and refuses to report if any coverage row fails to join.
+>
+> **The question's shape.** `unlocks` prices ONE row at a time — only a story exactly one rating
+> short. A batch is not one row at a time: a two-short story with two untracked members is converted
+> by rating **both**, and the per-outlet column credits it to neither.
+>
+> Re-measured on 27,825 articles / 1,535 stories:
+>
+> ```
+> untracked bucket unlocks              13  ->  146
+> CEILING: curate ALL 3,639 untracked   13  ->  220 stories (14.3%)
+>   (distinct one-short stories 100; the other +120 need a coordinated batch)
+> stories touched and STILL unconvertible: 393 at 1 short, 18 at 2 short
+> ```
+>
+> **220 against a current ~210 claims — curating everything would roughly DOUBLE them.**
+>
+> The tests could not have caught this: every fixture passed the identical publisher string to both
+> sides and gave the rows no URL at all, so none of them could detect a transform applied to one
+> side. `test_unlocks_survive_the_prettify_asymmetry` now models it and fails on the old code.
+>
+> **What this does NOT yet overturn is the verdict.** This section gave two reasons to decline
+> curation, and only the first is dead. The second — that the unrated half is *structurally
+> unrateable* rather than un-rated — is untouched, and the corrected data supports it: the top-20
+> cohort by curation value is dominated by gaming and tech verticals, and 4 of its 5 sample unlocks
+> are stories like *"All Lobby Hack Codes For Free Rewards"* and *"Call of Duty: Modern Warfare 4
+> beta requires GTX 970"*. A coverage-gap claim on a Roblox codes article is not a product win.
+>
+> The open question is therefore **how much of the 220 sits on rateable NEWS outlets** — the local-TV
+> affiliates and national dailies in the same list (`kait8.com` 6, `abc7.com` 4, `nysun.com` 2,
+> `kwch.com` 1, `nbc29.com` 2) — rather than on verticals with no left/right axis. That is one
+> `--cohort` run, and until it is done neither the old verdict nor its reversal is supported.
+
 ## Retraction
 
 **I recommended the curation backlog as where "nearly all the available value" would be. That was
