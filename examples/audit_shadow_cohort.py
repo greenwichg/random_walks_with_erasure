@@ -99,16 +99,58 @@ def carrier_index(*row_groups) -> dict:
     return carriers
 
 
+def identity_first_seen(st, reg, identities) -> tuple:
+    """``(first_seen_by_identity, catalog_articles_by_identity)`` — both over the WHOLE catalog.
+
+    Resolves the identity's spellings from the **catalog**, not from the fetched rows. An outlet can
+    arrive under several publisher strings, and asking only the ones that appear in the last 6 days
+    makes its "first seen" move whenever a variant falls out of the window — a measurement that
+    drifts for a reason having nothing to do with the outlet.
+
+    ``catalog_articles`` comes back with it because the two answer the question the other raises: a
+    first-seen that advances between runs means rows left, and that is only visible if the whole-
+    catalog count is on screen next to the windowed one."""
+    names = defaultdict(list)
+    for row in st.catalog_publishers():
+        pub = (row.get("publisher") or "").strip()
+        if not pub:
+            continue
+        ident = _identity(reg, {"publisher": pub})
+        if ident in identities:
+            names[ident].append(row)
+
+    stamps = st.publisher_first_seen({r["publisher"] for rows in names.values() for r in rows})
+    first, counts = {}, {}
+    for ident, rows in names.items():
+        got = [stamps[k] for k in ((r["publisher"] or "").strip().lower() for r in rows)
+               if k in stamps]
+        if got:
+            first[ident] = min(got)
+        counts[ident] = sum(int(r.get("articles") or 0) for r in rows)
+    return first, counts
+
+
 def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
-                 first_seen: "dict | None" = None) -> dict:
+                 first_seen: "dict | None" = None,
+                 catalog_articles: "dict | None" = None) -> dict:
     """Per outlet identity: every measurement `source_evaluation.evaluate` reads, plus the two it
     reports and never gates on.
 
-    ``first_seen`` maps a LOWER-CASED publisher name to the catalog-wide ``MIN(created_at)``, and
-    passing it is what makes ``observedDays`` mean the outlet's history rather than the fetch
-    window. Omitting it falls back to scanning the rows, which is correct only when the caller holds
-    the outlet's whole history — see :func:`observation_is_window_bound` for why the runner never
-    does."""
+    ``first_seen`` maps an outlet **IDENTITY** to the catalog-wide ``MIN(created_at)``, and passing
+    it is what makes ``observedDays`` mean the outlet's history rather than the fetch window.
+    Omitting it falls back to scanning the rows, which is correct only when the caller holds the
+    outlet's whole history — see :func:`observation_is_window_bound` for why the runner never does.
+
+    **Keyed on identity rather than on the windowed publisher strings, and that distinction is the
+    bug it fixes.** The first version gathered the strings to look up from the rows it had, so an
+    outlet arriving under several spellings only contributed the spellings that happened to appear
+    in the last 6 days. A variant falling out of the window would move the outlet's "first seen"
+    without anything about its history changing — the same shape as deriving the span from the
+    window itself, one level down. :func:`identity_first_seen` asks the catalog which strings belong
+    to the identity instead.
+
+    ``catalog_articles`` is the outlet's row count over the WHOLE catalog, printed beside the
+    window count so retention erosion is visible rather than inferred."""
     by_id = defaultdict(list)
     for r in rows:
         by_id[_identity(reg, r)].append(r)
@@ -120,15 +162,10 @@ def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
         dup = sum(1 for a in arts
                   if (t := clustering.title_tokens(a.get("title") or "")) and len(carriers[t]) > 1)
         assign = se.assignment_rate(arts, index)
-        # The EARLIEST first-seen across every raw publisher string that resolved to this identity:
-        # one outlet can arrive under several spellings, and the oldest is when we first saw it.
-        since = None
-        if first_seen is not None:
-            stamps = [s for s in ((first_seen.get((a.get("publisher") or "").strip().lower()))
-                                  for a in arts) if s]
-            since = min(stamps) if stamps else None
+        since = (first_seen or {}).get(key)
         out[key] = {
             "articles": len(arts),
+            "catalogArticles": (catalog_articles or {}).get(key),
             "observedDays": se.observed_days(arts, now=now, since=since),
             "firstSeen": since,
             "freshnessHours": se.freshness_hours(arts),
@@ -315,12 +352,16 @@ def main(argv=None) -> int:
     # MUST come from the catalog, not from `cohort`. The rows above were fetched through a 6-day
     # window, so a span derived from them cannot exceed 6 days and the 14-day gate could never be
     # satisfied by anything — the defect the first production run of this script shipped with.
-    first_seen = st.publisher_first_seen(
-        {(r.get("publisher") or "").strip().lower() for r in cohort})
+    # Resolved by IDENTITY from the catalog, not from the windowed rows' publisher strings: an
+    # outlet with several spellings would otherwise contribute only the ones the last 6 days
+    # happened to contain, and its history would move when a variant aged out.
+    identities = {_identity(reg, r) for r in cohort}
+    first_seen, catalog_articles = identity_first_seen(st, reg, identities)
 
     carriers = carrier_index(peers, cohort)
     index = se.assignment_index(stories)
-    table = outlet_stats(cohort, reg, carriers, index, first_seen=first_seen)
+    table = outlet_stats(cohort, reg, carriers, index, first_seen=first_seen,
+                         catalog_articles=catalog_articles)
 
     print(f"outlets       : {len(table):,}   "
           f"tracked {sum(1 for v in table.values() if v['tracked']):,}   "
@@ -377,12 +418,18 @@ def main(argv=None) -> int:
     print("    it has merely not been trimmed yet, and its true first-seen is unknowable from what")
     print("    we still hold. Reading a floor-pinned span as an observation would be the same")
     print("    error as reading the fetch window as one.")
+    print("    `catalog` is the outlet's row count over the WHOLE catalog, beside the window count.")
+    print("    Run this twice: if first-seen advances while `catalog` falls, retention is eroding")
+    print("    the outlet's history and the span is shrinking for a reason that is not the outlet.")
+    print(f"\n  {'window':>7} {'catalog':>8}  first seen                   outlet")
     for key, s in sorted(table.items(), key=lambda kv: (kv[1]["firstSeen"] or "9")):
         pinned = ""
         if floor and s["firstSeen"] and se.days_since(s["firstSeen"]) is not None:
             gap = (se.days_since(floor) or 0) - (se.days_since(s["firstSeen"]) or 0)
-            pinned = "   <- AT THE FLOOR, span is a lower bound" if gap < 1.0 else ""
-        print(f"  {s['canonical'][:30]:<30} {s['firstSeen'] or '(unknown)'}{pinned}")
+            pinned = "  <- AT THE FLOOR, span is a lower bound" if gap < 1.0 else ""
+        cat = f"{s['catalogArticles']:,}" if s["catalogArticles"] is not None else "?"
+        print(f"  {s['articles']:>7,} {cat:>8}  {(s['firstSeen'] or '(unknown)'):<28} "
+              f"{s['canonical'][:30]}{pinned}")
 
     print(f"\n=== what this run does NOT decide ===")
     print("  * Tier A promotion. A TIER A CANDIDATE needs the clustering counterfactual on the")

@@ -113,6 +113,25 @@ def test_outlet_stats_takes_observation_from_the_catalog_not_the_fetched_rows():
     assert catalog["echodaily.example"]["firstSeen"] == "2026-06-01T00:00:00+00:00"
 
 
+def test_identity_first_seen_finds_spellings_absent_from_the_window(tmp_path):
+    """**The drift this fixes.** An outlet arriving under several publisher strings must contribute
+    ALL of them, not only the ones the last 6 days happened to contain — otherwise its "first seen"
+    moves whenever a variant ages out of the window, and the span shifts for a reason that has
+    nothing to do with the outlet. The catalog is asked which strings belong to the identity."""
+    import store as store_mod
+    reg = outlet_registry.default_registry()
+    st = store_mod.Store(f"sqlite:///{tmp_path}/ident.db")
+    for i, pub in enumerate(["echodaily.example", "Echodaily.example"]):
+        st.upsert_feed_article(canonical_url=f"h{i}.example/a", url=f"https://h{i}.example/a",
+                               publisher=pub, source_publisher=None, title="t", description="",
+                               body=None, published_at="2026-08-01T00:00:00+00:00",
+                               source_feed="t", scored={})
+    first, counts = asc.identity_first_seen(st, reg, {"echodaily.example"})
+    assert set(first) == {"echodaily.example"}
+    # Both spellings counted, though a window holding only one of them would have seen a single row.
+    assert counts["echodaily.example"] == 2
+
+
 @pytest.mark.parametrize("verdict, tier, expect", [
     # The production case: sportskeeda is in Tier A by grandfathering, and the run printed
     # "PROMOTE TO TIER B". For an outlet already in Tier A that is a DEMOTION wearing the word

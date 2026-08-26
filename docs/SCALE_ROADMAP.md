@@ -926,6 +926,47 @@ it does not know where one is. The direction lives in the runner, which does.
   nothing in the window" and "the name is not the identity we join on" are different problems. The
   catalog knows whether it has ever held the string, so the run says which.
 
+## The third run: both open facts settled, and a drift I cannot yet explain
+
+**Run on `4ae0549`, same command.** The direction annotation printed as designed:
+
+```
+  arts  obs_d  attach  story  synd  host  fresh_h   now  outlet
+   999   28.1      75     35    0%  100%      0.1     A  sportskeeda.com  PROMOTE TO TIER B
+                                                              [*** DOWN from A — this is a DEMOTION ***]
+retention floor (oldest surviving row in the catalog): 2026-07-20T21:07:55
+  sportskeeda.com  2026-07-29T04:38:01
+```
+
+**Settled #1 — the span is real.** sportskeeda's first-seen sits **8 days 7.5 hours above** the
+retention floor, so it is not floor-pinned and `28.1d` is a genuine observation rather than a lower
+bound.
+
+**Settled #2 — `newsbytesapp.com` is not in the catalog** under that string. It was never a measured
+candidate; it came from this document's own example command. Worth stating plainly, because an
+example string that reads like a finding is how a guess becomes a fact.
+
+**Not settled — the first-seen moved.** Between the two runs, 17m 43s apart on the wall clock,
+sportskeeda's first-seen advanced **50 minutes** (`03:47:53` → `04:38:01`). Something removed rows,
+or the query saw a different set. Two candidates, and I could only rule on one:
+
+* **A bug I could see by inspection, now fixed.** The publisher strings looked up were gathered from
+  the *fetched rows*. An outlet arriving under several spellings therefore contributed only the
+  spellings the last 6 days happened to contain, so a variant ageing out of the window moves its
+  "first seen" with nothing about its history having changed — the same shape as deriving the span
+  from the window, one level down. `identity_first_seen` now asks the **catalog** which strings
+  belong to the identity.
+* **Retention erosion**, which I cannot confirm from the output I have. It would mean the oldest
+  rows of a high-volume outlet are being trimmed, so its observable history shrinks from below while
+  the global floor stays put. The run now prints each outlet's **whole-catalog row count beside the
+  window count**, so a second run answers it directly: first-seen advancing while `catalog` falls is
+  erosion; first-seen stable is the spelling bug that is now fixed.
+
+The honest status: **the 50-minute drift is 0.12% of a 28-day span and changes no verdict here**,
+but a first-seen that can move for reasons other than the outlet's history is the same defect class
+as the two already corrected in this Part, and it now has an instrument pointed at it instead of an
+explanation.
+
 ## What the run does say, now that the numbers can be read
 
 The four measurements that were **not** window-bound stand, and sportskeeda's profile is coherent:
@@ -1008,6 +1049,8 @@ production bars — a whole-corpus measurement, not a per-outlet one. `evaluate`
 | **a verdict is read against the outlet's CURRENT tier** — `PROMOTE TO TIER B` on a Tier A outlet prints as a demotion | unit (7 cases) + fixture run | ✅ (after the second production run) |
 | an `INSUFFICIENT *` verdict carries **no** direction — it is not an instruction | unit | ✅ |
 | an outlet pinned to the **retention floor** is marked as a lower bound | unit + fixture run | ✅ |
+| **first-seen resolves the identity's spellings from the CATALOG**, not from the windowed rows | unit | ✅ (after the third production run) |
+| whole-catalog row count printed beside the window count, so retention erosion is visible | fixture run | ✅ |
 | `--as-if` names that matched nothing are listed, **with which cause** | fixture run | ✅ |
 | too-new ⇒ `INSUFFICIENT DATA`, never `REJECT` | unit | ✅ |
 | no verdict branches on `assignmentRate` / `assignmentStories` / `attached` | structural, both modules | ✅ |
