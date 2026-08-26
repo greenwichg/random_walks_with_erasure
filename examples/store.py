@@ -2279,6 +2279,45 @@ class Store:
         with self.session() as s:
             return [{"publisher": p, "articles": int(n)} for p, n in s.execute(q).all() if p]
 
+    def publisher_first_seen(self, publishers=None) -> dict:
+        """``{lower-cased publisher: ISO timestamp}`` — ``MIN(created_at)`` per outlet, over the
+        **WHOLE catalog**, never a window.
+
+        The whole-catalog part is the point, and a production run is why it exists (M8,
+        `docs/SCALE_ROADMAP.md` Part 10). ``audit_shadow_cohort`` first derived "how long have we
+        been seeing this outlet" from the rows it had already fetched — but those rows come from
+        ``story_service._fetch``, which is bounded to a **6-day** window. So the observation span
+        could never exceed 6 days, the 14-day gate could never be satisfied, and every outlet
+        evaluated for the rest of time would return ``INSUFFICIENT DATA``. Measured on production:
+        `sportskeeda.com`, 989 articles, reported ``observed 6.0d`` — exactly the window, because
+        that is all the query could see.
+
+        The ceiling that remains is **retention**, and it is honest rather than hidden: an outlet
+        cannot be observed for longer than its oldest surviving row. With age-based retention off
+        (the shipped default) that is the count cap, which currently reaches back months.
+
+        ``publishers`` optionally narrows to a set of lower-cased names — the cohort, so a run over
+        20 outlets does not aggregate the whole catalog."""
+        q = (select(FeedArticle.publisher, func.min(FeedArticle.created_at))
+             .where(FeedArticle.publisher.is_not(None))
+             .group_by(FeedArticle.publisher))
+        if publishers is not None:
+            wanted = {p.strip().lower() for p in publishers if p and p.strip()}
+            if not wanted:
+                return {}
+            q = q.where(func.lower(FeedArticle.publisher).in_(sorted(wanted)))
+        with self.session() as s:
+            out = {}
+            for pub, first in s.execute(q).all():
+                if not pub or first is None:
+                    continue
+                key = pub.strip().lower()
+                iso = first.isoformat() if hasattr(first, "isoformat") else str(first)
+                # An outlet can appear under several capitalisations; keep the EARLIEST.
+                if key not in out or iso < out[key]:
+                    out[key] = iso
+            return out
+
     # -- content lifecycle (Commit 18: extension-created articles) --------------------
     def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:
         """Promote a ``provisional`` article to active once ``min_readers`` **distinct** users have

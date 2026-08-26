@@ -71,11 +71,60 @@ def test_outlet_stats_reports_an_undatable_outlet_as_unknown_not_as_zero():
     assert stats["echodaily.example"]["observedDays"] is None
 
 
+def test_publisher_first_seen_reads_the_whole_catalog_and_survives_capitalisation(tmp_path):
+    """The store side of the fix. `MIN(created_at)` per outlet, unbounded by any window, and an
+    outlet arriving under two spellings keeps the EARLIEST — that is when we first saw it."""
+    import store as store_mod
+    st = store_mod.Store(f"sqlite:///{tmp_path}/fs.db")
+    for i, (pub, when) in enumerate([("Echo Daily", "2026-06-01T00:00:00+00:00"),
+                                     ("echo daily", "2026-08-01T00:00:00+00:00"),
+                                     ("Other Outlet", "2026-07-01T00:00:00+00:00")]):
+        st.upsert_feed_article(canonical_url=f"h{i}.example/a", url=f"https://h{i}.example/a",
+                               publisher=pub, source_publisher=None, title="t", description="",
+                               body=None, published_at=when, source_feed="t", scored={})
+    seen = st.publisher_first_seen()
+    assert set(seen) == {"echo daily", "other outlet"}
+
+    narrowed = st.publisher_first_seen({"echo daily"})
+    assert set(narrowed) == {"echo daily"}
+    assert st.publisher_first_seen(set()) == {}
+
+
 def test_member_key_uses_the_display_url_the_coverage_entry_carries():
     """`audit_source_cohort.member_key`'s bug, guarded in the second script that needs the same
     join. `canonicalUrl` is already lower-cased and stripped, so it misses on most real rows."""
     row = {"url": "https://Example.com/Path/?utm_source=x", "canonicalUrl": "example.com/path"}
     assert asc._member_key(row) == "https://Example.com/Path/?utm_source=x"
+
+
+def test_outlet_stats_takes_observation_from_the_catalog_not_the_fetched_rows():
+    """The production defect, at the runner's own seam. Rows fetched through a 6-day window report
+    a 6-day history; `first_seen` is the catalog-wide MIN(created_at) and must win."""
+    reg = outlet_registry.default_registry()
+    row = _row("echodaily.example", "echodaily.example", HEADLINE,
+               created=datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc))
+    args = (reg, asc.carrier_index([row]), se.assignment_index([]))
+
+    windowed = asc.outlet_stats([row], *args, now=NOW)
+    catalog = asc.outlet_stats([row], *args, now=NOW,
+                               first_seen={"echodaily.example": "2026-06-01T00:00:00+00:00"})
+    assert windowed["echodaily.example"]["observedDays"] == pytest.approx(6.0, abs=0.01)
+    assert catalog["echodaily.example"]["observedDays"] > 80
+    assert catalog["echodaily.example"]["firstSeen"] == "2026-06-01T00:00:00+00:00"
+
+
+def test_window_bound_observation_is_detected():
+    """A gate that cannot fire is worse than no gate — it reads as a measurement. The runner checks
+    rather than trusting, because this exact shape has now appeared three times in its instruments."""
+    bound = {"a": {"observedDays": 6.0}, "b": {"observedDays": 5.2}}
+    free = {"a": {"observedDays": 6.0}, "b": {"observedDays": 41.0}}
+    assert asc.observation_is_window_bound(bound, 6.0) is True
+    assert asc.observation_is_window_bound(free, 6.0) is False
+
+
+def test_window_bound_check_says_nothing_when_no_outlet_is_datable():
+    """No spans is not evidence of the defect — claiming it would be its own false measurement."""
+    assert asc.observation_is_window_bound({"a": {"observedDays": None}}, 6.0) is False
 
 
 def test_self_scoring_guard_catches_a_cohort_scored_against_its_own_coverage():

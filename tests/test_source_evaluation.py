@@ -61,6 +61,31 @@ def test_observed_days_measures_created_at_not_published_at():
     assert se.observed_days(rows, now=NOW) == pytest.approx(2 / 24, abs=0.01)
 
 
+def test_observed_days_prefers_the_catalog_first_seen_over_the_fetched_rows():
+    """**The defect the first production run shipped with.** The runner's rows come from
+    `story_service._fetch`, which is bounded to a 6-day window, so a span derived from them can
+    never exceed 6 days — and the 14-day gate below can never be satisfied by anything.
+    `sportskeeda.com` reported `observed 6.0d` on 989 articles: the window, printed as though it
+    were the outlet's history. `since` is the catalog-wide MIN(created_at)."""
+    windowed = [_row("a", created=NOW - timedelta(days=5)),
+                _row("b", created=NOW - timedelta(days=6))]
+    assert se.observed_days(windowed, now=NOW) == pytest.approx(6.0, abs=0.01)
+    assert se.observed_days(windowed, now=NOW,
+                            since=_iso(NOW - timedelta(days=40))) == pytest.approx(40.0, abs=0.01)
+
+
+def test_a_window_bound_span_cannot_clear_the_gate_but_the_catalog_one_can():
+    """The two halves stated together, because the defect was invisible in either alone: the same
+    outlet is INSUFFICIENT DATA on the windowed span and reaches a real verdict on the catalog one."""
+    rows = [_row("a", created=NOW - timedelta(days=6))]
+    base = {"articles": 989, "syndication": 0.0, "hostStability": 1.0}
+    windowed = se.evaluate({**base, "observedDays": se.observed_days(rows, now=NOW)})
+    catalog = se.evaluate({**base, "observedDays": se.observed_days(
+        rows, now=NOW, since=_iso(NOW - timedelta(days=40)))})
+    assert windowed[0] == "INSUFFICIENT DATA"
+    assert catalog[0] == "PROMOTE TO TIER B"
+
+
 def test_observed_days_is_none_when_undatable():
     """`None`, never 0.0 — a missing signal must not read as "seen for zero days", which would be a
     rejection rather than an absence."""

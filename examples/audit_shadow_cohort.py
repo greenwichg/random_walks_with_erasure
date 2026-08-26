@@ -99,9 +99,16 @@ def carrier_index(*row_groups) -> dict:
     return carriers
 
 
-def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None) -> dict:
+def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
+                 first_seen: "dict | None" = None) -> dict:
     """Per outlet identity: every measurement `source_evaluation.evaluate` reads, plus the two it
-    reports and never gates on."""
+    reports and never gates on.
+
+    ``first_seen`` maps a LOWER-CASED publisher name to the catalog-wide ``MIN(created_at)``, and
+    passing it is what makes ``observedDays`` mean the outlet's history rather than the fetch
+    window. Omitting it falls back to scanning the rows, which is correct only when the caller holds
+    the outlet's whole history — see :func:`observation_is_window_bound` for why the runner never
+    does."""
     by_id = defaultdict(list)
     for r in rows:
         by_id[_identity(reg, r)].append(r)
@@ -113,9 +120,17 @@ def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None) -> 
         dup = sum(1 for a in arts
                   if (t := clustering.title_tokens(a.get("title") or "")) and len(carriers[t]) > 1)
         assign = se.assignment_rate(arts, index)
+        # The EARLIEST first-seen across every raw publisher string that resolved to this identity:
+        # one outlet can arrive under several spellings, and the oldest is when we first saw it.
+        since = None
+        if first_seen is not None:
+            stamps = [s for s in ((first_seen.get((a.get("publisher") or "").strip().lower()))
+                                  for a in arts) if s]
+            since = min(stamps) if stamps else None
         out[key] = {
             "articles": len(arts),
-            "observedDays": se.observed_days(arts, now=now),
+            "observedDays": se.observed_days(arts, now=now, since=since),
+            "firstSeen": since,
             "freshnessHours": se.freshness_hours(arts),
             "syndication": dup / max(1, len(arts)),
             "hosts": len(hosts),
@@ -130,6 +145,22 @@ def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None) -> 
             "canonical": (o.canonical if o else key),
         }
     return out
+
+
+def observation_is_window_bound(table: dict, window_days: float) -> bool:
+    """Does EVERY outlet's observation span sit at or below the fetch window?
+
+    The signature of the defect the first production run shipped with. ``observedDays`` was derived
+    from the fetched rows, and the fetch is bounded to `story_service.scan_days()` — 6 days — so no
+    outlet could ever clear the 14-day gate and `INSUFFICIENT DATA` was the only verdict the harness
+    could reach. It printed one clean, plausible table and told us nothing.
+
+    A gate that cannot fire is worse than no gate: it reads as a measurement. This audit series has
+    now found the same shape in its own instruments three times, so the runner checks rather than
+    trusts. False positives are possible and cheap — a genuinely new cohort really is younger than
+    the window, and the message says so."""
+    spans = [v["observedDays"] for v in table.values() if v["observedDays"] is not None]
+    return bool(spans) and max(spans) <= window_days + 0.01
 
 
 def self_scored(cohort: list, stories: list) -> int:
@@ -173,15 +204,20 @@ def main(argv=None) -> int:
         # Rebuild WITHOUT the cohort. Filtering the rows directly rather than through the SQL
         # prefilter, for the reason `audit_source_cohort` gives: the cap is not binding, so the two
         # are equivalent for the build, and this keeps the audit off the query path entirely.
-        def _in_cohort(r):
-            return (_identity(reg, r) in as_if
-                    or (r.get("publisher") or "").strip().lower() in as_if)
-        cohort = [r for r in tier_a if _in_cohort(r)]
-        keep = [r for r in tier_a if not _in_cohort(r)]
+        def _names(r):
+            return {_identity(reg, r), (r.get("publisher") or "").strip().lower()}
+        cohort = [r for r in tier_a if _names(r) & as_if]
+        keep = [r for r in tier_a if not (_names(r) & as_if)]
+        # Which of the names given actually matched. A name that matched nothing is a typo or an
+        # identity mismatch, and evaluating 1 of 2 named outlets while reporting neither fact is
+        # the silent-partial-result failure this audit series keeps correcting.
+        matched = set().union(*(_names(r) for r in cohort)) & as_if if cohort else set()
+        unmatched = sorted(as_if - matched)
         stories = story_service.build_stories(keep, entities=ents, event_verdicts=verdicts_in)
-        mode = f"--as-if: {len(as_if)} named outlets, rebuilt without them"
+        mode = f"--as-if: {len(matched)} of {len(as_if)} named outlets, rebuilt without them"
         peers = keep
     else:
+        unmatched = []
         cohort = _read_shadow(st, window_start=window_start,
                               cap=story_service.max_scan_default())
         keep = tier_a
@@ -194,6 +230,12 @@ def main(argv=None) -> int:
     print(f"Tier A built  : {len(keep):,} articles -> {len(stories):,} stories "
           f"({sum(len(s['coverage']) for s in stories):,} covered)")
     print(f"cohort        : {len(cohort):,} articles")
+    if unmatched:
+        print(f"\n*** {len(unmatched)} NAMED OUTLET(S) MATCHED NOTHING: {', '.join(unmatched)}")
+        print("    Either they published nothing in this window, or the name is not the identity")
+        print("    this script joins on — the registry canonical, else the raw publisher string")
+        print("    lower-cased. Check against audit_source_cohort.py's table. Everything below")
+        print("    describes ONLY the outlets that matched.")
 
     if not cohort:
         # An empty table is not a finding, and printing one would read as "nothing here is worth
@@ -224,14 +266,31 @@ def main(argv=None) -> int:
         print("    construction. Refusing to report.")
         return 1
 
+    # ------------------------------------------------------------------ observation, unwindowed
+    #
+    # MUST come from the catalog, not from `cohort`. The rows above were fetched through a 6-day
+    # window, so a span derived from them cannot exceed 6 days and the 14-day gate could never be
+    # satisfied by anything — the defect the first production run of this script shipped with.
+    first_seen = st.publisher_first_seen(
+        {(r.get("publisher") or "").strip().lower() for r in cohort})
+
     carriers = carrier_index(peers, cohort)
     index = se.assignment_index(stories)
-    table = outlet_stats(cohort, reg, carriers, index)
+    table = outlet_stats(cohort, reg, carriers, index, first_seen=first_seen)
 
     print(f"outlets       : {len(table):,}   "
           f"tracked {sum(1 for v in table.values() if v['tracked']):,}   "
           f"rated {sum(1 for v in table.values() if v['rated']):,}   "
           f"[membership guard passed: 0 self-scored]")
+
+    scan = story_service.scan_days()
+    if observation_is_window_bound(table, scan):
+        print(f"\n*** OBSERVATION LOOKS WINDOW-BOUND: no outlet exceeds {scan:g}d, the fetch window.")
+        print("    That is the signature of observedDays being derived from the fetched rows rather")
+        print(f"    than the catalog, in which case NOTHING can ever clear the "
+              f"{se.OBSERVATION_DAYS}d gate and")
+        print("    INSUFFICIENT DATA is the only verdict this run can reach. If the cohort really")
+        print("    is newer than the window this is a true reading — check `first_seen` below.")
 
     # ------------------------------------------------------------------ the table
     print(f"\n=== the cohort, ranked by articles that WOULD attach to a story ===")
@@ -260,6 +319,12 @@ def main(argv=None) -> int:
     for key, s in sorted(table.items(), key=lambda kv: -kv[1]["articles"])[:args.show]:
         v, why = se.evaluate(s)
         print(f"  {s['canonical'][:30]:<30} {v:<20} {why}")
+
+    print(f"\n=== first seen (catalog-wide MIN(created_at), NOT the fetch window) ===")
+    print("    Bounded by retention: an outlet cannot be observed for longer than its oldest")
+    print("    surviving row. That ceiling is real and stated rather than hidden.")
+    for key, s in sorted(table.items(), key=lambda kv: (kv[1]["firstSeen"] or "9")):
+        print(f"  {s['canonical'][:30]:<30} {s['firstSeen'] or '(unknown)'}")
 
     print(f"\n=== what this run does NOT decide ===")
     print("  * Tier A promotion. A TIER A CANDIDATE needs the clustering counterfactual on the")

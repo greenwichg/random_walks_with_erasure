@@ -813,8 +813,9 @@ contradicted. So the rule was **extracted rather than reimplemented**.
 | `examples/clustering.py` | `pair_admits(tx, ty, time_x, time_y, …)` — the pairwise rule, lifted out of `cluster`'s inner `pair_ok`, which now delegates to it. One definition, and any change to it moves both. |
 | `examples/source_evaluation.py` | the policy module: `observed_days`, `freshness_hours`, `assignment_index`, `would_attach`, `assignment_rate`, `evaluate`. Pure — no store, no network, no env, no writes. |
 | `examples/audit_shadow_cohort.py` | the runner. Reads the lane with `include_shadow=True`, measures, prints a verdict per outlet. Read-only. |
-| `tests/test_source_evaluation.py` | 22 tests |
-| `tests/test_audit_shadow_cohort.py` | 9 tests |
+| `examples/store.py` | `publisher_first_seen` — catalog-wide `MIN(created_at)` per outlet (added by the fix below) |
+| `tests/test_source_evaluation.py` | 24 tests |
+| `tests/test_audit_shadow_cohort.py` | 13 tests |
 
 `cluster`'s output is **byte-identical** after the extraction, verified on 4,000 synthetic items
 across three parameter regimes against `HEAD`: defaults 30 clusters, quorum+idf 338, `min_shared=2`
@@ -832,7 +833,71 @@ have now recurred often enough to be worth stating as a pattern:
   offline over a built story set, not as a serving path. `assignment_index` + `would_attach` is that
   measurement in ~20 lines, and it costs the builder nothing because it never runs inside a build.
 
-## The two traps, and the guards that are in the code rather than in this document
+## ⚠ The first production run found a third trap — in M8 itself
+
+**Run on `0eed1c6`, `--as-if "sportskeeda.com,newsbytesapp.com"`:**
+
+```
+Tier A built  : 26,926 articles -> 1,494 stories (6,093 covered)
+cohort        : 989 articles
+  arts  obs_d  attach  story   synd   host  fresh_h  outlet
+   989    6.0      74     35     0%   100%      0.1  sportskeeda.com   INSUFFICIENT DATA
+```
+
+`observed 6.0d` is not a fact about sportskeeda. It is **the fetch window, reported as though it
+were the outlet's history.** `observed_days` scanned `createdAt` over the rows the runner already
+held, and those rows come from `story_service._fetch`, which is bounded to `scan_days()` = **6
+days**. So the span could never exceed 6, the 14-day gate could never be satisfied **by any outlet,
+ever**, and `INSUFFICIENT DATA` was the only verdict the harness could reach. It printed one clean,
+plausible table and told us nothing.
+
+This is the same shape this series keeps finding in its own instruments — Part 4's language
+breakdown, `audit_source_cohort`'s membership lookup, `audit_registry_coverage`'s prettify
+asymmetry — and it is worth naming: **a gate that cannot fire is worse than no gate, because it
+reads as a measurement.** My own note when planning M8 said the observation window was "derivable
+from `MIN(created_at)` per publisher"; I then built it from the windowed rows instead.
+
+**The fix**, shipped as a follow-up:
+
+* `store.publisher_first_seen(publishers)` — `MIN(created_at)` per outlet over the **whole
+  catalog**, never a window. Bounded now only by *retention*, which is a real ceiling and is stated
+  in the output rather than hidden. With age-based retention off (the shipped default) it reaches
+  back months.
+* `source_evaluation.observed_days(..., since=...)` — the catalog timestamp overrides the row scan.
+  The row scan stays for callers that genuinely hold an outlet's whole history.
+* `audit_shadow_cohort.observation_is_window_bound(table, scan_days)` — if **no** outlet's span
+  exceeds the fetch window, the run says so in the output. False positives are possible and cheap: a
+  genuinely new cohort really is younger than the window, and a `first seen` section is printed so
+  the reader can tell the two apart.
+
+Verified on a fixture reproducing the production shape: an outlet whose rows all sit inside a 6-day
+window but whose catalog first-seen is 40 days back now reports `40.0` and reaches
+`PROMOTE TO TIER B` — the gate fires in the pass direction for the first time.
+
+**A second, smaller reporting gap in the same run:** two outlets were named, one matched, and the
+output said nothing about the other. `newsbytesapp.com` contributed no rows and the run reported
+`--as-if: 2 named outlets` regardless. Unmatched names are now listed explicitly, with the note that
+everything below describes only what matched.
+
+## What the run does say, now that the numbers can be read
+
+The four measurements that were **not** window-bound stand, and sportskeeda's profile is coherent:
+0% syndication, 100% host stability, 0.1h median fetch lag, 989 articles in 6 days (~165/day). That
+is an original publisher on its own domain, polled fast — not a republisher, and not a redirect
+farm. The two `REJECT` criteria correctly do not fire.
+
+Its attach rate is **74 of 989 (7.5%)**, touching 35 of 1,494 stories. Stated as capacity: it is
+**3.7% of the Tier A corpus** contributing **1.2% of coverage**. That is the profile of a vertical —
+high volume, genuine reporting, low overlap with the general-news spine.
+
+**This does not license a demotion, and the discipline is the whole point.** Attach rate is not a
+gate, by a rule adopted *before* this number existed and for reasons that survive it. Nor does
+capacity bind: 26,926 against the 83,000 Tier A budget means 3.7% is not scarce. What the number is
+good for is the *next* question — whether a vertical belongs in a general-news clustering corpus at
+all — and that is a product question with a counterfactual attached, not something this table
+decides.
+
+## The two traps found before the first run, and the guards that are in the code rather than in this document
 
 **1. Self-scoring.** If the assignment index contains the cohort's own coverage, every article
 attaches to itself and the rate is ~100% *by construction* — a number that looks like a strong
@@ -885,6 +950,9 @@ production bars — a whole-corpus measurement, not a per-outlet one. `evaluate`
 | `would_attach` is deterministic across runs on identical input | unit | ✅ |
 | the inverted index is exact, not approximate — pinned against a brute-force scan | unit | ✅ |
 | `observed_days` reads `createdAt`, never `publishedAt` | unit | ✅ |
+| **observation comes from the catalog, not the fetch window** — the same outlet is `INSUFFICIENT DATA` on the windowed span and reaches a real verdict on the catalog one | unit, both seams | ✅ (after the first production run) |
+| a window-bound observation is **detected and reported** | unit + fixture run | ✅ |
+| `--as-if` names that matched nothing are listed | fixture run | ✅ |
 | too-new ⇒ `INSUFFICIENT DATA`, never `REJECT` | unit | ✅ |
 | no verdict branches on `assignmentRate` / `assignmentStories` / `attached` | structural, both modules | ✅ |
 | syndication sees the Tier A corpus, not the cohort alone | unit (1 carrier vs 2) | ✅ |

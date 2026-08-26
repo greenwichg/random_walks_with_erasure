@@ -80,13 +80,34 @@ def _parse(value) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def observed_days(rows: list, *, now: Optional[datetime] = None) -> Optional[float]:
+def days_since(value, *, now: Optional[datetime] = None) -> Optional[float]:
+    """Days between ``value`` (an ISO timestamp) and ``now``, or ``None`` when unparseable."""
+    when = _parse(value)
+    if when is None:
+        return None
+    return round(((now or datetime.now(timezone.utc)) - when).total_seconds() / 86400.0, 2)
+
+
+def observed_days(rows: list, *, now: Optional[datetime] = None,
+                  since=None) -> Optional[float]:
     """How long the catalog has been seeing this outlet, in days, or ``None`` when undatable.
 
     From ``createdAt`` — when the row landed — never ``publishedAt``. GDELT and other backfilling
     providers insert articles published days earlier, so a published-at span measures the news cycle
     rather than our observation of the source. Same distinction `capacity_report.ingestion_rate`
-    makes, and for the same reason."""
+    makes, and for the same reason.
+
+    ``since`` overrides the row scan with a catalog-wide first-seen timestamp, and **callers holding
+    a windowed row set must pass it.** The first production run of `audit_shadow_cohort` did not:
+    its rows came from ``story_service._fetch``, which is bounded to a 6-day window, so the span it
+    computed could not exceed 6 days and the 14-day gate below could never be satisfied by anything.
+    `sportskeeda.com` reported ``observed 6.0d`` on 989 articles — the window, reported as though it
+    were the outlet's history. See ``store.publisher_first_seen``.
+
+    The row scan is kept for callers that genuinely hold the outlet's whole history (tests, and any
+    unbounded read), because it needs no store."""
+    if since is not None:
+        return days_since(since, now=now)
     seen = [d for d in (_parse(r.get("createdAt")) for r in rows) if d]
     if not seen:
         return None
