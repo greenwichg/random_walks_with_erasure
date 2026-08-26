@@ -69,7 +69,11 @@ flowchart TB
 
 ## Design principles
 
-1. **Every ingested article remains searchable** unless removed by retention or moderation.
+1. **Every ingested article remains searchable** unless removed by retention or moderation, **or its
+   outlet is in the `shadow` lane** (M5). Shadow is the third exception and it is deliberate: an
+   outlet under evaluation is stored, deduped and attributed, and surfaced to nobody until it is
+   promoted. It *withholds*, it never discards — the rows are in ① the whole time, and
+   `include_shadow=True` reveals them to evaluation paths.
 2. **Recommendation eligibility is independent of searchability.** A non-recommendable article
    (e.g. an unknown-outlet GDELT item with no resolvable lean) is still fully searchable.
 3. **Clustering eligibility is independent of both.** A Tier B outlet's article is searchable and
@@ -88,6 +92,8 @@ flowchart TB
 |---|---|
 | A no-lean article is **searchable** (in ①) but **excluded from ②** | behavioral test: `search.search` returns it; the qbias serializer gives it an empty `bias_rating` → dropped |
 | A **Tier B article is searchable (①) but never enters ②′**, and its presence leaves the Tier A story set **byte-identical** | behavioral test: `search.search` returns it, `_fetch` does not, and `cluster_from_store` fingerprints match a catalog where the row never existed — with a **control arm** proving the same article does move the story set when tiering is off |
+| A **`shadow` article is stored but reaches NO reader surface** — not Search, not Discover, not a facet — while the same query with `include_shadow=True` still sees it | behavioral test asserting Tier B **is** searchable and shadow is not, in the same fixture, so the distinction cannot collapse |
+| **Shadow exclusion is the store DEFAULT, never a caller opt-in** | structural test on the signature: seven reader surfaces funnel through `search_feed_articles`, and enforcing at each is how shadow came to be half implemented. The default makes a NEW surface safe the day it is written |
 | **The clustering corpus is selected, not merely fetched** | structural test: `story_service._fetch` calls `corpus.select` and keeps the pre-pagination `total` (the only thing that makes a truncated window detectable) |
 | **Search / Discover / Stories / Story-Intelligence endpoints never read ②** | structural test: their source references no `active.backend` / `active.personalizer` / `_serve(` |
 | **`/api/recommendations` reads ② (the projection), not ① directly** | structural test: its source references `active.` and never `list_feed_articles` |

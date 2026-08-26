@@ -178,6 +178,82 @@ def test_without_tiering_that_same_article_would_have_changed_the_story(monkeypa
         "containment test above is vacuous")
 
 
+# --------------------------------------------------------------------------- #
+# The shadow lane — M5. Tier B is searchable; shadow is surfaced NOWHERE.
+# --------------------------------------------------------------------------- #
+def test_a_shadow_outlet_is_stored_but_reaches_no_reader_surface(monkeypatch):
+    """The distinction the whole tier split rests on: **Tier B is searchable, shadow is not.**
+
+    A Tier B outlet is a real source that simply does not form stories, so hiding it would delete
+    the point of the tier. A shadow outlet has not been evaluated yet, so nothing about it should
+    reach a reader — it is being watched, not published.
+
+    Before M5 this was documented and not true. `corpus.tier_of` returned "shadow" and its docstring
+    said "surfaced nowhere", but the boundary was enforced in `story_service._fetch` alone, leaving
+    every shadow article fully searchable."""
+    monkeypatch.setenv("RWE_CORPUS_SHADOW", "shadow.example")
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a", "NPR", -1.0, "Senate passes the funding bill tonight")
+    _add(st, "https://tierb.example/b", "tierb.example", None, "Senate passes the funding bill tonight")
+    _add(st, "https://shadow.example/c", "shadow.example", None, "Senate passes the funding bill tonight")
+
+    urls = {r["url"] for r in search.search(st)["results"]}
+    assert "https://npr.org/a" in urls
+    assert "https://tierb.example/b" in urls, "Tier B is SEARCHABLE — that is what distinguishes it"
+    assert "https://shadow.example/c" not in urls, "a shadow article must reach no reader surface"
+
+    # ...and it is still in the catalog. Shadow withholds, it does not discard.
+    assert "https://shadow.example/c" in {
+        r["canonicalUrl"] for r in st.list_feed_articles(limit=100)}
+    assert st.search_feed_articles(include_shadow=True)[1] == 3, (
+        "an evaluation path must be able to see the lane it evaluates")
+
+
+def test_a_shadow_publisher_is_not_offered_as_a_filter(monkeypatch):
+    """A facet list is where a half-enforced boundary shows first: naming an outlet in the dropdown
+    that returns nothing advertises the lane and then fails the reader."""
+    monkeypatch.setenv("RWE_CORPUS_SHADOW", "shadow.example")
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a", "NPR", -1.0, "A headline about the funding bill")
+    _add(st, "https://shadow.example/c", "shadow.example", None, "Another headline entirely")
+    pubs = st.feed_article_facets()["publishers"]
+    assert "NPR" in pubs and "shadow.example" not in pubs
+    assert "shadow.example" in st.feed_article_facets(include_shadow=True)["publishers"]
+
+
+def test_shadow_exclusion_is_the_store_DEFAULT_not_a_caller_opt_in():
+    """The design decision M5 turns on, pinned so it cannot quietly invert.
+
+    Seven reader surfaces funnel through `search_feed_articles`. Enforcing shadow at each of them
+    is how it came to be half implemented the first time. Defaulting to exclusion means a NEW
+    surface is safe the day it is written, and the failure mode of forgetting the flag is "the
+    evaluation harness cannot see what it evaluates" — loud — instead of "unvetted sources reached
+    readers" — silent."""
+    import inspect
+    sig = inspect.signature(store_mod.Store.search_feed_articles)
+    assert sig.parameters["include_shadow"].default is False, (
+        "shadow must be excluded by DEFAULT; an opt-in default fails toward publishing unvetted "
+        "sources, which is the failure this milestone exists to remove")
+    for name in ("feed_article_facets", "feed_article_country_facets"):
+        assert inspect.signature(getattr(store_mod.Store, name)).parameters[
+            "include_shadow"].default is False, f"{name} must exclude shadow by default too"
+
+
+def test_nothing_in_shadow_changes_nothing(monkeypatch):
+    """Shipped state. With no shadow configured the exclusion set is empty, no SQL term is added,
+    and every surface returns exactly what it did before M5."""
+    monkeypatch.delenv("RWE_CORPUS_SHADOW", raising=False)
+    import corpus as corpus_mod
+    assert corpus_mod.shadow_exclusions() == frozenset()
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a", "NPR", -1.0, "A headline about the funding bill")
+    _add(st, "https://other.example/b", "other.example", None, "Another headline entirely")
+    assert st.search_feed_articles()[1] == st.search_feed_articles(include_shadow=True)[1] == 2
+    assert st.feed_article_facets()["publishers"] == \
+           st.feed_article_facets(include_shadow=True)["publishers"]
+
+
 def test_the_clustering_corpus_is_selected_not_merely_fetched():
     """Structural, so the seam cannot erode. Every story build funnels through `_fetch`; if a later
     change re-reads the store beside it, the boundary quietly stops applying and Tier B rows return

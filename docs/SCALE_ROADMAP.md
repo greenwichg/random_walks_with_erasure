@@ -1,6 +1,6 @@
 # Scaling to a 50,000-source universe — the dependency-ordered path
 
-**Status:** design, with **M1 and M2 built and shipped off** (Parts 7 and 8) ·
+**Status:** design, with **M1, M2 and M5 built and shipped off** (Parts 7, 8 and 9) ·
 **Companions:** `CRAWLER_ARCHITECTURE_AUDIT.md` (how we fetch), `SOURCE_COVERAGE_AUDIT.md` (which
 publishers we carry and what they do inside), `CORPUS_ARCHITECTURE.md` (the corpus contract this
 roadmap extends — now amended to four datasets), `PERFORMANCE.md` (every cost constant quoted below).
@@ -370,7 +370,7 @@ M1  corpus boundary ──┬── M2  bound Tier A + fix the count caps ──
 | M2 | Bound Tier A; replace count caps with tier-aware, age-based bounds; precompute `readingMinutes` at ingest so `_fetch` can narrow (31% of the build) | M1 | closes breaks #1 and #2 |
 | M3 | Storage substrate: Postgres or partitioned SQLite, Tier B without `body`, real search index, retention by age-per-tier | M1 (the tier column must exist before the migration, or you migrate twice) | closes break #5; long pole; parallelizable with M6 |
 | M4 | Tier B story attachment by assignment + the byte-identical containment test | M1, M2 | this is what makes Tier B visible in stories |
-| M5 | Shadow ingest lane; amend the corpus contract; extend the guardrail tests | M1, M3, M6 | nowhere safe to put candidates before this |
+| M5 | Shadow ingest lane; amend the corpus contract; extend the guardrail tests | M1 (**M3/M6 did not bind — see Part 9**) | nowhere safe to put candidates before this |
 | M6 | Crawler fan-out: poller out of the API process, narrow the global lock, worker leases off `next_due_at`, raise the interval ceiling, add dormancy, per-host politeness + robots cache | M1 (tier marker on ingested rows) | closes break #4; the `crawler.py` POC already has the robots gate and rate limiter, never run |
 | M7 | Discovery + network validation | M5, **plus an explicit go-ahead and a ToS review** | first thing that touches a publisher |
 | M8 | Evaluation harness on shadow data | M5, M7, M4 | assignment hit rate is one of its inputs |
@@ -711,6 +711,77 @@ dc run --rm -T api python examples/audit_retention_horizon.py --db "$RWE_DB_URL"
 
 Nothing else is owed: M2's boundary work is exercised entirely by unit tests with their own control
 arms, and the corpus-boundary bars from M1 still pass unchanged.
+
+---
+
+# Part 9 — M5 as built: the shadow lane
+
+Shipped **off**, byte-identical, on `claude/sleepy-gates-oecof1`.
+
+## Why M5 came before M3 and M6, which the graph lists as its dependencies
+
+Stated as a deviation rather than taken silently. M3 (storage substrate) and M6 (crawler fan-out)
+were listed because a shadow lane needs somewhere to put volume and something to fetch it. **Neither
+binds for the first cohort**, because the first cohort is not outside: `ingest_entries` has no
+admission gate, so the catalog already carries **3,639 untracked outlet identities** ingested through
+GDELT and the adapters. They need no new fetch and no new storage — only somewhere safe to sit while
+they are measured, which is exactly what M5 is.
+
+Everything else on the discovery path is downstream of it: M7 has nowhere to put a candidate without
+M5, M8 has nothing to evaluate, M9 nothing to promote from. And M7 is independently blocked on a ToS
+review and on network egress, so M5 is the furthest the discovery path can advance right now.
+
+## The live defect it closes
+
+`corpus.tier_of` has returned `"shadow"` since M1, documented as *"stored and attributed, surfaced
+nowhere, pending evaluation."* **That was false.** The boundary was enforced in
+`story_service._fetch` alone, so a shadow outlet was excluded from clustering and **fully
+searchable** — shadow and Tier B were the same thing in practice.
+
+## The design decision, and why it is the store's default
+
+Seven reader surfaces funnel through `store.search_feed_articles`: Search, Discover, the two facet
+lists, publisher profiles, the coach, and the country facets. Enforcing shadow at each of them is
+precisely how it came to be half implemented the first time.
+
+> **`include_shadow=False` is the default on the store, not an opt-in at the caller.**
+
+The store is otherwise policy-free and this is a deliberate exception, taken on the direction its
+failure modes point:
+
+| | forgetting the flag means |
+|---|---|
+| caller opt-**in** | unvetted sources reached readers — **silent** |
+| store default-**out** | the evaluation harness cannot see the lane it evaluates — **loud, immediate** |
+
+A new reader surface is therefore safe the day it is written. Evaluation and audit paths pass
+`include_shadow=True` deliberately.
+
+**Tier B and shadow are kept separate, and that separation is the tier split.** Tier B is a real
+source that does not form stories and **is searchable**; shadow has not been evaluated and is
+surfaced nowhere. `sql_exclusions()` (both, for clustering) and `shadow_exclusions()` (shadow only,
+for readers) are distinct on purpose — merging them would make Tier B invisible and delete the point
+of the tier.
+
+## Bars
+
+| bar | where | status |
+|---|---|---|
+| a shadow article is stored, absent from Search, and **present** with `include_shadow=True` | unit | ✅ |
+| **Tier B stays searchable in the same fixture** — the distinction cannot collapse | unit | ✅ |
+| a shadow publisher is not offered as a filter facet | unit | ✅ |
+| shadow exclusion is the store **default** on all three catalog readers | structural | ✅ |
+| nothing in shadow ⇒ every surface byte-identical, no SQL term added | unit | ✅ |
+| both new behavioural bars **fail against pre-M5 code** (verified by reverting the default) | — | ✅ |
+| Tier A workload unchanged | by construction — `corpus.select` and the M2 prefilter already dropped shadow before the builder | ✅ |
+
+## What M5 does NOT do
+
+No discovery, no validation, no fetching, no promotion. It builds the lane and proves nothing leaks
+out of it. Filling the lane is M7 and needs the ToS review; deciding what leaves it is M8/M9.
+
+`RWE_CORPUS_SHADOW` was already in the compose allowlist from M1, so there is no config change and
+nothing to deploy beyond the code.
 
 ---
 

@@ -268,6 +268,29 @@ def sql_exclusions() -> "frozenset[str]":
     return frozenset(out)
 
 
+def shadow_exclusions() -> "frozenset[str]":
+    """The SHADOW half of :func:`sql_exclusions` — publisher strings no reader surface may show.
+
+    Tier B and shadow differ in exactly one way and it is this: **Tier B is searchable, shadow is
+    not.** A Tier B outlet is a real source whose articles belong in Search, Discover and
+    attribution and simply do not form stories. A shadow outlet has not been evaluated yet, so
+    nothing about it should reach a reader — it is being watched, not published.
+
+    Kept separate from :func:`sql_exclusions` because the clustering corpus excludes both while the
+    reader surfaces exclude only this one. Merging them would make Tier B invisible, which is the
+    opposite of what Tier B is for and would delete the whole point of the tier split."""
+    if not _setting(_SHADOW_ENV):
+        return frozenset()
+    canonicals, hosts = _index(_setting(_SHADOW_ENV))
+    return frozenset({c.lower() for c in canonicals} | {h.lower() for h in hosts})
+
+
+def is_shadow(publisher: "str | None", url: "str | None" = None) -> bool:
+    """The Python contract for shadow membership — what :func:`shadow_exclusions` approximates in
+    SQL, and the authority when the two disagree."""
+    return tier_of(publisher, url) == "shadow"
+
+
 # --------------------------------------------------------------------------- #
 # The selector
 # --------------------------------------------------------------------------- #

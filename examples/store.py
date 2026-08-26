@@ -1615,7 +1615,8 @@ class Store:
                     out.setdefault(u, []).append(c)
         return {u: sorted(cs) for u, cs in out.items()}
 
-    def feed_article_country_facets(self, include_provisional: bool = True) -> list:
+    def feed_article_country_facets(self, include_provisional: bool = True,
+                                    include_shadow: bool = False) -> list:
         """Per-country catalog facts (EVENT dimension since Phase 2): article count + distinct
         publishers per country, most-covered first. An article counts toward the countries its
         EVENTS happened in (``article_event_locations``) — never toward its publisher's home,
@@ -1634,6 +1635,12 @@ class Store:
             if not include_provisional:
                 stmt = stmt.where(or_(FeedArticle.article_state.is_(None),
                                       FeedArticle.article_state != "provisional"))
+            if not include_shadow:
+                import corpus
+                shadow = corpus.shadow_exclusions()
+                if shadow:
+                    stmt = stmt.where(or_(FeedArticle.publisher.is_(None),
+                                          func.lower(FeedArticle.publisher).notin_(sorted(shadow))))
             rows = s.execute(stmt).all()
         out = [{"country": c, "articles": int(n), "publishers": int(p)} for c, n, p in rows]
         out.sort(key=lambda r: (-r["articles"], r["country"]))
@@ -1943,7 +1950,7 @@ class Store:
     def search_feed_articles(self, *, q=None, publisher=None, lean=None, topic=None,
                              date_from=None, date_to=None, source=None, country=None,
                              sort="newest", pagination=None, include_provisional: bool = True,
-                             exclude_publishers=None):
+                             exclude_publishers=None, include_shadow: bool = False):
         """Search the catalog directly, in SQL. Returns ``(rows, total)`` — ``rows`` are paginated
         FeedArticle-row dicts, ``total`` the match count before pagination. All filtering / sorting /
         paging happen in the database (index-backed); it never touches the recommendation engine.
@@ -1955,9 +1962,31 @@ class Store:
         corpus's tier prefilter (``corpus.sql_exclusions``), and nothing else passes it. It exists so
         the row cap bounds **Tier A** rather than the mixture: applied here it runs before ``LIMIT``,
         so an excluded row never consumes cap. Empty or ``None`` adds no term at all, which is what
-        keeps every other caller — Search, Discover, export — byte-identical."""
+        keeps every other caller — Search, Discover, export — byte-identical.
+
+        ``include_shadow`` is **False by default, and that default is the point** (M5,
+        `docs/SCALE_ROADMAP.md`). A shadow outlet is one being observed before evaluation, and the
+        corpus contract says it is surfaced nowhere. This method is the single path every reader
+        surface funnels through — Search, Discover, publisher profiles, facets — so the rule lives
+        here rather than at seven call sites.
+
+        The store is otherwise policy-free and this is a deliberate exception. The alternative was an
+        explicit exclusion at each caller, and that is precisely how shadow came to be half
+        implemented in the first place: it was enforced in ``story_service._fetch`` alone, leaving
+        every shadow article fully searchable while the code documented it as "surfaced nowhere".
+        Defaulting to exclusion means a NEW reader surface is safe the day it is written, and the
+        failure mode of forgetting the flag is "the evaluation harness cannot see what it evaluates"
+        — loud and immediate — rather than "unvetted sources reached readers" — silent.
+        Pass ``include_shadow=True`` from evaluation and audit paths that must see the lane."""
         from pagination import OffsetPagination
         pg = pagination or OffsetPagination()
+        if not include_shadow:
+            # Local import: `corpus` reaches the outlet registry, and a store built for a test or a
+            # migration should not pay for loading it when nothing is in shadow.
+            import corpus
+            shadow = corpus.shadow_exclusions()
+            if shadow:
+                exclude_publishers = frozenset(exclude_publishers or ()) | shadow
         conds = self._search_conditions(q=q, publisher=publisher, lean=lean, topic=topic,
                                          date_from=date_from, date_to=date_to, source=source,
                                          country=country)
@@ -1983,10 +2012,16 @@ class Store:
             stmt = pg.apply(stmt.order_by(*self._search_order(sort)))
             return [self._feed_row(r) for r in s.scalars(stmt).all()], total
 
-    def feed_article_facets(self, include_provisional: bool = True) -> dict:
+    def feed_article_facets(self, include_provisional: bool = True,
+                            include_shadow: bool = False) -> dict:
         """Distinct publishers + topics (categories) across the catalog, for filter dropdowns.
         ``include_provisional=False`` (Discover) keeps the facet counts consistent with what that
-        surface actually lists — unpromoted extension-created articles are excluded."""
+        surface actually lists — unpromoted extension-created articles are excluded.
+
+        ``include_shadow=False`` (the default) applies the same rule to the shadow lane, and a
+        facet list is where a half-enforced boundary shows first: a shadow publisher left in the
+        dropdown names an outlet the reader can never see results from, which is worse than hiding
+        it — it advertises the lane and then returns nothing."""
         cond = or_(FeedArticle.article_state.is_(None), FeedArticle.article_state != "provisional")
         with self.session() as s:
             pq, cq = select(FeedArticle.publisher).distinct(), select(self._category_expr()).distinct()
@@ -1994,6 +2029,11 @@ class Store:
                 pq, cq = pq.where(cond), cq.where(cond)
             pubs = [p for (p,) in s.execute(pq).all() if p]
             cats = [c for (c,) in s.execute(cq).all() if c]
+        if not include_shadow:
+            import corpus
+            shadow = corpus.shadow_exclusions()
+            if shadow:
+                pubs = [p for p in pubs if p.strip().lower() not in shadow]
         return {"publishers": sorted(set(pubs)), "topics": sorted(set(cats))}
 
     def catalog_topic_counts(self, include_provisional: bool = False) -> dict:
