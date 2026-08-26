@@ -1662,6 +1662,27 @@ The reason now carries the status code. **The posture is unchanged** — a 404 s
 discovery, because `CRAWLER_DESIGN.md` declines the 404-means-crawl-freely convention deliberately,
 and reporting a code more precisely is not a licence to act on it differently.
 
+### The gate, evaluated on the live poller
+
+`rss_ingest.py run` on `a96d6fb`: **9 feeds, 9 ok, 0 failed, no `robots.txt REFUSED` line.** The
+robots gate refuses none of our production sources — it is a no-op on what we already poll, which is
+the outcome that makes shipping it safe. It is now *observably* so rather than inferred.
+
+### `nysun.com` is HTTP 429 — a case I had not enumerated
+
+Re-probed with the status-code fix: **`robots.txt unavailable (HTTP 429)`**, one request, no retry
+(`sources._request` retries a 429 only with a `Retry-After` it is willing to honour, and there was
+none).
+
+I had predicted 404, 403 or 5xx. 429 is none of them, and on a *first* request it is not literal
+rate limiting — two probes an hour apart, one request each. It is bot mitigation answering an
+unrecognised agent, and 429 rather than 403 is the conventional way to soft-block without announcing
+a hard one.
+
+It is also the **only** status that means "later" rather than "never", so it is the one case that
+deserves a re-probe rather than a conclusion. If it repeats, `nysun.com` is not answerable by
+machine and wants a human or an email — not a workaround.
+
 ### Read with care
 
 `6abc.com` passes gate 5 at **exactly 80%**, the bar itself. Four of its twenty items sit off-host.

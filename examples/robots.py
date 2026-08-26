@@ -146,6 +146,11 @@ def _why_unreachable(exc: Exception) -> str:
         single most common case on small sites.
       * **403** — the origin refused *us*. That is a **stronger** signal than a ``Disallow`` line,
         not a weaker one, and it should never be filed under "temporarily unavailable".
+      * **429** — the first real-world case this ever hit, and one I had not enumerated. On a
+        *first* request it is not literal rate limiting; it is bot mitigation answering an
+        unrecognised agent, and 429 rather than 403 is the conventional way to soft-block without
+        announcing a hard one. It is also the only status that means "later" rather than "never",
+        so it deserves a re-probe before any conclusion — and a human if it repeats.
       * **5xx / timeout / TLS** — an outage. It says nothing about permission either way.
 
     The posture does not change here: `CRAWLER_DESIGN.md` deliberately declines the
