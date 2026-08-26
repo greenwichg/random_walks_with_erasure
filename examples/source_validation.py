@@ -75,11 +75,26 @@ class Gate(NamedTuple):
 
 
 def _offline_gates(cand: dict) -> "list[Gate]":
-    """Gates 6, 7 and 8 — answered from the catalog evidence `source_discovery` gathered."""
+    """Gates 6, 7 and 8 — answered from the catalog evidence `source_discovery` gathered.
+
+    **Gate 6 reports ``UNKNOWN`` when the catalog has no language, never ``FAIL``**, and the first
+    production run of M7 is why. An absent ``language`` measures *our ingestion metadata*, not the
+    source: it is populated from the feed entry and most feeds do not supply one —
+    `audit_source_cohort` already had to abandon a whole analysis over this, reporting "language
+    known for N of M outlets above the floor … TOO SPARSE TO CONCLUDE".
+
+    Failing on it would reject `goal.com`, `vietnamnet.vn` and `gujaratsamachar.com` — real
+    publishers — for a gap in our own records, and it would do so *silently*, because a candidate
+    with a failed offline gate is never probed. The run would have promised 348 requests and
+    quietly made fewer, having "rejected" hosts the table listed as passing every offline gate.
+
+    ``UNKNOWN`` is the fail-honest answer, and the probe can then settle it: a feed usually declares
+    its own language, which is better evidence than our record of it either way."""
     lang = (cand.get("language") or "").strip()
     return [
-        Gate(6, "language identified", PASS if lang else FAIL,
-             lang or "no feed entry in the window supplied a language"),
+        Gate(6, "language identified", PASS if lang else UNKNOWN,
+             lang or "the catalog has no language for this host — a gap in OUR metadata, not "
+                     "evidence about the source; the feed can settle it"),
         Gate(7, "not already tracked", FAIL if cand.get("tracked") else PASS,
              "the registry already resolves this host" if cand.get("tracked") else ""),
         Gate(8, "not an aggregator or proxy", FAIL if cand.get("proxy") else PASS,
@@ -119,6 +134,35 @@ def feed_urls(body: str, host: str) -> "list[str]":
             seen.add(url)
             out.append(url)
     return out
+
+
+def feed_language(body: str) -> str:
+    """The language a feed declares for itself — RSS ``<language>`` or Atom ``xml:lang``.
+
+    Read here because `rss_ingest.parse_feed` **discards it**: `FeedEntry.language` is populated only
+    by the non-RSS adapters (NewsAPI, GDELT supply it per item), so an RSS-sourced row carries no
+    language at all. That is the gap the first production M7 run surfaced as `?` against `goal.com`,
+    `vietnamnet.vn` and `gujaratsamachar.com`.
+
+    This reads **one element the existing parser does not surface** — it is not a second feed parser,
+    and the entries themselves still go through `crawler.discover_rss`. Teaching
+    `rss_ingest.parse_feed` to return channel language would be the better fix and would improve
+    ingestion metadata for every RSS row, not just validation's — but it changes a production
+    ingestion path for a validation-only need, so it wants its own change and its own measurement."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(body.encode("utf-8") if isinstance(body, str) else body)
+    except Exception:
+        return ""
+    lang = (root.get("{http://www.w3.org/XML/1998/namespace}lang") or "").strip()
+    if lang:
+        return lang                                        # Atom: xml:lang on the feed element
+    for el in root.iter():
+        if crawler._local(el.tag) == "language" and (el.text or "").strip():
+            return (el.text or "").strip()
+        if crawler._local(el.tag) == "item":
+            break                                          # channel metadata precedes the items
+    return ""
 
 
 def _link_feeds(body: str) -> "list[str]":
@@ -216,7 +260,8 @@ def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
 
     try:
         limiter.wait(urls[0], decision.crawl_delay)
-        entries = crawler.discover_rss(fetch(urls[0]))
+        feed_body = fetch(urls[0])
+        entries = crawler.discover_rss(feed_body)
         spent += 1
     except Exception as e:
         gates.append(Gate(2, "feed discoverable and parses", FAIL,
@@ -243,4 +288,16 @@ def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
     gates.append(Gate(5, "article URLs on the declared host",
                       PASS if hshare >= MIN_ON_HOST else FAIL,
                       f"{hshare:.0%} of {n} items on {host}"))
+
+    # Gate 6 was UNKNOWN offline whenever our catalog had no language for the host. The feed itself
+    # is better evidence than our record of it, so settle it here rather than leaving a permanent
+    # UNKNOWN that could never become an ADMIT.
+    for i, g in enumerate(gates):
+        if g.number == 6 and g.status == UNKNOWN:
+            declared = feed_language(feed_body) or next(
+                (l for l in ((getattr(e, "language", "") or "").strip() for e in entries) if l), "")
+            gates[i] = Gate(6, "language identified", PASS if declared else FAIL,
+                            f"{declared} (declared by the feed)" if declared
+                            else "neither the catalog nor the feed states a language")
+            break
     return gates, spent

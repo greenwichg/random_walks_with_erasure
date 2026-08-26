@@ -1403,11 +1403,63 @@ What that leaves:
   `--probe` will probably work on the box — *probably* is the honest word, and the first `--probe`
   run is what settles it.
 
+## ⚠ The first production run: the numbers held, two columns did not
+
+**Run on `3452fd1`**, offline, against a 27,963-article window:
+
+```
+hosts seen    : 4,007
+  already tracked by the registry : 524
+  aggregator / proxy hosts        :  24
+  below the 10-article floor      : 3,285
+  CANDIDATES                      : 174     -> 348 requests, 11.6 minutes
+```
+
+The census sums exactly (524 + 24 + 3,285 + 174 = 4,007), and **174 candidates at 11.6 minutes
+tracks the roadmap's estimate of 151 hosts and ~10 minutes.** The Stage 1 design holds.
+
+Two defects in the *reporting*, both of the kind this series keeps finding:
+
+**1. The `dated` column read 100% for all 30 candidates — by construction.** `story_service._fetch`
+filters `published_at >= date_from`, so an undated row *cannot* be in the window. A column that can
+only ever hold one value is not a measurement, and printing it beside real ones invites reading it
+as one. My own module docstring had already said gate 4 "cannot be answered offline"; I printed the
+offline version anyway. The runner no longer prints it, `datedShare` carries a warning where it is
+computed, and a test pins both the 1.0-by-construction case and the unwindowed case where it is real
+data.
+
+**2. Gate 6 rejected real publishers for a gap in *our* metadata — and did it silently.** `goal.com`,
+`vietnamnet.vn`, `gujaratsamachar.com` and `v6velugu.com` showed `lang ?`, and gate 6 read an absent
+language as `FAIL`. Two consequences: the `why` column said *"no offline gate rejects it"* for hosts
+an offline gate would reject, and — because a candidate with a failed offline gate is never probed —
+the run would have promised 348 requests and quietly made fewer.
+
+The underlying error is that `language` measures **our ingestion metadata, not the source**:
+`rss_ingest.parse_feed` **discards channel language entirely**, so `FeedEntry.language` is populated
+only by the non-RSS adapters and every RSS-sourced row carries none. `audit_source_cohort` had
+already abandoned an entire analysis over this same sparsity — *"language known for N of M outlets …
+TOO SPARSE TO CONCLUDE"* — and I reintroduced it as a gate.
+
+Gate 6 now reports `UNKNOWN` offline and the **feed settles it**: `source_validation.feed_language`
+reads RSS `<language>` / Atom `xml:lang`, stopping at the first item so a per-item language is never
+mistaken for the feed's own. Once the feed has been read and still states nothing, the question *has*
+been asked and `FAIL` is honest.
+
+> **A better fix exists and is deliberately not taken here.** Teaching `rss_ingest.parse_feed` to
+> return channel language would populate `language` for every RSS row in the catalog, not just for
+> validation — closing the gap at its source. That changes a production ingestion path for a
+> validation-only need, so it wants its own change and its own measurement.
+
 ## Bars
 
 | bar | where | status |
 |---|---|---|
 | an offline run reports every network gate `UNKNOWN`, never `PASS`, and never `ADMIT` | unit | ✅ |
+| an absent language is `UNKNOWN`, not a rejection, and does **not** skip the probe | unit | ✅ (after the first production run) |
+| the feed's own `<language>` / `xml:lang` settles gate 6, stopping before the items | unit (4 cases) | ✅ |
+| a source neither we nor the feed can place **does** fail gate 6 | unit | ✅ |
+| `datedShare` is 1.0 by construction for a windowed fetch, real for an unwindowed one | unit | ✅ |
+| the runner prints no `dated` column | structural | ✅ |
 | `validate` has no default fetcher and constructs none | structural (signature + source) | ✅ |
 | a candidate rejected by an offline gate costs **zero** requests | unit | ✅ |
 | robots refusal stops before the landing page and feed are fetched | unit (call list) | ✅ |

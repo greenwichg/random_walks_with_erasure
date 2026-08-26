@@ -137,6 +137,11 @@ def candidates(rows: list, reg, *, floor: int = VOLUME_FLOOR) -> "list[dict]":
             "articles": len(arts),
             "publishers": [n for n, _ in names.most_common(5)],
             "language": langs.most_common(1)[0][0] if langs else "",
+            # WARNING: for rows from `story_service._fetch` this is 1.0 BY CONSTRUCTION — the query
+            # filters `published_at >= date_from`, so an undated row cannot be in the window.
+            # Measured on the first production run: 30 of 30 candidates at 100%. It is real data for
+            # an unwindowed caller and an empty ritual for the runner, which is why the runner does
+            # not print it. Gate 4 asks the same question of the FEED, where it can actually fail.
             "datedShare": dated / max(1, len(arts)),
             "sampleUrls": [a.get("url") or a.get("canonicalUrl") for a in arts[:3]],
             "tracked": tracked,

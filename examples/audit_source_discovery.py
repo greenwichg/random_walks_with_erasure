@@ -86,10 +86,16 @@ def main(argv=None) -> int:
     print(f"\n=== the candidates ===")
     print("    Rejections are listed too. A discovery run that silently dropped them could not be")
     print("    audited, and the rejection counts are the cheapest evidence the gates do anything.")
-    print(f"\n  {'arts':>6} {'dated':>6} {'lang':>5}  {'host':<34} why")
+    print("    These are hosts we ALREADY INGEST — this is the crawl-exhaust channel, so a high")
+    print("    article count means we carry it heavily without a registry row, not that it is new.")
+    print("    `lang` is what OUR catalog recorded, and `?` is a gap in our metadata rather than a")
+    print("    fact about the source; gate 6 reads it as UNKNOWN and the feed settles it.")
+    print("    There is deliberately no `dated` column: for a time-windowed fetch every row carries")
+    print("    a date by construction, so it would read 100% for everything. Gate 4 asks the feed.")
+    print(f"\n  {'arts':>6} {'lang':>5}  {'host':<34} why")
     for c in cands[:args.show]:
         mark = " " if c["eligible"] else "x"
-        print(f" {mark}{c['articles']:>6} {c['datedShare']:>5.0%} {(c['language'] or '?')[:5]:>5}  "
+        print(f" {mark}{c['articles']:>6} {(c['language'] or '?')[:5]:>5}  "
               f"{c['host'][:34]:<34} {c['reason']}")
 
     if not args.probe:

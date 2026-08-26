@@ -146,6 +146,86 @@ def test_without_a_fetcher_every_network_gate_is_UNKNOWN_and_the_verdict_is_neve
     assert not any(g.status == sv.PASS for g in online)
 
 
+def test_an_absent_language_is_UNKNOWN_not_a_rejection():
+    """**The defect the first production run of M7 exposed.** An absent `language` measures OUR
+    ingestion metadata, not the source — it comes from the feed entry and most feeds omit one;
+    `audit_source_cohort` already abandoned a whole analysis over exactly this sparsity.
+
+    Failing on it would reject `goal.com`, `vietnamnet.vn` and `gujaratsamachar.com` — real
+    publishers — for a gap in our own records, and SILENTLY, because a candidate with a failed
+    offline gate is never probed. The run would have promised 348 requests and quietly made fewer."""
+    r = sv.validate(_cand(language=""))
+    gate6 = next(g for g in r["gates"] if g.number == 6)
+    assert gate6.status == sv.UNKNOWN
+    assert r["verdict"] != "REJECT"
+
+
+def test_an_unknown_language_candidate_is_still_probed():
+    """The consistency the run got wrong: discovery counted these hosts in its 348-request estimate
+    while validation would have skipped them for free. UNKNOWN does not block the probe, so the
+    priced cost and the spent cost describe the same set of hosts."""
+    fetch = _fetcher({"/robots.txt": ROBOTS_OK, "/feed.xml": FEED % _items(12),
+                      "vertical.example/": LANDING})
+    sv.validate(_cand(language=""), fetch=fetch)
+    assert any("robots.txt" in c for c in fetch.calls), "an unknown language must not skip the probe"
+
+
+def test_the_feed_settles_a_language_the_catalog_did_not_know():
+    """A permanent UNKNOWN could never become an ADMIT. The feed usually declares its own language,
+    which is better evidence than our record of it either way."""
+    feed = FEED % ("<language>vi</language>\n" + _items(12))
+    fetch = _fetcher({"/robots.txt": ROBOTS_OK, "/feed.xml": feed, "vertical.example/": LANDING})
+    r = sv.validate(_cand(language=""), fetch=fetch)
+    gate6 = next(g for g in r["gates"] if g.number == 6)
+    assert gate6.status == sv.PASS and "vi" in gate6.detail
+    assert r["verdict"] == "ADMIT"
+
+
+@pytest.mark.parametrize("body, expect", [
+    ('<rss><channel><language>vi</language><item><title>t</title></item></channel></rss>', "vi"),
+    ('<feed xmlns:xml="http://www.w3.org/XML/1998/namespace" '
+     'xml:lang="ja"><entry><title>t</title></entry></feed>', "ja"),
+    ('<rss><channel><item><language>en</language></item></channel></rss>', ""),
+    ("<html>not a feed at all", ""),
+])
+def test_feed_language_reads_rss_and_atom_and_stops_at_the_items(body, expect):
+    """`rss_ingest.parse_feed` discards channel language — `FeedEntry.language` is populated only by
+    the non-RSS adapters — so an RSS row carries none at all. That is the gap the production run
+    showed as `?`. The scan stops at the first item so a per-item language is never mistaken for the
+    feed's own."""
+    assert sv.feed_language(body) == expect
+
+
+def test_a_source_neither_we_nor_the_feed_can_place_fails_gate_6():
+    """UNKNOWN is honest, not permissive: once the feed has been read and still states nothing, the
+    question HAS been asked and the answer is no."""
+    fetch = _fetcher({"/robots.txt": ROBOTS_OK, "/feed.xml": FEED % _items(12),
+                      "vertical.example/": LANDING})
+    r = sv.validate(_cand(language=""), fetch=fetch)
+    assert next(g for g in r["gates"] if g.number == 6).status == sv.FAIL
+    assert r["verdict"] == "REJECT"
+
+
+def test_dated_share_is_1_0_by_construction_for_a_windowed_fetch(reg):
+    """Why the runner prints no `dated` column. `story_service._fetch` filters
+    `published_at >= date_from`, so an undated row cannot be in the window — measured on the first
+    production run as 30 of 30 candidates at 100%. A column that can only hold one value is not a
+    measurement, and printing it invites reading it as one."""
+    windowed = [_row(f"https://vertical.example/a{i}", "V") for i in range(12)]
+    assert sd.candidates(windowed, reg, floor=10)[0]["datedShare"] == 1.0
+
+    # It is still real data for a caller that did NOT window its rows.
+    mixed = windowed + [_row(f"https://vertical.example/b{i}", "V", published="") for i in range(12)]
+    assert sd.candidates(mixed, reg, floor=10)[0]["datedShare"] == 0.5
+
+
+def test_the_runner_does_not_print_the_dated_column():
+    """Structural, because the column is the kind of thing that gets re-added by someone tidying the
+    table up. Gate 4 asks the same question of the FEED, where it can actually fail."""
+    src = (ROOT / "examples" / "audit_source_discovery.py").read_text()
+    assert "datedShare" not in src
+
+
 def test_the_module_constructs_no_fetcher_of_its_own():
     """Structural. A default would make the offline guarantee a matter of call-site discipline."""
     import inspect
