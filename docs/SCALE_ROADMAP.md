@@ -1,6 +1,7 @@
 # Scaling to a 50,000-source universe — the dependency-ordered path
 
-**Status:** design, with **M1, M2, M5, M8 and M9 built and shipped off** (Parts 7–11) ·
+**Status:** design, with **M1, M2, M5, M7, M8 and M9 built and shipped off** (Parts 7–12) ·
+M7's network half is built but **not authorised to run** — the ToS/robots review is outstanding ·
 **Companions:** `CRAWLER_ARCHITECTURE_AUDIT.md` (how we fetch), `SOURCE_COVERAGE_AUDIT.md` (which
 publishers we carry and what they do inside), `CORPUS_ARCHITECTURE.md` (the corpus contract this
 roadmap extends — now amended to four datasets), `PERFORMANCE.md` (every cost constant quoted below).
@@ -1305,6 +1306,133 @@ at a human by design.
 It does not change configuration, restart anything, or touch the serving path. It does not fill the
 shadow lane — that is M7, still blocked on the ToS review and network egress. And it does not
 promote anything into Tier A, which remains bounded by rating throughput rather than by code.
+
+---
+
+# Part 12 — M7 as built: discovery offline, validation behind a gate
+
+**Landed in `claude/sleepy-gates-oecof1`.** Stages 1 and 2 of Part 4.
+
+M7 is *"the first thing in the entire roadmap that touches a publisher"*, and the milestone splits
+cleanly along that line. **Stage 1 needs no network at all** and is runnable today. **Stage 2 is the
+network half** and is built but does not run without an explicit flag — and the ToS/robots review
+the roadmap asks for is a human task that is still outstanding.
+
+## The safety property is structural, not a convention
+
+`source_validation` has **no fetcher of its own**. `validate(cand, fetch=None)` is the signature, and
+`fetch` is never defaulted or constructed inside the module. A run without one executes the three
+offline gates and reports every network gate as `UNKNOWN` — never `PASS`.
+
+The alternative — a default fetcher disabled by `--dry-run` — puts the whole ToS question behind
+somebody remembering to pass a flag. Here an offline run **cannot** be mistaken for a validated one,
+because there is nothing for it to call. And `UNKNOWN` rather than `PASS` matters for the same
+reason it did in M8: claiming a publisher's robots.txt permits us *without having read it* is the
+exact shape of error this series keeps finding in its own instruments.
+
+## What landed
+
+| file | what it is |
+|---|---|
+| `examples/source_discovery.py` | Stage 1 + gates 6/7/8. Pure — no store, no network, no env. |
+| `examples/source_validation.py` | Stage 2, gates 1–5. `fetch` injected and never defaulted. |
+| `examples/audit_source_discovery.py` | the runner. Offline by default; `--probe` for the network pass. |
+| `tests/test_source_discovery.py` | 27 tests |
+
+Reused rather than rebuilt: `crawler.RobotsPolicy` (already fail-closed), `crawler.RateLimiter`
+(per host, because the limit protects a *server*), `crawler.discover_rss` (= `rss_ingest.parse_feed`
+verbatim) and `crawler._fetch_text` (the shared 429/5xx retry budget). M7 adds a way to **find** a
+feed; it does not add a second way to read one. Four drifted definitions have been corrected in this
+series — a second robots parser would be the fifth.
+
+## The cheap gates run first, and that is a politeness decision
+
+Three of the eight gates are answerable offline, so they run **before** any host is probed:
+
+| gate | answered |
+|---|---|
+| 6 language identified · 7 not already tracked · 8 not an aggregator/proxy | offline, from catalog evidence |
+| 1 robots · 2 feed discoverable · 3 ≥10 items · 4 ≥80% dated · 5 URLs on host | network |
+
+**Every request not made is ToS exposure not incurred.** A candidate an offline gate rejects is
+never probed — spending a publisher's bandwidth to confirm a decision that is already made is both
+rude and pointless, and a test pins that zero requests are issued in that case.
+
+The run also **prices Stage 2 before it is authorised**: hosts × 2 requests × the politeness
+interval, printed in the offline run. That number is what a ToS review is actually asking about, so
+it belongs in front of a human rather than in a post-hoc report.
+
+## Gate 8 asks the registry first — and the split is measured
+
+The registry resolves `news.google.com` → **`Google News kind=aggregator`**, and knows *none* of
+`apple.news`, `flipboard.com`, `msn.com`, `substack.com`. So `EXCLUDED_KINDS` covers the outlets the
+registry has and `PROXY_HOSTS` covers the ones it does not — **which is precisely the population
+discovery works on.** Asking the registry first also means a curated `kind` correction improves this
+gate instead of being shadowed by a hard-coded list.
+
+A host that is both a proxy *and* tracked reports the **proxy** reason: "already tracked" would
+suggest we carry `news.google.com` as a publisher, when the point is that its articles are other
+publishers'. Same ordering principle `source_evaluation.evaluate` uses — the disqualifying fact
+before the procedural one.
+
+The gate exists because of a measured failure: the outlet-resolution counterfactual found **996 of
+1,246** newly-attributed articles landing on "Google News" from `10tv.com @ news.google.com`,
+`12news.com @ news.google.com` — real local broadcasters proxied through one host.
+
+## Gate 4 is the one that proves Stage 2 has to be online
+
+*"≥ 80% of items carry a publication date"* **cannot be asked offline**: `_fetch` is time-windowed,
+so every catalog row has a date by construction and an offline probe would report zero rejections
+whatever the feeds actually serve. A gate that cannot fail is not a gate. A test drives a feed of
+undated items through the real parser and asserts gate 4 **fails**, which is the only way to know
+the gate is load-bearing rather than decorative.
+
+## What is NOT verified, and cannot be from here
+
+**This session's egress gateway refuses CONNECT for arbitrary hosts** — confirmed against IANA's
+reserved `example.com`, which returned `403 Forbidden` from the proxy, the same block that stopped
+the MBFC and AllSides fetches earlier. So the live transport is unexercised here **by construction**.
+
+What that leaves:
+
+* every probe *decision path* is covered by tests with an injected fetch — ADMIT, robots refusal,
+  an absent robots policy, gates 3/4/5 failing, no advertised feed, and per-host rate limiting;
+* `crawler._fetch_text` itself is unchanged and pre-existing;
+* whether it works against a real publisher is **untested**, and `CRAWLER_DESIGN.md` already records
+  that no live crawl has ever run. Production has different egress (RSS ingestion works there), so
+  `--probe` will probably work on the box — *probably* is the honest word, and the first `--probe`
+  run is what settles it.
+
+## Bars
+
+| bar | where | status |
+|---|---|---|
+| an offline run reports every network gate `UNKNOWN`, never `PASS`, and never `ADMIT` | unit | ✅ |
+| `validate` has no default fetcher and constructs none | structural (signature + source) | ✅ |
+| a candidate rejected by an offline gate costs **zero** requests | unit | ✅ |
+| robots refusal stops before the landing page and feed are fetched | unit (call list) | ✅ |
+| an absent/HTML robots.txt is a **refusal**, not permission | unit | ✅ |
+| gate 4 can actually FAIL on undated items — through the real feed parser | unit | ✅ |
+| gate 5 rejects a feed whose articles live on another host | unit | ✅ |
+| feed autodiscovery never leaves the declared host | unit | ✅ |
+| the probe waits between requests to one host | unit (injected clock/sleep) | ✅ |
+| gate 8 catches proxies **and** their subdomains, without substring over-matching | unit | ✅ |
+| the registry/static-list split is asserted against the real registry | unit | ✅ |
+| candidates group by HOST, so one outlet's name variants are one candidate | unit | ✅ |
+| the census counts every rejection reason | unit | ✅ |
+| Stage 2's cost is printed **before** authorisation, from eligible hosts only | unit + run | ✅ |
+| live transport against a real publisher | — | ❌ **egress-blocked here; first `--probe` settles it** |
+
+## What M7 does NOT do
+
+It does not ingest. `--probe` reads `robots.txt`, one landing page and at most one feed per host, and
+prints a verdict — it writes no feed row, no catalog row, no tier assignment. **Admitting a source
+is a separate human step:** M7 emits a worklist, M8 measures what shadow ingest produced, M9 emits
+the config. Nothing in the chain moves an outlet on its own.
+
+**And the ToS / robots review is still outstanding.** Building Stage 2 does not discharge it. The
+offline run is safe to run now and is the one to look at first; `--probe` should wait for that
+review, and then start at `--limit 5`.
 
 ---
 
