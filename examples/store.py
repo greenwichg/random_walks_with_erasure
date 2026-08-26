@@ -316,6 +316,65 @@ class Read(Base):
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class SourceLifecycle(Base):
+    """Where one outlet sits in the source pipeline, and since when — M9, `docs/SCALE_ROADMAP.md`.
+
+    **This table is not the tiering configuration and must never become it.** Tier membership is
+    `RWE_CORPUS_TIER_B` / `RWE_CORPUS_SHADOW`, read from the environment; M9 emits config for a human
+    to deploy and never mutates serving state. What lives here is the *record* — what state an outlet
+    is in, since when, on what evidence — which is what makes a transition reversible and auditable.
+
+    Two columns earn the table on their own:
+
+    ``first_observed``  pinned on first sight and never moved forward. `observed_days` is derived
+                        from ``MIN(created_at)``, which **retention erodes**: measured on production,
+                        sportskeeda's first-seen advanced 50 minutes between two runs 18 minutes
+                        apart while the global floor did not move at all (retention orders by
+                        ``published_at``; observation reads ``created_at`` — different columns). An
+                        outlet's observation window must not shrink because its oldest rows aged
+                        out, so once seen, the date is kept here.
+    ``streak``          consecutive evaluations agreeing on the same target. Hysteresis needs memory
+                        across runs, and a run is a fresh process.
+    """
+
+    __tablename__ = "source_lifecycle"
+
+    identity: Mapped[str] = mapped_column(String(255), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16))
+    since: Mapped[str] = mapped_column(String(64))              # ISO — entered `state`
+    first_observed: Mapped[str] = mapped_column(String(64))     # ISO — pinned against retention
+    last_seen: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    last_verdict: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    last_target: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    streak: Mapped[int] = mapped_column(default=0)
+    last_evaluated_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    evidence: Mapped[str] = mapped_column(Text, default="{}")   # JSON snapshot of the last stats
+    reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
+
+
+class SourceLifecycleEvent(Base):
+    """An append-only record of every lifecycle transition — the ledger proper.
+
+    ``SourceLifecycle`` holds the current state and is overwritten; this is never overwritten. The
+    roadmap's Stage 6 is explicit about why: *"A retirement that deletes evidence cannot be audited
+    later, and the recurring lesson in `PERFORMANCE.md` is that the expensive failures are the ones
+    where the evidence was gone."* A row here carries the evidence snapshot that justified the move,
+    so a decision can be re-read years later against the numbers it was actually made on — not
+    against today's, which will have changed."""
+
+    __tablename__ = "source_lifecycle_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identity: Mapped[str] = mapped_column(String(255), index=True)
+    frm: Mapped[str] = mapped_column(String(16))
+    to: Mapped[str] = mapped_column(String(16))
+    at: Mapped[str] = mapped_column(String(64))
+    automatic: Mapped[bool] = mapped_column(default=False)
+    applied: Mapped[bool] = mapped_column(default=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    evidence: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class ApiToken(Base):
     """A per-user API token for non-browser clients (the browser extension; RSS later).
 
@@ -2341,6 +2400,126 @@ class Store:
         if first is None:
             return None
         return first.isoformat() if hasattr(first, "isoformat") else str(first)
+
+    def publisher_last_seen(self, publishers=None) -> dict:
+        """``{lower-cased publisher: ISO}`` — ``MAX(created_at)`` per outlet, the silence signal.
+
+        The mirror of :meth:`publisher_first_seen`, and ``created_at`` for the same reason: a
+        backfilling provider inserting a month-old article says we heard from the source *today*,
+        which is what dormancy is asking about. ``published_at`` would call that source silent."""
+        q = (select(FeedArticle.publisher, func.max(FeedArticle.created_at))
+             .where(FeedArticle.publisher.is_not(None))
+             .group_by(FeedArticle.publisher))
+        if publishers is not None:
+            wanted = {p.strip().lower() for p in publishers if p and p.strip()}
+            if not wanted:
+                return {}
+            q = q.where(func.lower(FeedArticle.publisher).in_(sorted(wanted)))
+        with self.session() as s:
+            out = {}
+            for pub, last in s.execute(q).all():
+                if not pub or last is None:
+                    continue
+                key = pub.strip().lower()
+                iso = last.isoformat() if hasattr(last, "isoformat") else str(last)
+                if key not in out or iso > out[key]:        # several spellings: the LATEST
+                    out[key] = iso
+            return out
+
+    # -- source lifecycle (M9, docs/SCALE_ROADMAP.md) ---------------------------------
+    def source_lifecycle(self, identity: str) -> "dict | None":
+        """One outlet's lifecycle row, or ``None`` if it has never been evaluated."""
+        with self.session() as s:
+            row = s.get(SourceLifecycle, identity)
+            return self._lifecycle_row(row) if row else None
+
+    @staticmethod
+    def _lifecycle_row(r: "SourceLifecycle") -> dict:
+        return {"identity": r.identity, "state": r.state, "since": r.since,
+                "firstObserved": r.first_observed, "lastSeen": r.last_seen,
+                "lastVerdict": r.last_verdict, "lastTarget": r.last_target,
+                "streak": int(r.streak or 0), "lastEvaluatedAt": r.last_evaluated_at,
+                "evidence": json.loads(r.evidence or "{}"), "reason": r.reason}
+
+    def record_source_evaluation(self, identity: str, *, target: "str | None", verdict: str,
+                                 evidence: "dict | None" = None, at: "str | None" = None,
+                                 first_observed: "str | None" = None,
+                                 last_seen: "str | None" = None,
+                                 initial_state: str = "shadow") -> dict:
+        """Record one evaluation and return the updated row. Idempotent per identity, not per run.
+
+        **``streak`` is maintained here because hysteresis needs memory and a run is a fresh
+        process.** It increments while the target is unchanged and resets the moment it differs, so
+        two evaluations pointing at different states never add up to a confirmation.
+
+        ``first_observed`` is written on first sight and then only ever moved **earlier**, never
+        later. That is the retention-erosion fix: `MIN(created_at)` shrinks an outlet's apparent
+        history as its oldest rows are trimmed, and an observation window that shortens on its own
+        would let a long-observed outlet fall back below the evaluation gate."""
+        now = at or _utcnow().isoformat()
+        with self.session() as s:
+            row = s.get(SourceLifecycle, identity)
+            if row is None:
+                row = SourceLifecycle(identity=identity, state=initial_state, since=now,
+                                      first_observed=first_observed or now)
+                s.add(row)
+            elif first_observed and first_observed < (row.first_observed or first_observed):
+                row.first_observed = first_observed         # earlier only
+            row.streak = (int(row.streak or 0) + 1) if row.last_target == target else 1
+            row.last_target = target
+            row.last_verdict = verdict
+            row.last_evaluated_at = now
+            if last_seen:
+                row.last_seen = last_seen
+            row.evidence = json.dumps(evidence or {}, sort_keys=True, default=str)
+            s.flush()
+            return self._lifecycle_row(row)
+
+    def apply_source_transition(self, identity: str, *, to: str, reason: str,
+                                automatic: bool = False, applied: bool = False,
+                                evidence: "dict | None" = None,
+                                at: "str | None" = None) -> dict:
+        """Move an outlet to ``to`` and append an event. Returns the updated row.
+
+        ``applied`` says whether the serving configuration was actually changed — which M9 never
+        does itself. A transition recorded with ``applied=False`` is a *decision*, and the emitted
+        config is what a human deploys to make it real. Keeping the two separate is what lets the
+        ledger show a decision that was proposed and never shipped, instead of claiming a state the
+        running system is not in."""
+        now = at or _utcnow().isoformat()
+        blob = json.dumps(evidence or {}, sort_keys=True, default=str)
+        with self.session() as s:
+            row = s.get(SourceLifecycle, identity)
+            frm = row.state if row else "shadow"
+            if row is None:
+                row = SourceLifecycle(identity=identity, state=to, since=now, first_observed=now)
+                s.add(row)
+            else:
+                row.state = to
+                row.since = now
+            row.reason = reason
+            s.add(SourceLifecycleEvent(identity=identity, frm=frm, to=to, at=now,
+                                       automatic=automatic, applied=applied,
+                                       reason=reason, evidence=blob))
+            s.flush()
+            return self._lifecycle_row(row)
+
+    def source_lifecycle_states(self) -> dict:
+        """``{identity: row}`` for every outlet the ledger knows."""
+        with self.session() as s:
+            return {r.identity: self._lifecycle_row(r)
+                    for r in s.execute(select(SourceLifecycle)).scalars()}
+
+    def source_lifecycle_events(self, identity: "str | None" = None, *, limit: int = 200) -> list:
+        """The append-only ledger, newest first. Never overwritten — see `SourceLifecycleEvent`."""
+        q = select(SourceLifecycleEvent).order_by(SourceLifecycleEvent.id.desc()).limit(limit)
+        if identity:
+            q = q.where(SourceLifecycleEvent.identity == identity)
+        with self.session() as s:
+            return [{"id": e.id, "identity": e.identity, "from": e.frm, "to": e.to, "at": e.at,
+                     "automatic": bool(e.automatic), "applied": bool(e.applied),
+                     "reason": e.reason, "evidence": json.loads(e.evidence or "{}")}
+                    for e in s.execute(q).scalars()]
 
     # -- content lifecycle (Commit 18: extension-created articles) --------------------
     def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:

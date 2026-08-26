@@ -1,6 +1,6 @@
 # Scaling to a 50,000-source universe — the dependency-ordered path
 
-**Status:** design, with **M1, M2, M5 and M8 built and shipped off** (Parts 7, 8, 9 and 10) ·
+**Status:** design, with **M1, M2, M5, M8 and M9 built and shipped off** (Parts 7–11) ·
 **Companions:** `CRAWLER_ARCHITECTURE_AUDIT.md` (how we fetch), `SOURCE_COVERAGE_AUDIT.md` (which
 publishers we carry and what they do inside), `CORPUS_ARCHITECTURE.md` (the corpus contract this
 roadmap extends — now amended to four datasets), `PERFORMANCE.md` (every cost constant quoted below).
@@ -1102,6 +1102,149 @@ production bars — a whole-corpus measurement, not a per-outlet one. `evaluate`
 It does not act. Every verdict is evidence; moving an outlet between lanes or retiring it is **M9**,
 and it is not built. It also does not fill the lane — that is M7, still blocked on the ToS review
 and on network egress.
+
+---
+
+# Part 11 — M9 as built: acting on the evidence, without touching the serving path
+
+**Landed in `claude/sleepy-gates-oecof1`.** Stages 5 and 6 of Part 4, built on M8's measurements.
+
+## The design question M9 had to answer first
+
+M8 stops at evidence deliberately. M9 acts — and the first thing to establish is *what "act" can
+safely mean here*, because *tier membership is not database state.* It is `RWE_CORPUS_TIER_B` and
+`RWE_CORPUS_SHADOW`, read from the environment by `corpus.tier_index`. That was M1's decision: tier
+is a property of the outlet, derived at selection time, no article column and no migration.
+
+So "automate promotion" can only mean one of two things: introduce a second, competing source of
+truth for tiering, or **automate the decision and emit the configuration**. M9 does the second.
+
+1. The roadmap already says Tier A promotion is *"gated, manual, and permanently narrow"* — bounded
+   by rating throughput, which is a budget and not an algorithm. A pipeline that promoted into Tier
+   A by itself would contradict the milestone it implements.
+2. Every crossing of the Tier A boundary changes the story partition, the one thing this repo never
+   changes without a counterfactual.
+3. Applying it is a deploy either way, since the value lives in the compose allowlist. Emitting it
+   costs nothing and keeps a human in the loop for free.
+
+## The rule the whole automatic/manual split reduces to
+
+> **Tier A's boundary is the only one that moves the partition, so every crossing of it — in either
+> direction — needs the whole-corpus counterfactual and a human. Everything else is automatic.**
+
+That is the same asymmetry the roadmap names as what makes 50,000 sources possible: a Tier B row
+cannot alter what clusters, so admitting one needs no clustering bar. `crosses_tier_a` is that rule
+in one line, and every non-automatic transition traces to it. **The demotion direction matters as
+much as the promotion one** and is the half nobody thinks about: removing an outlet can strand
+articles whose only link ran through it — the bar `audit_source_cohort` reports as *"OTHER articles
+that LOST their story"*.
+
+**The one exception is provable rather than argued.** An outlet silent longer than the clustering
+window has no rows in the window, so removing it from Tier A *cannot* change the build — there is
+nothing of it there to remove. Dormancy from Tier A is therefore automatic, and `plan` refuses to
+apply that reasoning unless `silent_days` genuinely exceeds the window (a test pins the refusal).
+
+## What landed
+
+| file | what it is |
+|---|---|
+| `examples/source_lifecycle.py` | the pure state machine: `STATES`, `crosses_tier_a`, `target_for`, `plan`. No store, no env, no writes. |
+| `examples/store.py` | `SourceLifecycle` (current state) + `SourceLifecycleEvent` (append-only ledger), `record_source_evaluation`, `apply_source_transition`, `publisher_last_seen` |
+| `examples/audit_source_lifecycle.py` | the runner: evaluates via M8, records the ledger, emits the config diff. `--commit` writes the **ledger**, never the configuration. |
+| `examples/audit_shadow_cohort.py` | `measure()` extracted, so M9 uses M8's numbers rather than its own |
+| `tests/test_source_lifecycle.py` | 40 tests |
+| `tests/test_audit_source_lifecycle.py` | 12 tests |
+
+## Hysteresis: why two, and why it is not a threshold
+
+A transition requires the same target on `confirmations` consecutive evaluations. This series has
+had **two invented thresholds die against data**, so it is worth being precise that this is not a
+third: it is a *repeat-measurement* rule, not a quality bar. It asserts nothing about how good an
+outlet is; it asserts that one sample is one sample.
+
+The default of 2 is the smallest value that means anything, and it is the argument
+`clustering.DEFAULT_MIN_SUPPORT` already makes in this codebase — one witness is an anecdote, two is
+corroboration. It costs nothing where the evidence is stable, and M8's production verdicts were
+identical across four consecutive runs.
+
+## Why the ledger is a table and not an env var
+
+Two columns earn it on their own:
+
+* **`first_observed`, pinned and only ever moved earlier.** `observed_days` derives from
+  `MIN(created_at)`, which retention erodes — Part 10 measured sportskeeda's apparent history
+  advancing 50 minutes in 18 minutes of wall clock. An observation window that shortens on its own
+  would let a long-observed outlet fall back below the 14-day gate. Once seen, the date is kept.
+* **`streak`.** Hysteresis needs memory across runs, and a run is a fresh process.
+
+And the event log is append-only because Stage 6 already said why: *"A retirement that deletes
+evidence cannot be audited later, and the recurring lesson in `PERFORMANCE.md` is that the expensive
+failures are the ones where the evidence was gone."* Each event carries the evidence snapshot that
+justified it, so a decision can be re-read against the numbers it was actually made on — not
+today's, which will have changed.
+
+**A transition is recorded with `applied=False`.** It is a *decision*, not a claim about what the
+running system is doing. The two are kept apart on purpose, so the ledger can show a decision that
+was proposed and never shipped.
+
+## Retirement is not automatic, and that is a refusal to guess
+
+Stage 6 says *"no items in 30 days → dormant (daily probe), then retired"* and gives **no interval
+for the second arrow**. Dormancy is reversible, evidence-preserving and harmless, so it is
+automatic. Retirement is neither reversible nor measured, so it stays a human action that M9 records
+and never initiates. Inventing "then retired after N" would be the third guess.
+
+`dormant` and `retired` are also **ledger-only today** — the probe-cadence change they imply belongs
+to the crawler (M6/M7), which is not built. They are recorded now so the evidence exists when there
+is something to consume it, and `config_diff` puts them in neither serving list so they cannot
+silently mean "Tier A" by omission.
+
+## Verified end to end on a fixture
+
+```
+run 1  shadow  streak 1   WAITING     points at B, but on 1 of 2 consecutive evaluations
+run 2  shadow  streak 2   AUTOMATIC   shadow -> B; neither side of this move clusters
+
+    RWE_CORPUS_SHADOW=
+    RWE_CORPUS_TIER_B=vertical.example
+```
+
+and the Tier A case held, as it must:
+
+```
+  NEEDS A HUMAN   vertical.example   A -> B
+      PROMOTE TO TIER B confirmed on 2 consecutive evaluations, but this moves out of
+      the clustering corpus and changes the story partition
+      requires: clustering counterfactual (audit_clustering_change.py)
+```
+
+## Bars
+
+| bar | where | status |
+|---|---|---|
+| every Tier A crossing, **both directions**, is non-automatic and names what would unblock it | unit | ✅ |
+| shadow → B and B → shadow are automatic — neither side clusters | unit | ✅ |
+| promotion into Tier A without a lean names **both** blockers, not just the first | unit | ✅ |
+| dormancy from Tier A is automatic **only** when the interval exceeds the clustering window | unit | ✅ |
+| a dormant outlet that resumes re-enters **evaluation**, not its old tier | unit | ✅ |
+| retirement is never reached automatically | unit | ✅ |
+| `INSUFFICIENT *` produces no transition in any state | unit (12 cases) | ✅ |
+| an unknown state raises rather than defaulting | unit | ✅ |
+| `streak` resets when the target changes — two different targets never confirm | unit | ✅ |
+| `first_observed` only ever moves **earlier** | unit | ✅ |
+| events are append-only and keep the evidence of superseded decisions | unit | ✅ |
+| a promotion out of shadow **removes** from `RWE_CORPUS_SHADOW` as well as adding to `TIER_B` | unit | ✅ |
+| a run with nothing to do emits **no** diff | unit | ✅ |
+| the emitted value is stable under reordering | unit | ✅ |
+| the runner opens no file, imports no `subprocess`, writes no `os.environ` | AST, not text | ✅ |
+| the runner measures via `asc.measure` and re-derives none of M8's numbers | structural | ✅ |
+| Tier A workload unchanged | by construction — read-only, never runs inside a build | ✅ |
+
+## What M9 does NOT do
+
+It does not change configuration, restart anything, or touch the serving path. It does not fill the
+shadow lane — that is M7, still blocked on the ToS review and network egress. And it does not
+promote anything into Tier A, which remains bounded by rating throughput rather than by code.
 
 ---
 

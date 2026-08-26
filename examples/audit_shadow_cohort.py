@@ -255,24 +255,21 @@ def _read_shadow(st, *, window_start, cap) -> list:
     return [r for r in rows if corpus.is_shadow(r.get("publisher"), r.get("url"))]
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--db", default=os.environ.get("RWE_DB_URL"))
-    ap.add_argument("--as-if", default="",
-                    help="comma-separated outlets to evaluate AS IF shadow; the Tier A story set "
-                         "is rebuilt without them first")
-    ap.add_argument("--show", type=int, default=30, help="outlets to list")
-    args = ap.parse_args(argv)
+def measure(st, reg, *, as_if=frozenset()) -> dict:
+    """Every M8 measurement, as data rather than as printed output.
 
-    st = store_mod.Store(args.db)
-    reg = outlet_registry.default_registry()
+    Extracted so **M9 evaluates with M8's numbers instead of its own**. A lifecycle runner that
+    re-derived the cohort, the counterfactual index or the syndication population would be a second
+    definition of "what this outlet is worth", and the guards built here — self-scoring, the window
+    bound, identity-resolved first-seen — would silently not apply to it. This audit series has
+    corrected four drifted definitions already; the fifth is cheaper to prevent.
 
+    ``main`` prints from this dict and decides nothing the dict does not contain."""
     window_start = story_service._window_start()
     tier_a = story_service._fetch(st)
     ents = story_service._entities_for(st, tier_a)
     verdicts_in, _band = story_service._event_inputs(st)
 
-    as_if = {p.strip().lower() for p in args.as_if.split(",") if p.strip()}
     if as_if:
         # Rebuild WITHOUT the cohort. Filtering the rows directly rather than through the SQL
         # prefilter, for the reason `audit_source_cohort` gives: the cap is not binding, so the two
@@ -298,8 +295,41 @@ def main(argv=None) -> int:
         mode = "shadow lane (RWE_CORPUS_SHADOW)"
         peers = tier_a
 
+    # The self-scoring guard runs before anything is computed FROM the index, so a caller cannot
+    # read a rate that was ~100% by construction. `main` refuses to report on it; M9 refuses to act.
+    mine = self_scored(cohort, stories)
+    table, first_seen, catalog_articles = {}, {}, {}
+    if cohort and not mine:
+        identities = {_identity(reg, r) for r in cohort}
+        first_seen, catalog_articles = identity_first_seen(st, reg, identities)
+        table = outlet_stats(cohort, reg, carrier_index(peers, cohort),
+                             se.assignment_index(stories),
+                             first_seen=first_seen, catalog_articles=catalog_articles)
+    return {"windowStart": window_start, "mode": mode, "tierA": tier_a, "built": keep,
+            "stories": stories, "cohort": cohort, "unmatched": unmatched,
+            "unmatchedEver": st.publisher_first_seen(set(unmatched)) if unmatched else {},
+            "selfScored": mine, "table": table, "firstSeen": first_seen,
+            "catalogArticles": catalog_articles, "asIf": bool(as_if)}
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--db", default=os.environ.get("RWE_DB_URL"))
+    ap.add_argument("--as-if", default="",
+                    help="comma-separated outlets to evaluate AS IF shadow; the Tier A story set "
+                         "is rebuilt without them first")
+    ap.add_argument("--show", type=int, default=30, help="outlets to list")
+    args = ap.parse_args(argv)
+
+    st = store_mod.Store(args.db)
+    reg = outlet_registry.default_registry()
+    as_if = {p.strip().lower() for p in args.as_if.split(",") if p.strip()}
+    m = measure(st, reg, as_if=as_if)
+    window_start, cohort, stories = m["windowStart"], m["cohort"], m["stories"]
+    keep, unmatched, table = m["built"], m["unmatched"], m["table"]
+
     print(f"window        : from {window_start}")
-    print(f"mode          : {mode}")
+    print(f"mode          : {m['mode']}")
     print(f"Tier A built  : {len(keep):,} articles -> {len(stories):,} stories "
           f"({sum(len(s['coverage']) for s in stories):,} covered)")
     print(f"cohort        : {len(cohort):,} articles")
@@ -308,7 +338,7 @@ def main(argv=None) -> int:
         # Which of the two causes it is, rather than leaving the reader to guess: the catalog knows
         # whether it has EVER held this publisher string, and that separates "the name is wrong"
         # from "the outlet went quiet".
-        ever = st.publisher_first_seen(set(unmatched))
+        ever = m["unmatchedEver"]
         for name in unmatched:
             if name in ever:
                 print(f"    {name:<30} IN THE CATALOG since {ever[name]} — published nothing in "
@@ -334,34 +364,12 @@ def main(argv=None) -> int:
             print("  raw publisher string lower-cased when untracked.")
         return 0
 
-    # ------------------------------------------------------------------ the self-scoring guard
-    #
-    # If the cohort's own coverage is in the index it is scored against, every article attaches to
-    # itself and the rate is ~100% by construction. Shadow mode cannot hit this; --as-if is one
-    # forgotten rebuild away from it. Three key-convention bugs in this audit series each produced
-    # confident wrong numbers, so this is checked rather than reasoned about.
-    mine = self_scored(cohort, stories)
-    if mine:
-        print(f"\n*** SELF-SCORING: {mine:,} of the cohort's own articles are IN the story")
+    if m["selfScored"]:
+        print(f"\n*** SELF-SCORING: {m['selfScored']:,} of the cohort's own articles are IN the "
+              f"story")
         print("    set they are being scored against. Every assignment rate would be ~100% by")
         print("    construction. Refusing to report.")
         return 1
-
-    # ------------------------------------------------------------------ observation, unwindowed
-    #
-    # MUST come from the catalog, not from `cohort`. The rows above were fetched through a 6-day
-    # window, so a span derived from them cannot exceed 6 days and the 14-day gate could never be
-    # satisfied by anything — the defect the first production run of this script shipped with.
-    # Resolved by IDENTITY from the catalog, not from the windowed rows' publisher strings: an
-    # outlet with several spellings would otherwise contribute only the ones the last 6 days
-    # happened to contain, and its history would move when a variant aged out.
-    identities = {_identity(reg, r) for r in cohort}
-    first_seen, catalog_articles = identity_first_seen(st, reg, identities)
-
-    carriers = carrier_index(peers, cohort)
-    index = se.assignment_index(stories)
-    table = outlet_stats(cohort, reg, carriers, index, first_seen=first_seen,
-                         catalog_articles=catalog_articles)
 
     print(f"outlets       : {len(table):,}   "
           f"tracked {sum(1 for v in table.values() if v['tracked']):,}   "
