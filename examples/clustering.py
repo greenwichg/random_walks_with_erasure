@@ -196,6 +196,28 @@ def weighted_jaccard(a: frozenset, b: frozenset, weights: Optional[dict]) -> flo
     return (sum(weights.get(t, 1.0) for t in inter) / den) if den else 0.0
 
 
+def pair_admits(tx: frozenset, ty: frozenset,
+                time_x: Optional[datetime], time_y: Optional[datetime], *,
+                sim: float = DEFAULT_SIM, window_days: float = DEFAULT_WINDOW_DAYS,
+                min_shared: int = MIN_SHARED_TOKENS, min_tokens: int = MIN_TITLE_TOKENS,
+                weights: Optional[dict] = None) -> bool:
+    """Whether two items are close enough to belong to the same story — **the** pairwise rule.
+
+    Extracted from :func:`cluster`'s inner ``pair_ok`` so it can be asked OUTSIDE a build, which is
+    what source evaluation needs: "would this article have joined a story?" is the same question the
+    clusterer answers, and answering it with a second implementation is how two definitions of "same
+    event" quietly drift apart. ``cluster`` now delegates here, so there is one definition and any
+    change to it moves both.
+
+    The ``evidence`` hook stays at ``cluster``'s call site rather than here: it is keyed on item
+    INDICES into a specific build, which has no meaning to a caller holding two token sets."""
+    floor = max(1, min_tokens)
+    if len(tx) < floor or len(ty) < floor or len(tx & ty) < min_shared:
+        return False
+    return (weighted_jaccard(tx, ty, weights) >= sim
+            and within_window(time_x, time_y, window_days))
+
+
 def parse_time(iso: str) -> Optional[datetime]:
     s = (iso or "").strip()
     if not s:
@@ -377,11 +399,9 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
         """The pairwise admission gate, as one predicate. The quorum test scores cross-pairs by
         exactly the rule that admitted the original pair — a weaker bar there would let cross-pairs
         that could never merge on their own count as support for merging."""
-        tx, ty = toks[x], toks[y]
-        if len(tx) < floor or len(ty) < floor or len(tx & ty) < min_shared:
-            return False
-        return (weighted_jaccard(tx, ty, weights) >= sim
-                and within_window(times[x], times[y], window_days)
+        return (pair_admits(toks[x], toks[y], times[x], times[y],
+                            sim=sim, window_days=window_days, min_shared=min_shared,
+                            min_tokens=min_tokens, weights=weights)
                 and (evidence is None or evidence(x, y)))
 
     def candidates():

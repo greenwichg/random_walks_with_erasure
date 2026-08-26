@@ -1,6 +1,6 @@
 # Scaling to a 50,000-source universe — the dependency-ordered path
 
-**Status:** design, with **M1, M2 and M5 built and shipped off** (Parts 7, 8 and 9) ·
+**Status:** design, with **M1, M2, M5 and M8 built and shipped off** (Parts 7, 8, 9 and 10) ·
 **Companions:** `CRAWLER_ARCHITECTURE_AUDIT.md` (how we fetch), `SOURCE_COVERAGE_AUDIT.md` (which
 publishers we carry and what they do inside), `CORPUS_ARCHITECTURE.md` (the corpus contract this
 roadmap extends — now amended to four datasets), `PERFORMANCE.md` (every cost constant quoted below).
@@ -782,6 +782,121 @@ out of it. Filling the lane is M7 and needs the ToS review; deciding what leaves
 
 `RWE_CORPUS_SHADOW` was already in the compose allowlist from M1, so there is no config change and
 nothing to deploy beyond the code.
+
+---
+
+# Part 10 — M8 as built: evaluating a lane you cannot observe
+
+**Landed in `claude/sleepy-gates-oecof1`.** Stage 4 of Part 4, built on the lane M5 opened.
+
+## The problem M5 created, which is the whole of M8
+
+M5's shadow lane is *stored and surfaced nowhere* — that is what makes it safe to point at 50,000
+unvetted sources. It is also what makes the metric every earlier audit leaned on unavailable:
+**story participation is structurally zero for a shadow outlet, forever**, because shadow rows never
+reach the builder. `audit_source_cohort.py` cannot simply be pointed at shadow; it would rank every
+outlet at 0% and read as though it had measured something.
+
+So the question has to change shape, from observational to counterfactual:
+
+> **Would this article have joined a story, had it been allowed to?**
+
+That is the same question the clusterer answers. Answering it with a *second* implementation is how
+two definitions of "same event" quietly drift apart — and this audit series has already corrected
+three key-convention drifts, each of which produced confident, wrong numbers that nothing
+contradicted. So the rule was **extracted rather than reimplemented**.
+
+## What landed
+
+| file | what it is |
+|---|---|
+| `examples/clustering.py` | `pair_admits(tx, ty, time_x, time_y, …)` — the pairwise rule, lifted out of `cluster`'s inner `pair_ok`, which now delegates to it. One definition, and any change to it moves both. |
+| `examples/source_evaluation.py` | the policy module: `observed_days`, `freshness_hours`, `assignment_index`, `would_attach`, `assignment_rate`, `evaluate`. Pure — no store, no network, no env, no writes. |
+| `examples/audit_shadow_cohort.py` | the runner. Reads the lane with `include_shadow=True`, measures, prints a verdict per outlet. Read-only. |
+| `tests/test_source_evaluation.py` | 22 tests |
+| `tests/test_audit_shadow_cohort.py` | 9 tests |
+
+`cluster`'s output is **byte-identical** after the extraction, verified on 4,000 synthetic items
+across three parameter regimes against `HEAD`: defaults 30 clusters, quorum+idf 338, `min_shared=2`
+1 — `identical=True` in all three.
+
+## Why the graph's dependencies did not bind
+
+Part 5 lists M8 after M7 (discovery) and M4 (Tier B assignment). Neither binds, for reasons that
+have now recurred often enough to be worth stating as a pattern:
+
+* **M7 (discovery)** — the cohort is already inside. `ingest_entries` has no admission gate, so
+  ~4,000 outlet identities are already ingested and never evaluated. Discovery is what fills the
+  lane with outlets we have *not* met; it is not what makes the harness runnable.
+* **M4 (assignment as a production feature)** — M8 needs assignment as a **measurement**, computed
+  offline over a built story set, not as a serving path. `assignment_index` + `would_attach` is that
+  measurement in ~20 lines, and it costs the builder nothing because it never runs inside a build.
+
+## The two traps, and the guards that are in the code rather than in this document
+
+**1. Self-scoring.** If the assignment index contains the cohort's own coverage, every article
+attaches to itself and the rate is ~100% *by construction* — a number that looks like a strong
+result and measures nothing. Shadow mode cannot hit it; `--as-if` is one forgotten rebuild away.
+`self_scored(cohort, stories)` counts it and the run **refuses to report** when it is non-zero.
+
+**2. Syndication measured against the wrong population.** A shadow outlet's syndication partner is
+almost always a Tier A masthead it is republishing. Count carriers within the cohort alone and a
+lone republisher scores **0%** — precisely the outlet the ceiling exists to catch. `carrier_index`
+takes the Tier A corpus *and* the cohort, and a test pins the difference (1 carrier vs 2).
+
+## `--as-if`: the harness is runnable today, on real data, with nothing in shadow
+
+`--as-if "outlet,outlet"` evaluates outlets we **already carry in Tier A** as though they were in
+shadow, rebuilding the Tier A story set without them first. Same de-risking order `audit_source_cohort`
+used: exercise the evaluation stage on real data with zero crawl, zero ToS exposure and zero new
+code in the serving path, *before* pointing it at a source we have never met. On a seeded fixture
+the two modes agree exactly on the same outlet, which is the cross-check worth having.
+
+## What M8 deliberately does NOT gate on
+
+**`assignment_rate` is reported and never gated.** No bar for it has been measured. The temptation
+is to pick one — "promote above 20%" — and this audit series has now had **two invented thresholds
+die against data**: participation as a quality proxy (its list was full of real newsrooms), then
+peer count as its excuse (refuted at `en` 214 peers → 27% vs `vi` 6 peers → 30%). A third guess
+would be a worse mistake for having watched the first two fail. `test_no_gate_reads_the_assignment_fields`
+makes this structural rather than intentional: `evaluate` must return the same verdict for an outlet
+that would attach everywhere and one that would attach nowhere, every other input held equal.
+
+**Tier A promotion is not decided here either.** It needs the clustering counterfactual on the
+production bars — a whole-corpus measurement, not a per-outlet one. `evaluate` returns
+`TIER A CANDIDATE` and names the run that would settle it.
+
+## The verdicts
+
+| verdict | when | note |
+|---|---|---|
+| `INSUFFICIENT DATA` | observed < 14 days | **not a rejection** — the safe direction. An outlet seen for three days has told us nothing. |
+| `INSUFFICIENT VOLUME` | < 10 articles in the window | the measured floor: 3,442 of 4,083 identities sit below it with a *median of one article*. |
+| `REJECT` | syndication > 35%, or host stability < 50% | the two language-independent defects. Read **before** the promoting facts, so a syndicator that also attaches everywhere reads as a republisher — its attachments are other publishers' coverage counted twice. |
+| `TIER A CANDIDATE` | passes, and carries a lean | evidence, not a promotion. |
+| `PROMOTE TO TIER B` | passes, unrated | needs no counterfactual: a Tier B row cannot alter the partition. **This is the asymmetry that scales to 50,000.** |
+
+## Bars
+
+| bar | where | status |
+|---|---|---|
+| `cluster` output byte-identical after extracting `pair_admits` | 4,000 items × 3 regimes vs `HEAD` | ✅ |
+| `would_attach` agrees with `clustering.cluster` on attach **and** no-attach cases | unit, against the clusterer itself | ✅ |
+| `would_attach` is deterministic across runs on identical input | unit | ✅ |
+| the inverted index is exact, not approximate — pinned against a brute-force scan | unit | ✅ |
+| `observed_days` reads `createdAt`, never `publishedAt` | unit | ✅ |
+| too-new ⇒ `INSUFFICIENT DATA`, never `REJECT` | unit | ✅ |
+| no verdict branches on `assignmentRate` / `assignmentStories` / `attached` | structural, both modules | ✅ |
+| syndication sees the Tier A corpus, not the cohort alone | unit (1 carrier vs 2) | ✅ |
+| self-scoring is detected and the run refuses to report | unit + manual sabotage run (exit 1) | ✅ |
+| the policy module imports no store, network or `os` | AST, not text | ✅ |
+| Tier A workload unchanged | by construction — the runner is read-only and never runs inside a build | ✅ |
+
+## What M8 does NOT do
+
+It does not act. Every verdict is evidence; moving an outlet between lanes or retiring it is **M9**,
+and it is not built. It also does not fill the lane — that is M7, still blocked on the ToS review
+and on network egress.
 
 ---
 

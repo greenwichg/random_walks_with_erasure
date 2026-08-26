@@ -1,0 +1,274 @@
+"""audit_shadow_cohort.py — Stage 4 run: what is the shadow lane worth?
+
+**M8 of `docs/SCALE_ROADMAP.md`.** Read-only: no writes, no ingestion, no network, no curation. It
+reads the lane M5 built, measures it with `source_evaluation.py`, and prints a verdict per outlet.
+Nothing here acts on a verdict — acting is M9.
+
+## The problem this run exists to solve
+
+M5's shadow lane is *stored and surfaced nowhere*, which is what makes it safe to point at 50,000
+unvetted sources. It also makes the metric every earlier audit leaned on unavailable: **story
+participation is structurally zero for a shadow outlet, forever**, because shadow rows never reach
+the builder. `audit_source_cohort.py` cannot be pointed at shadow — it would rank every outlet at 0%
+and read as though it had measured something.
+
+So this run asks the counterfactual instead: *would this article have joined a story, had it been
+allowed to?* — answered with the clusterer's own pair rule (`clustering.pair_admits`), not a second
+implementation of it.
+
+## Two modes, and the second is the one you can run today
+
+``(default)``   evaluate the outlets actually in ``RWE_CORPUS_SHADOW``. Reads them with
+                ``include_shadow=True``, the flag that exists for exactly this caller.
+
+``--as-if``     evaluate outlets we ALREADY carry in Tier A, as though they were in shadow. The
+                Tier A story set is **rebuilt without them** first, so the index they are scored
+                against does not contain their own articles.
+
+``--as-if`` is not a toy. It is the same de-risking order `audit_source_cohort.py` used: exercise
+the evaluation stage on real data with zero crawl, zero ToS exposure and zero new code in the
+serving path, *before* pointing it at a genuinely new source. It also answers a question worth
+asking on its own — what would we lose if this outlet were demoted? — using the harness that will
+later judge the outlets we have not met yet.
+
+## The trap this script refuses to fall into
+
+If the assignment index contains the cohort's own coverage, every article attaches to itself and the
+rate is ~100% **by construction**. In shadow mode that cannot happen (shadow never enters the
+build). In ``--as-if`` mode it is one forgotten rebuild away, so :func:`main` asserts it: no cohort
+member may appear in the story set it is scored against, and the run refuses to report if one does.
+This audit series has now shipped three key-convention bugs that each produced confident, wrong
+numbers; a guard is cheaper than a fourth.
+
+    dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL"
+    dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" \\
+        --as-if "sportskeeda.com,newsbytesapp.com"
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+from collections import Counter, defaultdict
+
+import audit_clustering_change as ach
+import clustering
+import corpus
+import discover
+import outlet_registry
+import source_evaluation as se
+import story_service
+import store as store_mod
+from pagination import OffsetPagination
+
+
+def _identity(reg, row) -> str:
+    """The registry's canonical name for a row's publisher, else the raw name lower-cased.
+
+    Same expression `audit_source_cohort._identity` uses. Shadow outlets are mostly untracked, so
+    the fallback is the common path here rather than the exception."""
+    pub = (row.get("publisher") or "").strip()
+    o = reg.resolve(pub) if pub else None
+    return o.canonical if o else pub.lower()
+
+
+def _host(row) -> str:
+    return outlet_registry._host_of(row.get("canonicalUrl") or row.get("url") or "")
+
+
+def _member_key(row) -> str:
+    """The key a story's coverage entry carries for this row — ``discover._absolute_url`` of the
+    DISPLAY url. See `audit_source_cohort.member_key`: looking up ``canonicalUrl`` here misses on
+    most rows and reported participation 20x low on production."""
+    return discover._absolute_url(row.get("url") or row.get("canonicalUrl"))
+
+
+def carrier_index(*row_groups) -> dict:
+    """Title-token set → the distinct publishers carrying it, across EVERY group given.
+
+    Built over the cohort **and** the Tier A corpus together, deliberately. Syndication asks whether
+    a headline also runs under another publisher, and for a shadow outlet the other publisher is
+    almost always a Tier A masthead it is republishing. Counting carriers within the cohort alone
+    would score a lone republisher at 0% syndication — the outlet the ceiling exists to catch."""
+    carriers = defaultdict(set)
+    for rows in row_groups:
+        for r in rows:
+            toks = clustering.title_tokens(r.get("title") or "")
+            if toks:
+                carriers[toks].add((r.get("publisher") or "").strip().lower())
+    return carriers
+
+
+def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None) -> dict:
+    """Per outlet identity: every measurement `source_evaluation.evaluate` reads, plus the two it
+    reports and never gates on."""
+    by_id = defaultdict(list)
+    for r in rows:
+        by_id[_identity(reg, r)].append(r)
+
+    out = {}
+    for key, arts in by_id.items():
+        o = reg.resolve(key)
+        hosts = Counter(_host(a) for a in arts if _host(a))
+        dup = sum(1 for a in arts
+                  if (t := clustering.title_tokens(a.get("title") or "")) and len(carriers[t]) > 1)
+        assign = se.assignment_rate(arts, index)
+        out[key] = {
+            "articles": len(arts),
+            "observedDays": se.observed_days(arts, now=now),
+            "freshnessHours": se.freshness_hours(arts),
+            "syndication": dup / max(1, len(arts)),
+            "hosts": len(hosts),
+            "topHost": hosts.most_common(1)[0][0] if hosts else "",
+            "hostStability": (hosts.most_common(1)[0][1] / max(1, len(arts))) if hosts else 0.0,
+            "assignmentRate": assign["rate"],
+            "assignmentStories": assign["stories"],
+            "attached": assign["attached"],
+            "tracked": o is not None,
+            "rated": bool(o is not None and o.lean == o.lean),      # NaN != NaN
+            "kind": (o.kind if o else None),
+            "canonical": (o.canonical if o else key),
+        }
+    return out
+
+
+def self_scored(cohort: list, stories: list) -> int:
+    """How many of the cohort's own articles are IN the story set they are scored against.
+
+    Must be zero. Otherwise every one of them attaches to itself and the assignment rate is ~100%
+    **by construction** — a number that looks like a strong result and measures nothing. Shadow mode
+    cannot hit this (shadow rows never enter a build); ``--as-if`` is one forgotten rebuild away."""
+    member = ach.index_by_member(stories)
+    return sum(1 for r in cohort if _member_key(r) in member)
+
+
+def _read_shadow(st, *, window_start, cap) -> list:
+    """The shadow lane. ``include_shadow=True`` is the whole reason that flag exists — every other
+    caller gets the default, which hides these rows from readers."""
+    rows, _total = st.search_feed_articles(
+        date_from=window_start, sort="newest", include_shadow=True,
+        pagination=OffsetPagination.from_params(cap, 0, max_limit=cap))
+    return [r for r in rows if corpus.is_shadow(r.get("publisher"), r.get("url"))]
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--db", default=os.environ.get("RWE_DB_URL"))
+    ap.add_argument("--as-if", default="",
+                    help="comma-separated outlets to evaluate AS IF shadow; the Tier A story set "
+                         "is rebuilt without them first")
+    ap.add_argument("--show", type=int, default=30, help="outlets to list")
+    args = ap.parse_args(argv)
+
+    st = store_mod.Store(args.db)
+    reg = outlet_registry.default_registry()
+
+    window_start = story_service._window_start()
+    tier_a = story_service._fetch(st)
+    ents = story_service._entities_for(st, tier_a)
+    verdicts_in, _band = story_service._event_inputs(st)
+
+    as_if = {p.strip().lower() for p in args.as_if.split(",") if p.strip()}
+    if as_if:
+        # Rebuild WITHOUT the cohort. Filtering the rows directly rather than through the SQL
+        # prefilter, for the reason `audit_source_cohort` gives: the cap is not binding, so the two
+        # are equivalent for the build, and this keeps the audit off the query path entirely.
+        def _in_cohort(r):
+            return (_identity(reg, r) in as_if
+                    or (r.get("publisher") or "").strip().lower() in as_if)
+        cohort = [r for r in tier_a if _in_cohort(r)]
+        keep = [r for r in tier_a if not _in_cohort(r)]
+        stories = story_service.build_stories(keep, entities=ents, event_verdicts=verdicts_in)
+        mode = f"--as-if: {len(as_if)} named outlets, rebuilt without them"
+        peers = keep
+    else:
+        cohort = _read_shadow(st, window_start=window_start,
+                              cap=story_service.max_scan_default())
+        keep = tier_a
+        stories = story_service.build_stories(tier_a, entities=ents, event_verdicts=verdicts_in)
+        mode = "shadow lane (RWE_CORPUS_SHADOW)"
+        peers = tier_a
+
+    print(f"window        : from {window_start}")
+    print(f"mode          : {mode}")
+    print(f"Tier A built  : {len(keep):,} articles -> {len(stories):,} stories "
+          f"({sum(len(s['coverage']) for s in stories):,} covered)")
+    print(f"cohort        : {len(cohort):,} articles")
+
+    if not cohort:
+        # An empty table is not a finding, and printing one would read as "nothing here is worth
+        # promoting". Say which of the two empty states this is.
+        print("\nVERDICT: INCOMPLETE — nothing to evaluate.")
+        if not as_if:
+            shadow = corpus.shadow_exclusions()
+            print(f"  RWE_CORPUS_SHADOW names {len(shadow)} outlet(s); "
+                  f"{'none of them published in this window' if shadow else 'it is unset'}.")
+            print("  The harness is built and tested; it has no subject yet. Either put outlets in")
+            print("  shadow, or exercise it on outlets we already carry with --as-if.")
+        else:
+            print("  None of the named outlets published in this window. Check the names against")
+            print("  audit_source_cohort.py's table — identity is the registry canonical, or the")
+            print("  raw publisher string lower-cased when untracked.")
+        return 0
+
+    # ------------------------------------------------------------------ the self-scoring guard
+    #
+    # If the cohort's own coverage is in the index it is scored against, every article attaches to
+    # itself and the rate is ~100% by construction. Shadow mode cannot hit this; --as-if is one
+    # forgotten rebuild away from it. Three key-convention bugs in this audit series each produced
+    # confident wrong numbers, so this is checked rather than reasoned about.
+    mine = self_scored(cohort, stories)
+    if mine:
+        print(f"\n*** SELF-SCORING: {mine:,} of the cohort's own articles are IN the story")
+        print("    set they are being scored against. Every assignment rate would be ~100% by")
+        print("    construction. Refusing to report.")
+        return 1
+
+    carriers = carrier_index(peers, cohort)
+    index = se.assignment_index(stories)
+    table = outlet_stats(cohort, reg, carriers, index)
+
+    print(f"outlets       : {len(table):,}   "
+          f"tracked {sum(1 for v in table.values() if v['tracked']):,}   "
+          f"rated {sum(1 for v in table.values() if v['rated']):,}   "
+          f"[membership guard passed: 0 self-scored]")
+
+    # ------------------------------------------------------------------ the table
+    print(f"\n=== the cohort, ranked by articles that WOULD attach to a story ===")
+    print("    `would` is the counterfactual, answered with clustering.pair_admits — the")
+    print("    clusterer's own pair rule, so this cannot drift from what a build would do.")
+    print("    ATTACH IS REPORTED AND NEVER GATED. No bar for it has been measured, and two")
+    print("    invented thresholds have already died against data in this series.")
+    print(f"\n  {'arts':>6} {'obs_d':>6} {'attach':>7} {'story':>6} {'synd':>6} {'host':>6} "
+          f"{'fresh_h':>8}  outlet")
+    for key, s in sorted(table.items(), key=lambda kv: -kv[1]["attached"])[:args.show]:
+        v, _why = se.evaluate(s)
+        obs = f"{s['observedDays']:.1f}" if s["observedDays"] is not None else "?"
+        fresh = f"{s['freshnessHours']:.1f}" if s["freshnessHours"] is not None else "?"
+        print(f"  {s['articles']:>6} {obs:>6} {s['attached']:>7} {s['assignmentStories']:>6} "
+              f"{s['syndication']:>5.0%} {s['hostStability']:>5.0%} {fresh:>8}  "
+              f"{s['canonical'][:30]:<30} {v}")
+
+    # ------------------------------------------------------------------ verdicts
+    census = Counter(se.evaluate(s)[0] for s in table.values())
+    print(f"\n=== verdicts ===")
+    for name, n in census.most_common():
+        arts = sum(s["articles"] for s in table.values() if se.evaluate(s)[0] == name)
+        print(f"  {n:>5} outlets  {arts:>7,} articles  {name}")
+
+    print(f"\n=== the reasons (read these) ===")
+    for key, s in sorted(table.items(), key=lambda kv: -kv[1]["articles"])[:args.show]:
+        v, why = se.evaluate(s)
+        print(f"  {s['canonical'][:30]:<30} {v:<20} {why}")
+
+    print(f"\n=== what this run does NOT decide ===")
+    print("  * Tier A promotion. A TIER A CANDIDATE needs the clustering counterfactual on the")
+    print("    production bars — a whole-corpus measurement, not a per-outlet one. Run")
+    print("    audit_corpus_boundary.py / audit_clustering_change.py before promoting anything.")
+    print("  * Anything at all, automatically. Every verdict here is evidence. Acting on one —")
+    print("    moving an outlet between lanes, retiring it — is M9, and it is not built.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
