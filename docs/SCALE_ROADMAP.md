@@ -1460,6 +1460,23 @@ been asked and `FAIL` is honest.
 | a source neither we nor the feed can place **does** fail gate 6 | unit | ✅ |
 | `datedShare` is 1.0 by construction for a windowed fetch, real for an unwindowed one | unit | ✅ |
 | the runner prints no `dated` column | structural | ✅ |
+
+**Both fixes verified on production, `2ab7d60`:** 4,012 hosts = 524 tracked + 24 proxy + 3,291
+below-floor + **173 candidates** (346 requests, 11.5 min), census summing exactly, no `dated` column,
+and the `?` rows now honestly labelled — gate 6 defers to the feed, so the priced request count
+covers exactly the hosts that will be probed.
+
+Two things the run confirms about the design rather than about the code:
+
+* **`theportugalnews.com` is recorded as `ar`** — an English-language paper tagged Arabic. That is
+  visible evidence the catalog's `language` is *unreliable*, not merely sparse, which is precisely
+  why gate 6 defers to the feed instead of trusting it.
+* **Gate 7 is per-masthead, and that is load-bearing.** `navbharattimes.indiatimes.com` is proposed
+  as a candidate while `timesofindia.indiatimes.com` resolves to The Times of India (lean 1.0) and
+  the bare `indiatimes.com` resolves to nothing. That is correct — Navbharat Times is the Times
+  Group's *Hindi* masthead, a different outlet sharing a domain, and our catalog independently
+  recorded it as `hi`. Registering the parent domain to "tidy up" would silently apply an English
+  paper's lean to a Hindi one. The right treatment is its own registry row.
 | `validate` has no default fetcher and constructs none | structural (signature + source) | ✅ |
 | a candidate rejected by an offline gate costs **zero** requests | unit | ✅ |
 | robots refusal stops before the landing page and feed are fetched | unit (call list) | ✅ |
