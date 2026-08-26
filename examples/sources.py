@@ -1592,6 +1592,22 @@ class MultiSourcePoller:
         if self.running:
             return
         adapters = self.registry.enabled()
+        # Say why a REGISTERED adapter is not among them. `enabled()` returning False is silent by
+        # construction, and for a crawl adapter the usual reason is a missing RWE_CORPUS_SHADOW
+        # entry — a config the operator believes is live. `shadow_warning()` was written for exactly
+        # this and had no caller: a diagnostic nothing invokes is the same defect as a gate that
+        # cannot fire, and it made "turning on only the flag tells you why" an untrue sentence.
+        for a in self.registry.adapters():
+            warn = getattr(a, "shadow_warning", None)
+            if warn is None:
+                continue
+            try:
+                message = warn()
+            except Exception:                     # a diagnostic must never break startup
+                continue
+            if message:
+                self._log(logging.WARNING, "source_adapter_inert",
+                          provider=getattr(a, "provider", "?"), reason=message)
         if not adapters:
             self._log(logging.INFO, "multi_source_no_adapters")
             return

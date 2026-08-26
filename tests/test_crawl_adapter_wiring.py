@@ -295,3 +295,41 @@ def test_the_service_that_actually_runs_the_poller_is_covered():
     have = [n for n, s in _compose_services().items()
             if "RWE_CRAWL_ENABLED" in (s.get("environment") or {})]
     assert set(have) == {"api", "ingest"}, f"expected both pollers to carry the switch, got {have}"
+
+
+# --------------------------------------------------------------------------- the warning has a caller
+
+def _poller_with(monkeypatch, shadow=None):
+    """A MultiSourcePoller over the real registry, started with threads stubbed out."""
+    monkeypatch.setenv("RWE_CRAWL_ENABLED", "1")
+    if shadow is not None:
+        monkeypatch.setenv("RWE_CORPUS_SHADOW", shadow)
+    corpus._index.cache_clear()
+    lines = []
+    poller = sources.MultiSourcePoller(None, registry=sources.default_registry(),
+                                       log=lambda lvl, ev, **f: lines.append((ev, f)))
+    monkeypatch.setattr(sources.threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda s: None,
+                                                       "is_alive": lambda s: False})())
+    poller.start()
+    return lines
+
+
+def test_a_configured_but_unshadowed_publisher_is_REPORTED_not_just_silently_skipped(monkeypatch):
+    """`shadow_warning()` existed with NO caller — defined, tested, and invoked by nothing. It made
+    "turning on only the flag tells you why" an untrue sentence: the adapter refused and said
+    nothing, which is indistinguishable from a broken config. Startup now emits it."""
+    inert = [f for ev, f in _poller_with(monkeypatch) if ev == "source_adapter_inert"]
+    named = [f for f in inert if f["provider"] == "kait8.com"]
+    assert named, "an enabled-but-unshadowed crawl publisher must say so"
+    assert "RWE_CORPUS_SHADOW" in named[0]["reason"]
+    assert "promotion by omission" in named[0]["reason"]
+
+
+def test_no_such_warning_once_the_publisher_IS_shadowed(monkeypatch):
+    """The mirror. A warning that fires when the config is correct is noise, and noise is how a
+    real warning gets ignored."""
+    lines = _poller_with(monkeypatch, shadow="kait8.com,kwch.com")
+    assert [f for ev, f in lines if ev == "source_adapter_inert"] == []
+    started = [f for ev, f in lines if ev == "multi_source_start"]
+    assert started and {"kait8.com", "kwch.com"} <= set(started[0]["adapters"])
