@@ -141,12 +141,14 @@ def main(argv=None) -> int:
         print("  No request was made. Every network gate reports UNKNOWN, which is not a pass:")
         print("  claiming a publisher's robots.txt permits us without having read it is exactly the")
         print("  shape of error this audit series keeps finding in its own instruments.")
-        print("\n  Before --probe, the roadmap asks for a ToS / robots review that has never been")
-        print("  done. CRAWLER_DESIGN.md records that no live crawl has ever run and that")
-        print("  crawler.py's configured patterns are unverified guesses. This is the first thing")
-        print("  in the whole roadmap that touches a publisher.")
+        print("\n  Live probing IS authorised now, under the beta-development policy: it has run")
+        print("  against 7 hosts, every readable robots.txt allowed HiddenView-Crawler, and the")
+        print("  transport is proven. What is STILL outstanding is the ToS review — robots.txt is")
+        print("  a technical signal, not a licence, and several majors prohibit automated access")
+        print("  in their terms regardless of what robots.txt permits. Probing reads only")
+        print("  robots.txt and a discovery document; it ingests nothing and promotes nothing.")
         if work:
-            print(f"\n  When authorised, start small:  --probe --limit 5")
+            print("\n  Start small, and keep starting small:  --probe --limit 5")
         return 0
 
     # ---------------------------------------------------------------- Stage 2
@@ -220,10 +222,15 @@ def main(argv=None) -> int:
     if any(r["discoveredVia"] == "news sitemap" for r in admitted):
         print()
         print("  *** A NEWS SITEMAP IS NOT AN RSS FEED. Putting one in RWE_RSS_FEEDS ingests")
-        print("      NOTHING: a <urlset> has no <channel> and no <item>, so it parsed to zero")
-        print("      entries with no error and reported healthy forever. parse_feed now rejects")
-        print("      one loudly. Sitemap sources need the crawler ladder (crawler.py), which is")
-        print("      not wired into the poller — that is the next thing this worklist needs.")
+        print("      NOTHING: a <urlset> has no <channel> and no <item>, so it parses to zero")
+        print("      entries with no error and reports healthy forever. parse_feed rejects one")
+        print("      loudly now. Sitemap sources go through the crawler ladder, which IS wired")
+        print("      into the poller — behind two switches, both of which must be set:")
+        print("        RWE_CRAWL_ENABLED=1        registers the crawl adapters")
+        print("        RWE_CORPUS_SHADOW=<hosts>  required before any of them will RUN, because")
+        print("                                   Tier A is the default and crawling an unshadowed")
+        print("                                   outlet is promotion by omission")
+        print("      The publisher must also be enabled in data/crawler_publishers.json.")
     for r in admitted:
         print(f"    {r['host']:<34} {r['discoveredVia']:<13} {r['feed']}")
     return 0

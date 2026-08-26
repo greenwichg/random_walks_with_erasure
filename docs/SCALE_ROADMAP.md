@@ -1815,6 +1815,9 @@ Verified: flag on and no shadow → **zero adapters run**, both naming the fix. 
 
 ### What the config says, and what it deliberately does not
 
+*(Superseded one run later — see "The loop closed on the next run" below. Kept because the reasoning
+for shipping it empty is the reason the pattern is trustworthy now.)*
+
 `article_pattern` is **empty**, and that is a stated position rather than an oversight.
 `CRAWLER_DESIGN.md`'s sharpest warning is that a pattern matching 0% of discovered URLs makes the
 crawler ingest nothing while every gate reports healthy — so an **invented** pattern is worse than
@@ -1861,6 +1864,68 @@ specification.
 **The deeper point: shadow is the mechanism for exactly this uncertainty.** The lane exists to
 ingest something we are not sure about, measure it for 14 days, and decide. Declining to enable a
 verified source because one attribute is unobserved would defeat the machinery built for that.
+
+### Closing the loop on the unobserved pattern
+
+The probe now prints and records up to three **sample article URLs** per admitted host, so an
+`article_pattern` can be written from observation rather than guessed. That is the path from
+"acceptable in shadow" to "verified", and it needs no new crawling — the URLs are already in the
+discovery document the probe fetched.
+
+### The loop closed on the next run: the pattern is now observed
+
+The probe returned real article URLs, three per host:
+
+```
+https://www.kait8.com/2026/08/26/list-dozens-new-missouri-laws-take-effect-friday/
+https://www.kwch.com/2026/08/26/wichita-city-council-adopts-2027-budget-despite-library-funding-concerns/
+```
+
+`article_pattern` is now `/\d{4}/\d{2}/\d{2}/`, **written from observation**: 6 of 6 observed URLs
+match, across two independent hosts, and it rejects the `/news/`, `/authors/…`, `/tag/…` and
+`/video/` shapes it exists to filter. It is also the **same pattern already configured for NPR** — a
+different publisher on the same Arc XP date-path convention, which is corroboration rather than
+coincidence.
+
+Verified end to end through the crawler's own filter: a sitemap containing one real article and one
+author page yields `discovered 2, pattern_rejected 1, candidates 1`, and the surviving entry carries
+`body=None`.
+
+**Honest bound on the evidence:** 6 URLs of the 71 the two sitemaps held (~8%). The safety net is
+that being wrong is *loud* rather than silent — `_filter` counts `pattern_rejected`, and
+`_why_empty` explicitly diagnoses a pattern matching 0% of discovered URLs. A wrong pattern shows up
+in the crawl report; it does not quietly ingest nothing.
+
+Setting it also cleared the `no_article_pattern` lint. `unknown_publisher` remains for both and is
+**correct** — an unrated outlet is precisely what the shadow lane is for.
+
+### ⚠ The runner was telling operators something false
+
+Its ADMIT advice still read *"the crawler ladder (crawler.py), which is **not wired into the
+poller** — that is the next thing this worklist needs."* True when written, false the moment the
+wiring shipped, and printed on a production run against the very build that contains it.
+
+Live output describing the system as it *was* is its own defect class. It now names both switches
+and the config file, in the order they must be set. Naming only `RWE_CRAWL_ENABLED` would have been
+worse than naming neither — it reads like the whole instruction, and following it crawls nothing.
+
+**Sweeping for the rest of the class found two more in the same runner**, both in the offline
+banner an operator sees *before* deciding whether to probe:
+
+* *"the roadmap asks for a ToS / robots review that has never been done"* — conflating two things
+  that have now diverged. The **robots** review has been done, on 7 hosts, and every readable
+  robots.txt allowed us. The **ToS** review has not, and is the item live probing cannot close.
+* *"CRAWLER_DESIGN.md records that no live crawl has ever run… This is the first thing in the whole
+  roadmap that touches a publisher."* — false since `e24d754`. Worse than merely stale: it told an
+  operator the run they were about to authorise was unprecedented, when it was the fourth.
+
+`CRAWLER_DESIGN.md`'s own "what has not been verified" list carried the same claims, so it now
+carries a dated update marking three of its four items closed and the ToS review still open. The
+list is kept rather than rewritten — the reasoning that made those unknowns worth stating is what
+makes the closures worth trusting.
+
+Pinned by tests: the three retired sentences are asserted **absent** from the runner, and the ADMIT
+advice is asserted to name both switches and the config file.
 
 ### Closing the loop on the unobserved pattern
 

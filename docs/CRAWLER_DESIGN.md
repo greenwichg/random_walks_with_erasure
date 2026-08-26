@@ -196,10 +196,26 @@ publishers" is where crawler projects go wrong.
 - **No ToS review has been done.** Several major publishers prohibit automated access in their
   terms regardless of what robots.txt permits. robots.txt is a technical signal, not a licence.
 
+### Update (2026-08-26): three of those four are now closed
+
+Recorded here rather than left standing, because a stale "never run" is the same defect as a stale
+gate — a claim about the system that stopped being true and kept being printed.
+
+- **A live crawl has run**, from production, under the beta-development policy: 7 hosts across three
+  runs (`e24d754`, `0e50bf3`, `ca97347`), no ingestion and no writes. The transport is proven.
+- **Robots.txt has been read**, and **not one publisher disallowed us**. The only gate-1 REJECT was
+  `nysun.com` serving HTTP 429 — an *unavailable* file, not a refusal.
+- **Two publishers' URL shapes are now observed rather than guessed**: `kait8.com` and `kwch.com`
+  carry `article_pattern` `/\d{4}/\d{2}/\d{2}/`, written from six real URLs the probe returned. The
+  other five publishers' patterns remain unverified guesses and their configs remain `enabled:
+  false`.
+- **The ToS review is still outstanding**, and is the one item on this list that live probing cannot
+  close.
+
 ## ⚠ The gap this document did not notice, and its fix
 
-Everything above describes the discipline of a crawler that **has never run**. An audit of M7 Stage 2
-found that the ingestion **running in production every cycle** had none of it:
+Everything above describes the discipline built for a crawler that **had not yet run**. An audit of
+M7 Stage 2 found that the ingestion **running in production every cycle** had none of it:
 
 * **F1 — no robots gate on the live path.** `rss_ingest`, `sources`, `feed_service` and
   `feed_schedule` contained no reference to robots at all. It existed only in `crawler.py`, in M7's

@@ -199,7 +199,7 @@
           "url": "https://www.kait8.com/arc/outboundfeeds/news-sitemap-index/category/news/?outputType=xml"
         }
       ],
-      "article_pattern": "",
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
       "max_age_days": 7,
       "max_urls": 60,
       "min_interval": 2.0,
@@ -216,7 +216,7 @@
           "url": "https://www.kwch.com/arc/outboundfeeds/news-sitemap-index/category/news/?outputType=xml"
         }
       ],
-      "article_pattern": "",
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
       "max_age_days": 7,
       "max_urls": 60,
       "min_interval": 2.0,

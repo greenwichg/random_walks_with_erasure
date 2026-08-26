@@ -15,6 +15,7 @@ is the set of things that must be **impossible to get wrong**, not merely docume
 """
 import json
 import pathlib
+import re
 import sys
 
 import pytest
@@ -124,6 +125,57 @@ def test_the_configured_source_is_the_DECLARED_index_not_the_child_it_descends_t
         assert "news-sitemap-index" in url and pub["sources"][0]["kind"] == "sitemap"
 
 
+#: Article URLs the live probe actually returned on 2026-08-26, three from each host's news
+#: sitemap. Kept verbatim because they are the EVIDENCE the `article_pattern` was written from —
+#: the alternative was inventing one, and `CRAWLER_DESIGN.md`'s sharpest warning is that a pattern
+#: matching 0% of discovered URLs makes the crawler ingest nothing while every gate reports healthy.
+OBSERVED_ARTICLES = [
+    "https://www.kait8.com/2026/08/26/list-dozens-new-missouri-laws-take-effect-friday/",
+    "https://www.kait8.com/2026/08/25/team-coverage-fans-remember-dolly-partons-legacy-worldwide/",
+    "https://www.kait8.com/2026/08/26/after-multiple-inmate-escapes-howell-county-considers-options-new-jail/",
+    "https://www.kwch.com/2026/08/26/walmart-addresses-incorrect-sales-tax-charges-hays-store/",
+    "https://www.kwch.com/2026/08/26/wichita-city-council-adopts-2027-budget-despite-library-funding-concerns/",
+    "https://www.kwch.com/2026/08/26/work-begins-wednesday-reduce-douglas-avenue-3-lanes/",
+]
+
+
+def test_the_article_pattern_matches_every_url_the_probe_actually_returned():
+    """Written from observation, not convention. Six URLs across two independent hosts, and the
+    resulting pattern is the same one already configured for NPR — a different publisher on the same
+    Arc XP date-path convention, which is corroboration rather than coincidence."""
+    cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
+    for pub in (p for p in cfg["publishers"] if p["enabled"]):
+        patt = pub["article_pattern"]
+        assert patt, f"{pub['publisher']}: the samples are in hand, so the pattern should be set"
+        host = pub["domains"][0]
+        mine = [u for u in OBSERVED_ARTICLES if host in u]
+        assert mine, f"no observed sample for {host}"
+        assert all(re.search(patt, u) for u in mine), f"{pub['publisher']}: pattern misses real URLs"
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.kait8.com/news/",
+    "https://www.kait8.com/authors/jane-doe/",
+    "https://www.kait8.com/tag/weather/",
+    "https://www.kait8.com/video/",
+])
+def test_the_pattern_rejects_the_non_article_shapes_it_exists_for(url):
+    """A pattern that accepted everything would not be filtering — the other half of the warning."""
+    cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
+    patt = next(p["article_pattern"] for p in cfg["publishers"] if p["publisher"] == "kait8.com")
+    assert not re.search(patt, url)
+
+
+def test_setting_the_pattern_cleared_its_lint_warning(monkeypatch):
+    """`unknown_publisher` remains and is CORRECT — an unrated outlet is exactly what shadow is for.
+    `no_article_pattern` was the one carrying real residual risk, and it is now answered."""
+    monkeypatch.setenv("RWE_CORPUS_SHADOW", "kait8.com,kwch.com")
+    corpus._index.cache_clear()
+    codes = {p["code"] for p in crawler.lint_config(crawler.load_config())}
+    assert "no_article_pattern" not in codes
+    assert codes == {"unknown_publisher"}
+
+
 def test_an_age_bound_is_set_so_an_index_descent_cannot_reach_an_archive():
     """Nothing older than the clustering window can ever become a story, and this is the guard
     against the SCMP failure the field exists for — a declared sitemap returning 19,962 URLs
@@ -161,10 +213,46 @@ def test_a_broken_crawl_config_does_not_take_the_rss_poller_down(monkeypatch):
     assert any(getattr(a, "source_type", "") == "rss" for a in reg.adapters()), "RSS must survive"
 
 
-def test_the_lint_names_the_discovery_kinds_actually_configured():
+@pytest.mark.parametrize("kind, expected", [
+    ("sitemap", "a sitemap may list section and tag pages alongside articles"),
+    ("section", "an HTML index links to tags, authors and the shop"),
+])
+def test_the_lint_names_the_discovery_kind_actually_configured(kind, expected):
     """An over-broad warning is one people learn to skip. The old wording cited *section* discovery
-    for every publisher, including sitemap-only ones that configure no section source."""
-    problems = crawler.lint_config(crawler.load_config())
-    patt = [p for p in problems if p["code"] == "no_article_pattern"]
-    assert patt and all("sitemap discovery is configured" in p["detail"] for p in patt)
-    assert not any("an HTML index links to" in p["detail"] for p in patt)
+    for every publisher, including sitemap-only ones that configure no section source.
+
+    Driven through synthetic configs rather than the shipped one: an earlier version of this test
+    asserted the shipped config still HAD the gap, so it broke the moment the gap was closed. A test
+    of the lint should depend on the lint, not on a config staying imperfect."""
+    cfg = crawler.PublisherCrawlConfig(
+        publisher="Example", domains=("example.com",), article_pattern="",
+        sources=(crawler.DiscoverySource(kind=kind, url="https://example.com/x"),))
+    problem = next(p for p in crawler.lint_config([cfg]) if p["code"] == "no_article_pattern")
+    assert kind in problem["detail"] and expected in problem["detail"]
+
+
+# --------------------------------------------------------------------------- the runner tells the truth
+
+#: Sentences the discovery runner printed on a production run of a build that had already made them
+#: false. Live output describing the system as it *was* is its own defect class — an operator has no
+#: way to tell a stale instruction from a current one, and this series has now produced three.
+RETIRED_CLAIMS = [
+    "not wired into the poller",
+    "no live crawl has ever run",
+    "This is the first thing",
+]
+
+
+@pytest.mark.parametrize("claim", RETIRED_CLAIMS)
+def test_the_runner_no_longer_prints_a_claim_that_stopped_being_true(claim):
+    src = (ROOT / "examples" / "audit_source_discovery.py").read_text()
+    assert claim not in src, f"the runner still tells operators: {claim!r}"
+
+
+def test_the_admit_advice_names_BOTH_switches_in_the_order_they_must_be_set():
+    """Naming only `RWE_CRAWL_ENABLED` would be worse than naming neither: it reads like the whole
+    instruction, and following it crawls nothing while looking like it should work. Shadow comes
+    first so articles land hidden from the first cycle rather than after a correction."""
+    src = (ROOT / "examples" / "audit_source_discovery.py").read_text()
+    assert "RWE_CRAWL_ENABLED" in src and "RWE_CORPUS_SHADOW" in src
+    assert "crawler_publishers.json" in src, "the config file is the third thing that must change"
