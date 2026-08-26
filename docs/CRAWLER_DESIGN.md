@@ -196,6 +196,43 @@ publishers" is where crawler projects go wrong.
 - **No ToS review has been done.** Several major publishers prohibit automated access in their
   terms regardless of what robots.txt permits. robots.txt is a technical signal, not a licence.
 
+## ⚠ The gap this document did not notice, and its fix
+
+Everything above describes the discipline of a crawler that **has never run**. An audit of M7 Stage 2
+found that the ingestion **running in production every cycle** had none of it:
+
+* **F1 — no robots gate on the live path.** `rss_ingest`, `sources`, `feed_service` and
+  `feed_schedule` contained no reference to robots at all. It existed only in `crawler.py`, in M7's
+  validation modules, and in `verify_crawler_config.py` — none of which had ever contacted a real
+  host. **The unrun proof-of-concept was more compliant than production**, and *"Hidden View
+  respects robots.txt"* was not a true sentence.
+* **F2 — we misidentified ourselves.** The poller's agent was
+  `InformationHealth-RSS/0.1 (+https://code.claude.com)` — a documentation site belonging to another
+  organisation. A publisher reading their logs to find out who was polling them, or wanting to ask
+  us to stop, was sent to the wrong company. The crawler's own agent named `hidden-view.com/crawler`,
+  which returned 404.
+
+This document also framed the crawler as *"the first thing that touches a publisher"*. True of the
+crawler; false of the product, which polls nine newsroom hosts continuously.
+
+**Fixed** in `examples/robots.py` — the rules extracted there so both the POC and the live poller
+share one definition (`crawler` imports `rss_ingest`, so they could not live in `crawler`), both
+seams gated, both agents composed from one function, and `/crawler` + `/robots.txt` now served.
+
+The live path deliberately differs from this document's fail-closed posture on **one** outcome:
+
+| outcome | crawler (discovery) | live poller |
+|---|---|---|
+| policy says **Disallow** | refuse | **refuse** |
+| policy **unreadable** | refuse | report; refuse only under `RWE_ROBOTS_STRICT=1` |
+
+A one-shot probe of a stranger and a recurring poll of an operator-chosen feed are different acts
+with asymmetric failure costs: refusing on *unreadable* lets a CDN hiccup silently stop ingestion
+from a publisher who never objected, while allowing it opens a window that self-corrects the moment
+the file is readable again. RFC 9309 treats unreachability and prohibition as distinct for the same
+reason. `RWE_ROBOTS_ENFORCE=0` is the kill switch; both flags are in the compose allowlist, because
+a switch that cannot be turned off in an incident is not a switch.
+
 ## Recommended order
 
 **1. Verify the ground truth before writing more code.** `examples/verify_crawler_config.py` does

@@ -45,9 +45,15 @@ import enrich
 import store
 import media                     # image SELECTION (pick_best_image) — metadata only, never downloads
 import text_utils                # the ONE canonical HTML→text normalizer (used by FeedEntry below)
+import robots                    # the ONE robots policy + the ONE user-agent
 import location                  # Location Resolver — canonical publisher country/language (Phase 0)
 
-_USER_AGENT = "InformationHealth-RSS/0.1 (+https://code.claude.com)"
+#: F2 of the M7 Stage 2 audit: this used to read
+#: ``InformationHealth-RSS/0.1 (+https://code.claude.com)`` — a documentation site belonging to
+#: another organisation entirely. A publisher trying to find out who was polling their newsroom, or
+#: to ask us to stop, was sent to the wrong company. Composed in one place now, so no path can
+#: identify us as somebody else again.
+_USER_AGENT = robots.user_agent("RSS")
 
 
 @dataclass
@@ -332,7 +338,19 @@ def _feed_headers() -> dict:
 
 
 def fetch_feed(url: str, timeout: float = 15.0) -> bytes:
-    """Fetch a feed's bytes (operator-configured URL; not user input)."""
+    """Fetch a feed's bytes (operator-configured URL; not user input).
+
+    **Gated on robots.txt** (F1 of the M7 Stage 2 audit). This and
+    :func:`fetch_feed_conditional` are the two seams where a request leaves for a publisher's host
+    on the live path, so the gate lives here rather than at each of the several callers — the same
+    reason `store.search_feed_articles` owns the shadow-lane exclusion.
+
+    Raises :class:`robots.RobotsRefused` on an explicit ``Disallow``. A policy that could not be
+    read is reported, not enforced, unless ``RWE_ROBOTS_STRICT=1``; see `robots.py` for why the live
+    path and the discovery crawler differ on that.
+
+    Injected fetchers in tests bypass this, which is correct: a fake fetch reaches no publisher."""
+    robots.enforce(url)
     req = urllib.request.Request(url, headers=_feed_headers())
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
@@ -362,6 +380,7 @@ def fetch_feed_conditional(url: str, *, etag: Optional[str] = None,
     ``urllib`` raises ``HTTPError`` on 304 rather than returning it, which is the trap here — a
     naive port treats the cheapest possible answer as a failure, marks the feed unhealthy, and
     backs off the one feed that is behaving perfectly. It is caught and translated."""
+    robots.enforce(url)                 # the second live seam — see `fetch_feed`
     headers = dict(_feed_headers())
     if etag:
         headers["If-None-Match"] = etag
@@ -505,14 +524,20 @@ def ingest_all(feeds, scorer, store_, fetch: Callable[[str], bytes] = fetch_feed
     Optional ``on_feed(name, url, stats_or_None, latency_ms, error_or_None)`` is called once per feed
     with its per-feed result + wall-clock latency — the seam feed-health monitoring records from. It is
     observational: an exception in ``on_feed`` is swallowed so it can never break polling."""
-    agg = {"feeds": 0, "ok": 0, "failed": 0, "entries": 0, "new": 0, "duplicates": 0,
-           "skipped": 0, "blocked": 0, "unknown_outlet": 0, "errors": []}
+    # `robotsRefused` is counted apart from `failed` on purpose: a refusal and a network error mean
+    # opposite things. One is a publisher answering us, the other is us not reaching them, and an
+    # aggregate that merged them would hide the only one that is a compliance signal.
+    agg = {"feeds": 0, "ok": 0, "failed": 0, "robotsRefused": 0, "entries": 0, "new": 0,
+           "duplicates": 0, "skipped": 0, "blocked": 0, "unknown_outlet": 0, "errors": []}
     for name, url in feeds:
         agg["feeds"] += 1
         t0 = time.perf_counter()
         result, error = None, None
         try:
             result = ingest_feed(url, name, scorer, store_, fetch=fetch, source_type=source_type)
+        except robots.RobotsRefused as e:               # the publisher said no — not a failure
+            error = e
+            agg["robotsRefused"] += 1
         except Exception as e:                          # network/parse error on one feed
             error = e
         latency_ms = (time.perf_counter() - t0) * 1000.0

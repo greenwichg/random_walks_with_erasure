@@ -60,6 +60,16 @@ services:
       #   RWE_CATALOG_BLOCKED_OUTLETS=contentfarm.example,Some Registered Outlet
       RWE_CATALOG_BLOCKED_OUTLETS: ${RWE_CATALOG_BLOCKED_OUTLETS:-}
       RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
+      # robots.txt gate on the LIVE feed poller (F1 of the M7 Stage 2 audit: robots existed only in
+      # the crawler POC, which has never run, while this poller had no gate at all). Default ON, and
+      # it refuses only on an explicit `Disallow` — an unreadable policy is reported, not enforced,
+      # because a CDN hiccup must not silently stop ingestion from a publisher who never objected.
+      #   RWE_ROBOTS_ENFORCE=0  kill switch: disable the gate entirely
+      #   RWE_ROBOTS_STRICT=1   also refuse when no policy can be read (the crawler's posture)
+      # Listed here even while empty: `environment:` is an allowlist with no `env_file:`, so a
+      # switch missing from this block cannot be turned off in an incident.
+      RWE_ROBOTS_ENFORCE: ${RWE_ROBOTS_ENFORCE:-}
+      RWE_ROBOTS_STRICT: ${RWE_ROBOTS_STRICT:-}
       # Cheap corpus change-detection (P1-1) — ON. When the catalog fingerprint is unchanged since
       # the last candidate build, the refresh check skips its full-catalog load (measured 4,495 ms
       # at 47k rows, 2026-08-01 — a cost that otherwise grows with catalog age forever, since
@@ -714,6 +724,16 @@ services:
       dockerfile: deploy/Dockerfile.api
     environment:
       RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt
+      # robots.txt gate on the LIVE feed poller (F1 of the M7 Stage 2 audit: robots existed only in
+      # the crawler POC, which has never run, while this poller had no gate at all). Default ON, and
+      # it refuses only on an explicit `Disallow` — an unreadable policy is reported, not enforced,
+      # because a CDN hiccup must not silently stop ingestion from a publisher who never objected.
+      #   RWE_ROBOTS_ENFORCE=0  kill switch: disable the gate entirely
+      #   RWE_ROBOTS_STRICT=1   also refuse when no policy can be read (the crawler's posture)
+      # Listed here even while empty: `environment:` is an allowlist with no `env_file:`, so a
+      # switch missing from this block cannot be turned off in an incident.
+      RWE_ROBOTS_ENFORCE: ${RWE_ROBOTS_ENFORCE:-}
+      RWE_ROBOTS_STRICT: ${RWE_ROBOTS_STRICT:-}
       # The same block list the api poller uses — the seeding run must not import what the poller
       # would refuse. See the comment on the api service.
       RWE_CATALOG_BLOCKED_OUTLETS: ${RWE_CATALOG_BLOCKED_OUTLETS:-}

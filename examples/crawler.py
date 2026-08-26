@@ -65,12 +65,14 @@ from typing import Callable, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling modules
 import ingest                # reuse: canonical_url (the ONE dedup key), has_host
 import outlet_registry       # reuse: publisher identity + the domains that belong to it
+import robots                # reuse: the ONE robots policy — shared with the live poller
 import rss_ingest            # reuse: FeedEntry, parse_feed, ingest_entries (the choke point)
 import sources               # reuse: SourceAdapter/SourceBatch chassis + the retry discipline
 
 #: Identifies us to publishers, with a contact path. A crawler that cannot be identified cannot be
-#: rate-limited or blocked by the site it is reading, which is the site's only recourse.
-USER_AGENT = "InformationHealth-Crawler/0.1 (+https://hidden-view.com/crawler)"
+#: rate-limited or blocked by the site it is reading, which is the site's only recourse — and the
+#: contact URL has to RESOLVE for that to be true, which is why `web/app/crawler` now exists.
+USER_AGENT = robots.user_agent("Crawler")
 
 #: Conservative floor between two requests to the SAME host, in seconds. Overridden upward (never
 #: downward) by a publisher's own ``Crawl-delay``.
@@ -214,67 +216,34 @@ def _host_allowed(host: str, domains) -> bool:
 # --------------------------------------------------------------------------- #
 # robots.txt — the gate. Fails closed.
 # --------------------------------------------------------------------------- #
-@dataclass
-class RobotsDecision:
-    allowed: bool
-    reason: str
-    crawl_delay: Optional[float] = None
+# --------------------------------------------------------------------------- #
+# Robots — the rules live in `robots.py`, imported rather than redefined.
+# --------------------------------------------------------------------------- #
+#
+# They moved because the LIVE ingestion path needs them and `crawler` imports `rss_ingest`, so
+# `rss_ingest` cannot import `crawler` back (F1 of the M7 Stage 2 audit: robots existed only here,
+# in a POC that has never run, while the poller running every cycle had no gate at all).
+#
+# Re-exported so every existing caller — `verify_crawler_config`, `source_validation`, the tests —
+# is unchanged, and the crawler keeps its FAIL-CLOSED reading: it acts on `allowed` alone, so an
+# absent policy is still a refusal here whatever the live path chooses to do.
+RobotsDecision = robots.RobotsDecision
+RobotsRefused = robots.RobotsRefused
+_looks_like_robots = robots._looks_like_robots
 
 
-def _looks_like_robots(body: "str | None") -> bool:
-    """Whether a 200 response is actually a robots policy.
+class RobotsPolicy(robots.RobotsPolicy):
+    """The shared policy, fetched through this module's retry discipline.
 
-    This check is load-bearing, not defensive tidiness. ``RobotFileParser`` parses an HTML 404
-    page, a captive-portal login, or a CDN error into a policy with **no rules**, and a policy with
-    no rules answers ``can_fetch`` with *True* — so without this, the most common way for
-    robots.txt to be unavailable (a server that returns 200 and a web page for everything) reads as
-    blanket permission. That is fail-OPEN wearing the costume of fail-closed.
+    Only the default fetcher differs from :class:`robots.RobotsPolicy`: discovery goes through
+    ``_fetch_text`` (and therefore ``sources._request``'s 429/5xx budget), while the live gate uses
+    a plain stdlib GET. The RULES are the same object, which is the point of the move."""
 
-    The bar is one ``User-agent:`` line. A whitespace-only body is refused too: it is a valid
-    allow-all in principle, but an empty 200 is also what a broken origin returns, and a publisher
-    who means "allow everything" writes ``User-agent: *`` — the cost of refusing the ambiguous case
-    is that we skip a publisher and say so in the report.
-    """
-    for line in (body or "").splitlines():
-        if line.split("#", 1)[0].strip().lower().startswith("user-agent:"):
-            return True
-    return False
+    def __init__(self, fetch: "Callable[[str], str] | None" = None, *,
+                 user_agent: str = USER_AGENT):
+        super().__init__(fetch or _fetch_text, user_agent=user_agent)
 
-
-class RobotsPolicy:
-    """Per-host robots.txt, fetched once per run and cached.
-
-    ``fetch(url) -> str`` is injected so this is testable without a network, and so the one place
-    that talks to a publisher's origin stays visible.
-    """
-
-    def __init__(self, fetch: "Callable[[str], str] | None" = None, *, user_agent: str = USER_AGENT):
-        self._fetch = fetch or _fetch_text
-        self._user_agent = user_agent
-        self._cache: "dict[str, tuple]" = {}
-
-    def _policy_for(self, host: str):
-        if host in self._cache:
-            return self._cache[host]
-        url = f"https://{host}/robots.txt"
-        try:
-            body = self._fetch(url)
-        except Exception as e:                       # unreachable, 5xx, TLS failure, timeout
-            entry = (None, f"robots.txt unavailable ({type(e).__name__})")
-        else:
-            if not _looks_like_robots(body):
-                entry = (None, "robots.txt is not a robots policy")
-            else:
-                rp = urllib.robotparser.RobotFileParser()
-                try:
-                    rp.parse(body.splitlines())
-                    entry = (rp, "")
-                except Exception as e:               # a body that is not robots.txt at all
-                    entry = (None, f"robots.txt unparseable ({type(e).__name__})")
-        self._cache[host] = entry
-        return entry
-
-    def check(self, url: str) -> RobotsDecision:
+    def check(self, url: str) -> "robots.RobotsDecision":
         """Whether we may fetch ``url``, and how long to wait between requests to its host.
 
         An absent policy is a REFUSAL, not a permission. The conventional crawler default (no
@@ -282,23 +251,7 @@ class RobotsPolicy:
         decades-old norm behind it; it is not a reasonable reading for a commercial reader of
         newsrooms that has never spoken to the publisher.
         """
-        host = (urllib.parse.urlsplit(url).hostname or "").lower()
-        if not host:
-            return RobotsDecision(False, "no host")
-        rp, err = self._policy_for(host)
-        if rp is None:
-            return RobotsDecision(False, err or "no robots policy")
-        try:
-            ok = rp.can_fetch(self._user_agent, url)
-        except Exception as e:
-            return RobotsDecision(False, f"robots evaluation failed ({type(e).__name__})")
-        delay = None
-        try:
-            d = rp.crawl_delay(self._user_agent)
-            delay = float(d) if d is not None else None
-        except Exception:
-            delay = None
-        return RobotsDecision(bool(ok), "" if ok else "disallowed by robots.txt", delay)
+        return super().check(url)
 
 
 # --------------------------------------------------------------------------- #
