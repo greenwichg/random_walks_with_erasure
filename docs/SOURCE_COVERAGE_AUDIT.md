@@ -157,10 +157,45 @@ threshold already have them. Rating the tail does not convert stories that were 
 > are stories like *"All Lobby Hack Codes For Free Rewards"* and *"Call of Duty: Modern Warfare 4
 > beta requires GTX 970"*. A coverage-gap claim on a Roblox codes article is not a product win.
 >
-> The open question is therefore **how much of the 220 sits on rateable NEWS outlets** — the local-TV
-> affiliates and national dailies in the same list (`kait8.com` 6, `abc7.com` 4, `nysun.com` 2,
-> `kwch.com` 1, `nbc29.com` 2) — rather than on verticals with no left/right axis. That is one
-> `--cohort` run, and until it is done neither the old verdict nor its reversal is supported.
+> ### Measured: the verdict splits by outlet KIND, not by outlet count
+>
+> Ten hand-picked news outlets — `kait8.com`, `abc7.com`, `6abc.com`, `kwch.com`, `nbc29.com`,
+> `nysun.com`, `Express`, `Haberler`, `gujaratsamachar.com`, `albayan.ae` — against the top-20
+> ranked purely by curation value:
+>
+> | cohort | outlets | joint unlocks | coordination | what the unlocked stories ARE |
+> |---|---:|---:|---:|---|
+> | top 20 by value | 20 | **51** | +7 | *"All Lobby Hack Codes For Free Rewards"*, *"Call of Duty MW4 beta requires GTX 970"*, *"Geoff Keighley clarifies how trailers are selected"* |
+> | **10 news outlets** | 10 | **15** | +0 | *"Officer killed in wrong-way A66 crash"*, *"17-year-old boy dead in shooting at Independence HS"*, *"Amazon plans drone delivery expansion to ~500 US locations"*, *"Judge postpones US trial for Libyan man charged in 1988…"* |
+>
+> **Ten news outlets are worth more (15) than this section said the ENTIRE 3,653-outlet backlog was
+> worth (13).** All five sampled unlocks are ordinary news — a fatal crash, a school shooting, a
+> logistics story, cost-of-living, the Lockerbie prosecution — which is exactly the material a
+> bias-comparison product exists to show a split on.
+>
+> Coordination is **+0** for news and **+7** for the verticals: news outlets rarely co-occur in the
+> same under-supported story, so a news programme scales roughly linearly while a vertical batch
+> depends on clumping. 19 further stories these ten touch are still one rating short — reachable by a
+> second news batch.
+>
+> **So the verdict splits.** "Neither expand nor curate" is **overturned for news outlets** and
+> **upheld for verticals**: 51 claims on Roblox codes and GPU requirements is a higher number and a
+> worse product. The old blanket refusal was right about composition and wrong about magnitude.
+>
+> ### The gate this all hangs on, which is outside our system
+>
+> `outlet_registry`'s L2.2 rule is that a rating is **sourced or absent** — `factuality_source` and
+> `factuality_asof` are mandatory. A curated row whose lean nobody publishes is a `locality-only`
+> row, and **a locality-only row unlocks nothing**.
+>
+> That is not hypothetical. The `locality-only` bucket is 29 outlets and 618 articles of exactly
+> this: Brisbane Times, PerthNow, Index.hu, The Hankyoreh, O Globo, Folha de S.Paulo, BelTA — major
+> papers with rows, carrying 14 unlocks between them that cannot be collected because no public rater
+> covers them on a left/right axis.
+>
+> **So the 15 is conditional on AllSides or MBFC actually covering these ten**, and that is checkable
+> at the rater rather than here. Confirm coverage before spending curation time; an uncovered outlet
+> converts a curation hour into a permanently blank row.
 
 ## Retraction
 
