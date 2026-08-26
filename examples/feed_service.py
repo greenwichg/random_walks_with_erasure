@@ -188,6 +188,12 @@ class FeedPoller:
             while True:
                 try:
                     return rss_ingest.fetch_feed(url, timeout=self.timeout)
+                except rss_ingest.robots.RobotsRefused:
+                    # A refusal is an ANSWER, not a transient. Retrying it burns the backoff ladder
+                    # on a decision that cannot change this cycle — and while the cached policy means
+                    # no extra request reaches the publisher, "we were told no, so we asked again"
+                    # is not a posture to leave in the code that implements respecting robots.txt.
+                    raise
                 except Exception:
                     attempt += 1
                     if attempt > self.retries or self._stop.is_set():

@@ -576,10 +576,17 @@ def _format_run_summary(agg: dict, before: int, after: int, seconds: float) -> s
             ("unknown outlets", unknown)]
     if blocked:
         rows.append(("blocked (configured out)", blocked))
+    # Shown only when non-zero, like `blocked` — but unlike `blocked` this one is a PUBLISHER
+    # answering us, so when it fires it is the most important line in the run. Counting it without
+    # printing it, which is what shipped, means a feed could go silent and nobody would see why.
+    refused = agg.get("robotsRefused", 0)
+    if refused:
+        rows.append(("robots.txt REFUSED", refused))
     w = max(len(str(v)) for v in (agg["new"], agg["duplicates"], agg["skipped"], unknown,
-                                  blocked, before, after))
+                                  blocked, refused, before, after))
     lines = [f"RSS ingest: {agg['feeds']} feed(s) in {seconds:.1f}s  "
-             f"({agg['ok']} ok, {agg['failed']} failed)"]
+             f"({agg['ok']} ok, {agg['failed']} failed"
+             + (f", {refused} refused by robots.txt" if refused else "") + ")"]
     lines += [f"  {label:<24}{value:>{w}}" for label, value in rows]
     lines.append(f"  {'catalog':<24}{before:>{w}} -> {after}  (+{after - before})")
     lines.append('  note: high "existing" counts are expected on repeat RSS polls;')

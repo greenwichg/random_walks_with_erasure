@@ -244,6 +244,51 @@ def test_a_refusal_is_counted_apart_from_a_network_failure():
     assert agg["failed"] == 1 and agg["ok"] == 0
 
 
+def test_a_refusal_is_visible_in_the_run_summary():
+    """It was counted and never printed, which is the shape of a feed going silent with nobody
+    seeing why. Shown only when non-zero — but when it fires it is the most important line in the
+    run, because it is a publisher answering us rather than a machine failing."""
+    import rss_ingest
+    agg = {"feeds": 9, "ok": 8, "failed": 1, "robotsRefused": 1, "new": 3, "duplicates": 0,
+           "skipped": 0, "unknown_outlet": 0, "blocked": 0}
+    out = rss_ingest._format_run_summary(agg, 100, 103, 1.0)
+    assert "refused by robots.txt" in out and "robots.txt REFUSED" in out
+
+    quiet = rss_ingest._format_run_summary({**agg, "robotsRefused": 0, "failed": 0, "ok": 9},
+                                           100, 103, 1.0)
+    assert "robots" not in quiet, "a zero line every run is noise; its absence is the report"
+
+
+def test_the_background_poller_does_not_retry_a_refusal():
+    """A refusal is an ANSWER, not a transient. The poller wraps fetches in an exponential backoff
+    ladder catching bare Exception, so a refusal was retried — burning the ladder on a decision that
+    cannot change. The cached policy meant no extra request reached the publisher, but "we were told
+    no, so we asked again" is not a posture to leave in the code that implements respecting
+    robots.txt."""
+    import feed_service
+    import rss_ingest
+    robots.reset_cache(fetch=_fetcher(DENY_US))
+    svc = feed_service.FeedPoller.__new__(feed_service.FeedPoller)
+    svc.timeout, svc.retries, svc.backoff = 5.0, 3, 0.01
+    import threading
+    svc._stop = threading.Event()
+
+    calls = []
+    real = rss_ingest.fetch_feed
+
+    def counting(url, timeout=None):
+        calls.append(url)
+        return real(url)
+
+    rss_ingest.fetch_feed = counting
+    try:
+        with pytest.raises(robots.RobotsRefused):
+            svc._make_fetch()("https://x.example/feed.xml")
+    finally:
+        rss_ingest.fetch_feed = real
+    assert len(calls) == 1, f"a refusal must not be retried; it was attempted {len(calls)} times"
+
+
 def test_an_injected_fetcher_bypasses_the_gate():
     """Correct, and worth pinning: a fake fetch reaches no publisher, so gating it would only make
     the suite ask the network for permission to use a fixture."""
