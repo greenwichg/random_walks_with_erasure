@@ -1277,9 +1277,20 @@ and the Tier A case held, as it must:
 | `streak` resets when the target changes — two different targets never confirm | unit | ✅ |
 | **two evaluations inside one clustering window are one sample** — the streak holds, does not advance | unit + store + fixture run | ✅ (after the first production run) |
 | a held sample does not RESET either; only a different answer does | unit | ✅ |
-| a first evaluation is never held — no previous sample means no interval to judge | unit | ✅ |
+| a first evaluation is never held — no previous sample means no interval to judge | unit + **production** | ✅ |
 | the store and the dry-run path share **one** streak implementation | unit on both seams | ✅ |
-| a state the ledger does not know prints in `(parentheses)` | fixture run | ✅ |
+| a state the ledger does not know prints in `(parentheses)` | fixture + **production** | ✅ |
+
+**Verified on production, `9ec2d6e`** (`--as-if "sportskeeda.com"`): `(A)` for an outlet the ledger
+has never recorded, `streak 1` with no hold marker, `WAITING` at 1 of 2, and an empty config diff —
+a Tier A outlet, so nothing about it can move automatically. Of the six production runs across M8
+and M9, four exposed a defect in the instrument itself; this one exposed none.
+
+**And M9, like M8, has no live subject yet.** The automatic path is shadow → B, and
+`RWE_CORPUS_SHADOW` is unset, so nothing on production can currently reach it. Filling the lane is
+M7 — still blocked on the ToS review and network egress. Until then `--as-if` is the only mode with
+anything to evaluate, and every verdict it reaches crosses the Tier A boundary and therefore stops
+at a human by design.
 | `first_observed` only ever moves **earlier** | unit | ✅ |
 | events are append-only and keep the evidence of superseded decisions | unit | ✅ |
 | a promotion out of shadow **removes** from `RWE_CORPUS_SHADOW` as well as adding to `TIER_B` | unit | ✅ |
