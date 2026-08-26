@@ -48,6 +48,13 @@ backups/
 # templates (deploy/.env.production.example, deploy/qbias.env.example) do not match these patterns.
 /deploy/.env
 /deploy/.env.local
+# Timestamped backups an operator makes before editing the env-file. These are FULL COPIES of the
+# secrets, and the patterns above are exact paths rather than a glob, so without these lines a
+# backup lands as an untracked file inside a repo the deploy scripts run git against. Named
+# narrowly on purpose: a blanket `/deploy/.env.*` would also match the tracked, secret-free
+# .env.production.example template.
+/deploy/.env.bak.*
+/deploy/.env.*.bak
 
 # OS / editor
 .DS_Store
