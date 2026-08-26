@@ -246,14 +246,55 @@ def _atom_entry(entry) -> Optional[FeedEntry]:
             description=_text(_first(entry, "summary")) or _text(_first(entry, "content")),
             body=_text(_first(entry, "content")) or None,
             published_at=_to_iso(_text(_first(entry, "published")) or _text(_first(entry, "updated"))),
+            # `xml:lang` is inherited in XML and the nearest declaration governs, so an entry that
+            # states its own language beats the feed's. A translated item in an otherwise
+            # single-language feed is the case this gets right.
+            language=(entry.get(_XML_LANG) or "").strip() or None,
             category=_entry_categories(entry)), entry, is_atom=True)
     except Exception:
         return None
 
 
+#: The XML namespace ``xml:lang`` lives in. Atom inherits language down the document this way.
+_XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
+
+
+def _feed_language(root, channel) -> Optional[str]:
+    """The language a feed declares for ITSELF — RSS ``<language>`` or Atom ``xml:lang``.
+
+    Read because nothing else does. ``_rss_item`` and ``_atom_entry`` never set ``language``, so
+    **every RSS-ingested article in the catalog carries NULL** and the only language values present
+    come from the GDELT and NewsAPI adapters, which supply their own per item.
+
+    That gap is not cosmetic. It made `audit_source_cohort` abandon a whole analysis — *"language
+    known for N of M outlets above the floor … TOO SPARSE TO CONCLUDE"* — and it is why M7's
+    discovery table shows `?` against real publishers like `goal.com` and `vietnamnet.vn`. The
+    feed's own declaration is the best evidence available and it was being thrown away.
+
+    Only the CHANNEL element is consulted, never an item's: a per-item language describes that item,
+    and treating one as the feed's would let a single translated article relabel the whole source."""
+    for el in (channel, root):
+        if el is None:
+            continue
+        lang = (el.get(_XML_LANG) or "").strip()
+        if lang:
+            return lang
+    if channel is not None:
+        # RSS <language> sits directly under <channel>; `_first` searches children, so an item's
+        # own <language> is never reachable from here.
+        for child in _children(channel, "language"):
+            if (child.text or "").strip():
+                return (child.text or "").strip()
+    return None
+
+
 def parse_feed(data: bytes) -> "tuple[str, list[FeedEntry]]":
     """Parse RSS/Atom bytes into ``(channel_title, entries)``. Raises ``ValueError`` on invalid XML;
-    individual malformed entries are skipped rather than failing the whole feed."""
+    individual malformed entries are skipped rather than failing the whole feed.
+
+    Each entry's ``language`` is filled from the feed's own declaration when the entry does not
+    state one — see :func:`_feed_language`. Entry-level wins, which is correct XML semantics for
+    ``xml:lang`` (it is inherited, and the nearest declaration governs)."""
     try:
         root = ET.fromstring(data)
     except ET.ParseError as e:
@@ -262,6 +303,7 @@ def parse_feed(data: bytes) -> "tuple[str, list[FeedEntry]]":
     if root_name == "feed":                             # Atom
         title = _text(_first(root, "title"))
         entries = [_atom_entry(e) for e in _children(root, "entry")]
+        channel = root
     else:                                               # RSS 2.0 (<rss><channel>) or RSS 1.0 (<rdf:RDF>)
         # ``_first`` returns an Element or None; test that explicitly rather than the Element's
         # truthiness (deprecated in ElementTree — it reflects child count, not existence).
@@ -271,7 +313,14 @@ def parse_feed(data: bytes) -> "tuple[str, list[FeedEntry]]":
         title = _text(_first(channel, "title"))
         items = _children(channel, "item") or _children(root, "item")
         entries = [_rss_item(it) for it in items]
-    return title, [e for e in entries if e and e.url]
+
+    feed_lang = _feed_language(root, channel)
+    kept = [e for e in entries if e and e.url]
+    if feed_lang:
+        for e in kept:
+            if not (e.language or "").strip():
+                e.language = feed_lang
+    return title, kept
 
 
 # --------------------------------------------------------------------------- #

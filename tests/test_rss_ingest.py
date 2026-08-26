@@ -68,6 +68,59 @@ def test_parse_rss2():
     assert entries[1].published_at.startswith("2024-10-03")       # dc:date parsed
 
 
+def test_feeds_that_declare_no_language_still_parse_to_none():
+    """The shipped behaviour, pinned first: a feed that says nothing about language yields entries
+    with ``language=None``, exactly as before. The fix below adds a value where one was DECLARED —
+    it never invents one."""
+    for feed in (RSS2, ATOM):
+        _title, entries = rss.parse_feed(feed)
+        assert all(e.language is None for e in entries)
+
+
+@pytest.mark.parametrize("feed, expect", [
+    # RSS 2.0: <language> under <channel>
+    (b'<rss version="2.0"><channel><language>vi</language>'
+     b'<item><title>t</title><link>https://x.example/a</link></item></channel></rss>', "vi"),
+    # BCP-47 survives parsing; `location.normalize_language` reduces it to ISO 639-1 downstream.
+    (b'<rss version="2.0"><channel><language>pt-PT</language>'
+     b'<item><title>t</title><link>https://x.example/a</link></item></channel></rss>', "pt-PT"),
+    # Atom: xml:lang on the feed element
+    ('<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="ja"><entry><title>t</title>'
+     '<link rel="alternate" href="https://x.example/a"/></entry></feed>'.encode(), "ja"),
+    # RSS 1.0 (<rdf:RDF>) carries items at the root, and the language with them
+    (b'<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><language>de</language>'
+     b'<item><title>t</title><link>https://x.example/a</link></item></rdf:RDF>', "de"),
+])
+def test_the_feeds_declared_language_reaches_every_entry(feed, expect):
+    """**The gap this closes.** Neither `_rss_item` nor `_atom_entry` ever set ``language``, so
+    every RSS-ingested article in the catalog carried NULL and the only values present came from the
+    GDELT/NewsAPI adapters. That is what made `audit_source_cohort` abandon a whole analysis — "TOO
+    SPARSE TO CONCLUDE" — and what showed as `?` against real publishers in M7's discovery table.
+    The feed's own declaration was available the whole time and was being thrown away."""
+    _title, entries = rss.parse_feed(feed)
+    assert entries and all(e.language == expect for e in entries)
+
+
+def test_an_entrys_own_language_beats_the_feeds():
+    """`xml:lang` is inherited in XML and the nearest declaration governs. A translated item in an
+    otherwise single-language feed is the case this gets right."""
+    feed = ('<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">'
+            '<entry><title>a</title><link rel="alternate" href="https://x.example/a"/></entry>'
+            '<entry xml:lang="fr"><title>b</title>'
+            '<link rel="alternate" href="https://x.example/b"/></entry></feed>').encode()
+    _title, entries = rss.parse_feed(feed)
+    assert [e.language for e in entries] == ["en", "fr"]
+
+
+def test_an_items_own_language_is_never_read_as_the_feeds():
+    """Only the CHANNEL element is consulted for the feed's language. Treating an item's own
+    ``<language>`` as the feed's would let one translated article relabel the entire source."""
+    feed = (b'<rss version="2.0"><channel><item><language>ru</language><title>t</title>'
+            b'<link>https://x.example/a</link></item></channel></rss>')
+    _title, entries = rss.parse_feed(feed)
+    assert entries and entries[0].language is None
+
+
 def test_parse_atom():
     title, entries = rss.parse_feed(ATOM)
     assert title == "NYT Politics" and len(entries) == 1

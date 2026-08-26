@@ -64,6 +64,24 @@ _TEMPLATE_PATTERNS = (
 #: One betting piece inside a real story must not suppress the card.
 _TEMPLATE_SHARE = 0.5
 
+#: Share of a story's members that must carry a KNOWN language before the ``cross_language`` refusal
+#: may fire. Not an invented threshold — it is the definition of the word the code already uses: you
+#: cannot call something *the majority language of this coverage* having looked at only a minority
+#: of it.
+#:
+#: The guard exists because `rss_ingest.parse_feed` did not read a feed's declared ``<language>``
+#: until it was taught to, so **every RSS-ingested row carried NULL** and only the GDELT/NewsAPI rows
+#: had one. This gate was therefore near-inert. Populating it forward-only leaves a transition —
+#: as long as the retention window — where a story mixes language-bearing new rows with NULL old
+#: ones, and a "majority" computed over that biased subset is actively wrong: five English members
+#: with no language and two German ones with a language would make German the majority and refuse an
+#: English comparison.
+#:
+#: Same fail-honest rule the rest of this repo applies to an absent measurement: it does not get to
+#: decide. Below the bar the gate declines to refuse, which is the direction that shows a comparison
+#: rather than withholding one on evidence we do not have.
+_LANGUAGE_COVERAGE = 0.5
+
 
 def enabled() -> bool:
     """Kill switch. ON by default: every statement this module makes is a count already computed
@@ -159,7 +177,10 @@ def gate(article: dict, story: dict, *, member: Optional[dict] = None) -> "str |
     if _is_template_cluster(members):
         return "template_genre"
     langs = _languages(members)
-    if len(langs) > 1:
+    # The majority language may only decide when it was computed from a majority of the coverage.
+    # See `_LANGUAGE_COVERAGE`: with language partially populated, a "majority" drawn from a biased
+    # subset refuses comparisons it has no evidence to refuse.
+    if len(langs) > 1 and sum(langs.values()) >= _LANGUAGE_COVERAGE * len(members):
         majority = max(langs, key=lambda k: (langs[k], k))
         mine = (article.get("language") or (member or {}).get("language") or "").strip().lower()[:2]
         if mine and mine != majority:
@@ -306,7 +327,12 @@ def compare(article: dict, story: dict, *, target_countries=None,
     my_lang = (article.get("language") or (me or {}).get("language") or "").strip().lower()[:2]
     if my_lang:
         langs = _languages(members)
-        if langs.get(my_lang, 0) == 1 and len(langs) > 1:
+        # Same coverage guard as `gate`, and for the same reason: "the ONLY report in this language"
+        # is a claim about the whole coverage set, so it cannot be made from a minority of it. With
+        # language partly populated, every member whose language we simply never recorded would
+        # otherwise count as evidence of uniqueness.
+        if (langs.get(my_lang, 0) == 1 and len(langs) > 1
+                and sum(langs.values()) >= _LANGUAGE_COVERAGE * len(members)):
             unique.append(_finding(
                 "language", f"only_{my_lang}", 1, total_pubs, [me] if me else [], ident=ident,
                 label="the only report in this language in the coverage set", language=my_lang))

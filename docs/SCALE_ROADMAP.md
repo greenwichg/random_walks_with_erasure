@@ -1492,6 +1492,68 @@ Two things the run confirms about the design rather than about the code:
 | Stage 2's cost is printed **before** authorisation, from eligible hosts only | unit + run | ✅ |
 | live transport against a real publisher | — | ❌ **egress-blocked here; first `--probe` settles it** |
 
+## Follow-up: the language gap closed at its source
+
+Part 12 named a better fix and deferred it. It is now done, and it turned out to be larger than a
+validation detail.
+
+**Neither `_rss_item` nor `_atom_entry` ever set `language`.** So *every RSS-ingested article in the
+catalog carries NULL*, and every language value present comes from the GDELT and NewsAPI adapters,
+which supply their own per item. That single omission explains three separate things this audit
+series has run into:
+
+* `audit_source_cohort` abandoning a whole analysis — *"language known for N of M outlets above the
+  floor … TOO SPARSE TO CONCLUDE"*;
+* M7's discovery table showing `?` against `goal.com`, `vietnamnet.vn`, `gujaratsamachar.com`;
+* `theportugalnews.com` recorded as `ar` — an English paper tagged Arabic, because the only value
+  available was GDELT's.
+
+`parse_feed` now fills each entry's language from the feed's own `<language>` / `xml:lang`, with
+entry-level winning (correct XML inheritance — the nearest declaration governs). Only the *channel*
+element is consulted for the feed's language: treating an item's own `<language>` as the feed's
+would let one translated article relabel the entire source. `source_validation.feed_language` became
+a lookup on the parsed entries instead of a second parser.
+
+### The live behaviour this changed, and the guard it needed
+
+`coverage_comparison` is **on by default** and has two language-dependent behaviours that were
+**near-inert only because the data was missing**:
+
+* `gate()` refusing with `cross_language` when an article's language differs from the coverage's
+  majority;
+* the `only_<lang>` finding — *"the only report in this language in the coverage set"*.
+
+Populating language is forward-only, so for as long as the retention window a story mixes
+language-bearing new rows with NULL old ones — and **a "majority" computed over that biased subset
+is actively wrong.** Measured on a fixture: two of six members carrying a language (one German, one
+French) makes *French* the majority language of a story that is four-fifths English, and an English
+article is refused against it.
+
+`_LANGUAGE_COVERAGE = 0.5` closes it: the majority language may only decide when it was computed
+from a majority of the coverage. That is not an invented threshold — it is the definition of the
+word the code already uses. You cannot call something *the majority language of this coverage*
+having looked at only a minority of it. Below the bar the gate declines to refuse, which is the
+direction that shows a comparison rather than withholding one on evidence we do not have — the same
+fail-honest rule the rest of this repo applies to an absent measurement.
+
+Both guard tests were **verified to fail with the guard disabled** — the first drafts of them passed
+either way (one asserted on a payload key that does not exist, `unique` instead of `uniqueHere`; the
+other never reached the branch because it had only one known language). A guard test that cannot
+fail is the same defect as a gate that cannot fire.
+
+`audit_source_discovery` now prints **language coverage by source type**, so the transition is
+watched rather than assumed: `rss` should climb toward the others as the window turns over.
+
+| bar | where | status |
+|---|---|---|
+| a feed's declared `<language>` / `xml:lang` reaches every entry (RSS 2.0, RSS 1.0, Atom, BCP-47) | unit (4 cases) | ✅ |
+| an entry's own `xml:lang` beats the feed's | unit | ✅ |
+| an **item's** `<language>` is never read as the feed's | unit | ✅ |
+| a feed declaring nothing still yields `language=None` — the fix adds, never invents | unit | ✅ |
+| a majority language drawn from a minority of the coverage does **not** refuse | unit, **verified to flip** | ✅ |
+| the refusal still fires once the coverage is actually known | unit | ✅ |
+| `only_<lang>` is not claimed from a minority of the coverage | unit, **verified to flip** | ✅ |
+
 ## What M7 does NOT do
 
 It does not ingest. `--probe` reads `robots.txt`, one landing page and at most one feed per host, and

@@ -181,19 +181,15 @@ def test_the_feed_settles_a_language_the_catalog_did_not_know():
     assert r["verdict"] == "ADMIT"
 
 
-@pytest.mark.parametrize("body, expect", [
-    ('<rss><channel><language>vi</language><item><title>t</title></item></channel></rss>', "vi"),
-    ('<feed xmlns:xml="http://www.w3.org/XML/1998/namespace" '
-     'xml:lang="ja"><entry><title>t</title></entry></feed>', "ja"),
-    ('<rss><channel><item><language>en</language></item></channel></rss>', ""),
-    ("<html>not a feed at all", ""),
-])
-def test_feed_language_reads_rss_and_atom_and_stops_at_the_items(body, expect):
-    """`rss_ingest.parse_feed` discards channel language — `FeedEntry.language` is populated only by
-    the non-RSS adapters — so an RSS row carries none at all. That is the gap the production run
-    showed as `?`. The scan stops at the first item so a per-item language is never mistaken for the
-    feed's own."""
-    assert sv.feed_language(body) == expect
+def test_feed_language_is_now_a_lookup_on_the_parsed_entries_not_a_second_parser():
+    """It used to parse the feed body here. `rss_ingest.parse_feed` now fills each entry's language
+    from the channel's own declaration, so the answer arrives on the normalized shape — and fixing
+    it in the parser fixed it for INGESTION too, which is where the gap actually was."""
+    import rss_ingest
+    _title, entries = rss_ingest.parse_feed(
+        (FEED % ("<language>vi</language>\n" + _items(3))).encode())
+    assert sv.feed_language(entries) == "vi"
+    assert sv.feed_language([]) == ""
 
 
 def test_a_source_neither_we_nor_the_feed_can_place_fails_gate_6():

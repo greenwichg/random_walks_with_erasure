@@ -77,6 +77,26 @@ def main(argv=None) -> int:
     print(f"  below the {args.floor}-article floor          : {stats.get('belowFloor', 0):,}")
     print(f"  CANDIDATES                      : {stats.get('eligible', 0):,}")
 
+    # ------------------------------------------------------------------ the language gap
+    #
+    # `rss_ingest.parse_feed` did not read a feed's declared <language> until it was taught to, so
+    # every RSS-ingested row carried NULL and the only values present came from GDELT/NewsAPI. The
+    # fix is FORWARD-ONLY — existing rows keep NULL — so this section is how the transition is
+    # watched rather than assumed. `rss` should climb toward the others as the window turns over.
+    by_type: dict = {}
+    for r in rows:
+        t = (r.get("sourceType") or "(none)").strip() or "(none)"
+        known, total = by_type.get(t, (0, 0))
+        by_type[t] = (known + (1 if (r.get("language") or "").strip() else 0), total + 1)
+    print(f"\n=== language coverage, by source ===")
+    print("    RSS carried NO language at all until parse_feed was taught to read the feed's own")
+    print("    <language>. The fix is forward-only, so this is the transition to watch: `rss`")
+    print("    should climb as the window turns over. It is what gate 6 and the `?` column read,")
+    print("    and what made audit_source_cohort abandon its language analysis as too sparse.")
+    print(f"\n  {'source':<12} {'known':>8} {'rows':>8} {'share':>7}")
+    for t, (known, total) in sorted(by_type.items(), key=lambda kv: -kv[1][1]):
+        print(f"  {t[:12]:<12} {known:>8,} {total:>8,} {known / max(1, total):>6.0%}")
+
     print(f"\n=== what Stage 2 would cost ===")
     print("    Stated BEFORE any request, because 'how much of a publisher's bandwidth are we")
     print("    about to spend' is the question a ToS review is actually asking.")

@@ -94,6 +94,59 @@ def test_cross_language_target_renders_nothing_when_members_carry_language():
     assert out["available"] is False and out["reason"] == "cross_language"
 
 
+def test_a_majority_language_drawn_from_a_MINORITY_of_the_coverage_does_not_refuse():
+    """**The transition hazard this guard closes.** `rss_ingest.parse_feed` did not read a feed's
+    declared `<language>` until it was taught to, so every RSS-ingested row carried NULL and this
+    gate was near-inert. Populating it is forward-only, so for as long as the retention window a
+    story mixes language-bearing new rows with NULL old ones.
+
+    Here two of six members carry a language — one German, one French — and the other four are the
+    English rows whose language was never recorded. Without the guard the "majority language" is
+    French, drawn from 33% of the coverage, and an English article is refused against it.
+
+    Verified to flip: with `_LANGUAGE_COVERAGE = 0.0` this same story returns `cross_language`."""
+    multi = [member("Berliner Bote", "Rat billigt den Plan", lang="de"),
+             member("Le Monde", "Le conseil approuve le projet", lang="fr"),
+             member("Ledger Daily", "Council backs plan"),
+             member("City Chronicle", "Plan approved"),
+             member("Harbor Post", "Council signs off on plan"),
+             member("Bay Register", "Council approves the plan")]
+    out = cc.compare({"publisher": "Ledger Daily", "url": multi[2]["url"], "language": "en"},
+                     story(multi))
+    assert out["available"] is True, "a minority sample must not decide the majority language"
+
+
+def test_the_refusal_still_fires_once_the_coverage_is_actually_known():
+    """The guard declines to decide on thin evidence; it does not disable the gate. With language
+    recorded for every member, a genuinely cross-language comparison is refused as designed."""
+    multi = [member("Berliner Bote", "Rat billigt den Plan", lang="de"),
+             member("Hamburger Blatt", "Rat stimmt zu", lang="de"),
+             member("Kölner Zeitung", "Plan gebilligt", lang="de"),
+             member("Meridian Wire", "Council approves plan", lang="en")]
+    out = cc.compare({"publisher": "Meridian Wire", "url": multi[3]["url"], "language": "en"},
+                     story(multi))
+    assert out["available"] is False and out["reason"] == "cross_language"
+
+
+def test_only_in_this_language_is_not_claimed_from_a_minority_of_the_coverage():
+    """"The only report in this language" is a claim about the WHOLE coverage set. With language
+    partly populated, every member whose language was simply never recorded would otherwise count as
+    evidence of uniqueness.
+
+    Verified to flip: with `_LANGUAGE_COVERAGE = 0.0` this same story yields an `only_en` finding —
+    "the only report in English" in a coverage set that is four-fifths English."""
+    multi = [member("Meridian Wire", "Council approves plan", lang="en"),
+             member("Berliner Bote", "Rat billigt den Plan", lang="de"),
+             member("Ledger Daily", "Council backs plan"),
+             member("City Chronicle", "Plan approved"),
+             member("Harbor Post", "Council signs off on plan"),
+             member("Bay Register", "Council approves the plan")]
+    out = cc.compare({"publisher": "Meridian Wire", "url": multi[0]["url"], "language": "en"},
+                     story(multi))
+    langs = [f for f in (out.get("uniqueHere") or []) if f.get("kind") == "language"]
+    assert langs == [], "uniqueness cannot be claimed over members whose language is unknown"
+
+
 def test_kill_switch(monkeypatch):
     monkeypatch.setenv("RWE_COVERAGE_COMPARISON", "0")
     assert cc.compare(TARGET, story(CLUSTER))["reason"] == "disabled"

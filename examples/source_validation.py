@@ -136,33 +136,18 @@ def feed_urls(body: str, host: str) -> "list[str]":
     return out
 
 
-def feed_language(body: str) -> str:
-    """The language a feed declares for itself — RSS ``<language>`` or Atom ``xml:lang``.
+def feed_language(entries) -> str:
+    """The language the feed declared, as carried on its parsed entries.
 
-    Read here because `rss_ingest.parse_feed` **discards it**: `FeedEntry.language` is populated only
-    by the non-RSS adapters (NewsAPI, GDELT supply it per item), so an RSS-sourced row carries no
-    language at all. That is the gap the first production M7 run surfaced as `?` against `goal.com`,
-    `vietnamnet.vn` and `gujaratsamachar.com`.
+    **This used to parse the feed body itself, and no longer does.** `rss_ingest.parse_feed` now
+    fills each entry's ``language`` from the channel's own ``<language>`` / ``xml:lang``, so the
+    answer arrives on the normalized shape and this is a lookup rather than a second parser.
 
-    This reads **one element the existing parser does not surface** — it is not a second feed parser,
-    and the entries themselves still go through `crawler.discover_rss`. Teaching
-    `rss_ingest.parse_feed` to return channel language would be the better fix and would improve
-    ingestion metadata for every RSS row, not just validation's — but it changes a production
-    ingestion path for a validation-only need, so it wants its own change and its own measurement."""
-    import xml.etree.ElementTree as ET
-    try:
-        root = ET.fromstring(body.encode("utf-8") if isinstance(body, str) else body)
-    except Exception:
-        return ""
-    lang = (root.get("{http://www.w3.org/XML/1998/namespace}lang") or "").strip()
-    if lang:
-        return lang                                        # Atom: xml:lang on the feed element
-    for el in root.iter():
-        if crawler._local(el.tag) == "language" and (el.text or "").strip():
-            return (el.text or "").strip()
-        if crawler._local(el.tag) == "item":
-            break                                          # channel metadata precedes the items
-    return ""
+    That was the right place for it: the gap was never validation-specific. Nothing populated
+    ``language`` for RSS at all, so **every** RSS-ingested row in the catalog carried NULL — which is
+    what made `audit_source_cohort` abandon a whole analysis as "TOO SPARSE TO CONCLUDE" and what
+    showed up as `?` in M7's discovery table. Fixing it in the parser fixes it for ingestion too."""
+    return next((l for l in ((getattr(e, "language", "") or "").strip() for e in entries) if l), "")
 
 
 def _link_feeds(body: str) -> "list[str]":
@@ -260,8 +245,7 @@ def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
 
     try:
         limiter.wait(urls[0], decision.crawl_delay)
-        feed_body = fetch(urls[0])
-        entries = crawler.discover_rss(feed_body)
+        entries = crawler.discover_rss(fetch(urls[0]))
         spent += 1
     except Exception as e:
         gates.append(Gate(2, "feed discoverable and parses", FAIL,
@@ -294,8 +278,7 @@ def _probe(host, cand, gates, fetch, robots, limiter) -> tuple:
     # UNKNOWN that could never become an ADMIT.
     for i, g in enumerate(gates):
         if g.number == 6 and g.status == UNKNOWN:
-            declared = feed_language(feed_body) or next(
-                (l for l in ((getattr(e, "language", "") or "").strip() for e in entries) if l), "")
+            declared = feed_language(entries)
             gates[i] = Gate(6, "language identified", PASS if declared else FAIL,
                             f"{declared} (declared by the feed)" if declared
                             else "neither the catalog nor the feed states a language")
