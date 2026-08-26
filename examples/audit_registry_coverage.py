@@ -254,6 +254,52 @@ def cohort_unlocks(stories: list, by_url: dict, cohort: set, *, min_rated: int) 
             "shortfall": dict(sorted(shortfall.items())), "examples": gained[:10]}
 
 
+def skeletons(rows: list, untracked: list, wanted: list) -> None:
+    """Ready-to-paste registry rows for a cohort, with the LEAN DELIBERATELY BLANK.
+
+    The tedious half of curating a row is gathering every name form and host the catalog carries for
+    one outlet — ``ign.com`` arrives under three, ``The Hankyoreh`` under four — and getting that
+    wrong splits one masthead into several identities, which is the defect
+    ``audit_publisher_identity`` exists to prevent. That half is derivable from the catalog and is
+    filled in here.
+
+    The half that is NOT derivable is the rating, and this function will not invent it. Every lean in
+    ``outlet_registry.csv`` is a transcribed label from a published rater, carried with
+    ``factuality_source`` and the ``factuality_asof`` date it was READ — because, in that file's
+    words, "an unattributed rating is indistinguishable from a guess". A lean written from a model's
+    impression of an outlet, stamped ``mbfc``, would be a false provenance claim about a named news
+    organisation sitting in a data file that the product treats as fact.
+
+    So the skeleton stops at the catalog's own knowledge and leaves four fields for the curator:
+    the lean, the locality (the rater's page states it), the factuality label, and the read date."""
+    by_label = {r["label"]: r for r in untracked}
+    hosts_of: dict = {}
+    for r in rows:
+        p = (r.get("publisher") or "").strip()
+        h = outlet_registry._host_of(r.get("canonicalUrl") or r.get("url") or "")
+        if p and h:
+            hosts_of.setdefault(p, set()).add(h)
+
+    print("\n=== REGISTRY ROW SKELETONS — lean intentionally blank ===")
+    print("    canonical,lean,aliases,country,region,city,scope,kind,credibility,"
+          "factuality,factuality_source,factuality_asof")
+    print("    Fill: lean (rater's label), country/region/city/scope, factuality, source, asof.")
+    print("    A row whose rater publishes NO lean must stay blank — it becomes locality-only, and")
+    print("    a locality-only row unlocks nothing. Record those under CHECKED AND NOT REGISTERED")
+    print("    in the CSV so the next pass does not re-search them.\n")
+    for label in wanted:
+        r = by_label.get(label)
+        if r is None:
+            print(f"    # {label}: not an untracked outlet in this window — nothing to add")
+            continue
+        aliases = sorted({f for f in r["forms"]} | set().union(
+            *[hosts_of.get(f, set()) for f in r["forms"]] or [set()]))
+        aliases = [a for a in aliases if a != label]
+        print(f"    # {label}: {r['articles']} articles, {r['unlocks']} unlock(s), "
+              f"{r['assists']} assist(s)")
+        print(f"    {label},,{'|'.join(aliases)},,,,,,,,,")
+
+
 def _table(rows: list, key, top: int) -> str:
     lines = [f"{'arts':>6} {'unlk':>5} {'asst':>5}  outlet"]
     for r in sorted(rows, key=key)[:top]:
@@ -271,6 +317,9 @@ def main(argv=None) -> int:
                     help="comma-separated outlet labels to size TOGETHER (joint unlocks)")
     ap.add_argument("--cohort-top", type=int, default=20,
                     help="also size the top N untracked outlets by curation value (default %(default)s)")
+    ap.add_argument("--skeletons", action="store_true",
+                    help="emit registry-row skeletons for --cohort: every field this catalog can "
+                         "establish, and a BLANK lean for the curator to source")
     args = ap.parse_args(argv)
 
     store_ = store_mod.Store(args.db)
@@ -357,7 +406,10 @@ def main(argv=None) -> int:
     report(f"top {args.cohort_top} untracked by curation value",
            [r["label"] for r in by_value[:args.cohort_top]])
     if args.cohort:
-        report("explicit --cohort", [s.strip() for s in args.cohort.split(",") if s.strip()])
+        wanted = [s.strip() for s in args.cohort.split(",") if s.strip()]
+        report("explicit --cohort", wanted)
+        if args.skeletons:
+            skeletons(rows, untracked, wanted)
 
     # The ceiling. If curating EVERY untracked outlet converts n stories, no subset converts more,
     # and the whole programme is bounded by that one number. Part 2 priced the backlog at 13 by
