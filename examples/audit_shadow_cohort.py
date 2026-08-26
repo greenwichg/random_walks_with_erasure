@@ -143,8 +143,44 @@ def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
             "rated": bool(o is not None and o.lean == o.lean),      # NaN != NaN
             "kind": (o.kind if o else None),
             "canonical": (o.canonical if o else key),
+            # Where the outlet is TODAY, so a verdict can be read as a direction rather than as an
+            # instruction whose sign depends on an assumption the reader may not share.
+            "tier": corpus.tier_of(arts[0].get("publisher"), arts[0].get("url")),
         }
     return out
+
+
+#: Where each verdict wants the outlet to end up. ``None`` = nowhere; the verdict is not an
+#: instruction. Kept beside :func:`direction` rather than inside `source_evaluation` because the
+#: policy module is deliberately tier-blind — it scores an outlet, it does not know where one is.
+_TARGET_TIER = {"PROMOTE TO TIER B": "B", "TIER A CANDIDATE": "A", "REJECT": "shadow"}
+
+
+def direction(verdict: str, current_tier: str) -> str:
+    """How a verdict reads for an outlet ALREADY IN ``current_tier``: a move up, down, or nowhere.
+
+    **The first production run of the fixed harness is why this exists.** `sportskeeda.com` is in
+    **Tier A** today, by grandfathering, and the run printed ``PROMOTE TO TIER B``. For an outlet
+    already in Tier A that is a **demotion** wearing the word "promote".
+
+    The vocabulary was written for the shadow lane, where every move is upward — shadow is the
+    bottom, so "promote to Tier B" can only mean one thing. `--as-if` breaks that assumption: it
+    evaluates outlets we already carry, and against Tier A the same phrase points the other way.
+    No number is wrong; the *word* is, and a reader acting on it would move an outlet the opposite
+    of what the evidence supports.
+
+    So the direction is computed against where the outlet actually is, and printed beside the
+    verdict rather than folded into it — `source_evaluation.evaluate` stays tier-blind and its
+    tests stay unchanged."""
+    target = _TARGET_TIER.get(verdict)
+    if target is None:
+        return ""                                       # INSUFFICIENT * — not an instruction
+    if target == current_tier:
+        return "no change"
+    order = {"shadow": 0, "B": 1, "A": 2}
+    if order.get(target, 0) > order.get(current_tier, 0):
+        return f"UP from {current_tier}"
+    return f"*** DOWN from {current_tier} — this is a DEMOTION ***"
 
 
 def observation_is_window_bound(table: dict, window_days: float) -> bool:
@@ -232,10 +268,18 @@ def main(argv=None) -> int:
     print(f"cohort        : {len(cohort):,} articles")
     if unmatched:
         print(f"\n*** {len(unmatched)} NAMED OUTLET(S) MATCHED NOTHING: {', '.join(unmatched)}")
-        print("    Either they published nothing in this window, or the name is not the identity")
-        print("    this script joins on — the registry canonical, else the raw publisher string")
-        print("    lower-cased. Check against audit_source_cohort.py's table. Everything below")
-        print("    describes ONLY the outlets that matched.")
+        # Which of the two causes it is, rather than leaving the reader to guess: the catalog knows
+        # whether it has EVER held this publisher string, and that separates "the name is wrong"
+        # from "the outlet went quiet".
+        ever = st.publisher_first_seen(set(unmatched))
+        for name in unmatched:
+            if name in ever:
+                print(f"    {name:<30} IN THE CATALOG since {ever[name]} — published nothing in "
+                      f"this window")
+            else:
+                print(f"    {name:<30} NOT IN THE CATALOG under this exact string — the name is "
+                      f"wrong, or it resolves to a registry canonical")
+        print("    Everything below describes ONLY the outlets that matched.")
 
     if not cohort:
         # An empty table is not a finding, and printing one would read as "nothing here is worth
@@ -298,15 +342,21 @@ def main(argv=None) -> int:
     print("    clusterer's own pair rule, so this cannot drift from what a build would do.")
     print("    ATTACH IS REPORTED AND NEVER GATED. No bar for it has been measured, and two")
     print("    invented thresholds have already died against data in this series.")
+    print("    The verdict is read AGAINST WHERE THE OUTLET IS TODAY (`now` column). The verdict")
+    print("    vocabulary was written for the shadow lane, where every move is upward; --as-if")
+    print("    evaluates outlets we already carry, so `PROMOTE TO TIER B` against a Tier A outlet")
+    print("    is a DEMOTION. The direction is spelled out rather than left to the word.")
     print(f"\n  {'arts':>6} {'obs_d':>6} {'attach':>7} {'story':>6} {'synd':>6} {'host':>6} "
-          f"{'fresh_h':>8}  outlet")
+          f"{'fresh_h':>8} {'now':>7}  outlet")
     for key, s in sorted(table.items(), key=lambda kv: -kv[1]["attached"])[:args.show]:
         v, _why = se.evaluate(s)
         obs = f"{s['observedDays']:.1f}" if s["observedDays"] is not None else "?"
         fresh = f"{s['freshnessHours']:.1f}" if s["freshnessHours"] is not None else "?"
+        d = direction(v, s["tier"])
         print(f"  {s['articles']:>6} {obs:>6} {s['attached']:>7} {s['assignmentStories']:>6} "
-              f"{s['syndication']:>5.0%} {s['hostStability']:>5.0%} {fresh:>8}  "
-              f"{s['canonical'][:30]:<30} {v}")
+              f"{s['syndication']:>5.0%} {s['hostStability']:>5.0%} {fresh:>8} "
+              f"{s['tier']:>7}  {s['canonical'][:30]:<30} {v}"
+              f"{('   [' + d + ']') if d else ''}")
 
     # ------------------------------------------------------------------ verdicts
     census = Counter(se.evaluate(s)[0] for s in table.values())
@@ -321,10 +371,18 @@ def main(argv=None) -> int:
         print(f"  {s['canonical'][:30]:<30} {v:<20} {why}")
 
     print(f"\n=== first seen (catalog-wide MIN(created_at), NOT the fetch window) ===")
-    print("    Bounded by retention: an outlet cannot be observed for longer than its oldest")
-    print("    surviving row. That ceiling is real and stated rather than hidden.")
+    floor = st.catalog_first_seen()
+    print(f"    retention floor (oldest surviving row in the catalog): {floor or '(empty)'}")
+    print("    An outlet whose first-seen sits AT the floor has not been observed for that long —")
+    print("    it has merely not been trimmed yet, and its true first-seen is unknowable from what")
+    print("    we still hold. Reading a floor-pinned span as an observation would be the same")
+    print("    error as reading the fetch window as one.")
     for key, s in sorted(table.items(), key=lambda kv: (kv[1]["firstSeen"] or "9")):
-        print(f"  {s['canonical'][:30]:<30} {s['firstSeen'] or '(unknown)'}")
+        pinned = ""
+        if floor and s["firstSeen"] and se.days_since(s["firstSeen"]) is not None:
+            gap = (se.days_since(floor) or 0) - (se.days_since(s["firstSeen"]) or 0)
+            pinned = "   <- AT THE FLOOR, span is a lower bound" if gap < 1.0 else ""
+        print(f"  {s['canonical'][:30]:<30} {s['firstSeen'] or '(unknown)'}{pinned}")
 
     print(f"\n=== what this run does NOT decide ===")
     print("  * Tier A promotion. A TIER A CANDIDATE needs the clustering counterfactual on the")

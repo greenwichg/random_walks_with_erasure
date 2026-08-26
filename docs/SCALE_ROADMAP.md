@@ -879,6 +879,53 @@ output said nothing about the other. `newsbytesapp.com` contributed no rows and 
 `--as-if: 2 named outlets` regardless. Unmatched names are now listed explicitly, with the note that
 everything below describes only what matched.
 
+## The fixed run, and the third defect it exposed — in the *vocabulary*
+
+**Run on `01ead25`, same command:**
+
+```
+Tier A built  : 26,917 articles -> 1,495 stories (6,095 covered)
+cohort        : 999 articles
+*** 1 NAMED OUTLET(S) MATCHED NOTHING: newsbytesapp.com
+  arts  obs_d  attach  story  synd  host  fresh_h  outlet
+   999   28.1      75     35    0%  100%      0.1  sportskeeda.com   PROMOTE TO TIER B
+first seen: 2026-07-29T03:47:53
+```
+
+`observed 28.1d` against a first-seen of `2026-07-29T03:47:53` and a run time of ≈`2026-08-26T06:10`
+— 28 days, 2 hours. **The gate fired in the pass direction on production for the first time.** The
+fix works.
+
+And the verdict it produced is wrong in a way no number can show. **`sportskeeda.com` is in Tier A
+today**, by grandfathering. `PROMOTE TO TIER B` against a Tier A outlet is a **demotion wearing the
+word "promote"**. The vocabulary was written for the shadow lane, where shadow is the bottom and
+every move is upward — so "promote to Tier B" can only mean one thing. `--as-if` breaks that
+assumption, because it evaluates outlets we *already carry*, and against Tier A the same phrase
+points the other way. A reader acting on it would move an outlet the opposite of what the evidence
+supports.
+
+Fixed by computing the direction against where the outlet actually **is** — `corpus.tier_of` — and
+printing it beside the verdict:
+
+```
+  arts  obs_d  attach  ...  now  outlet
+    12   40.0       0  ...    A  vertical.example  PROMOTE TO TIER B  [*** DOWN from A — this is a DEMOTION ***]
+```
+
+`source_evaluation.evaluate` stays **tier-blind** and its tests are unchanged: it scores an outlet,
+it does not know where one is. The direction lives in the runner, which does.
+
+**Two smaller instrument gaps closed in the same pass:**
+
+* **The retention floor.** `MIN(created_at)` is bounded by what has not been trimmed, so an outlet
+  sitting *at* the catalog's oldest surviving row has not been observed for that long — its true
+  first-seen is unknowable from what we hold. `store.catalog_first_seen()` reports the floor and the
+  run marks any outlet pinned to it: *"span is a lower bound"*. Reading a floor-pinned span as an
+  observation would be the same error as reading the fetch window as one.
+* **Unmatched names now say WHICH cause.** `newsbytesapp.com` matched nothing, and "published
+  nothing in the window" and "the name is not the identity we join on" are different problems. The
+  catalog knows whether it has ever held the string, so the run says which.
+
 ## What the run does say, now that the numbers can be read
 
 The four measurements that were **not** window-bound stand, and sportskeeda's profile is coherent:
@@ -892,10 +939,16 @@ high volume, genuine reporting, low overlap with the general-news spine.
 
 **This does not license a demotion, and the discipline is the whole point.** Attach rate is not a
 gate, by a rule adopted *before* this number existed and for reasons that survive it. Nor does
-capacity bind: 26,926 against the 83,000 Tier A budget means 3.7% is not scarce. What the number is
-good for is the *next* question — whether a vertical belongs in a general-news clustering corpus at
-all — and that is a product question with a counterfactual attached, not something this table
-decides.
+capacity bind: 26,917 against the 83,000 Tier A budget means 3.7% is not scarce. And the two
+criteria that *do* demote — syndication and host instability, the only two `audit_source_cohort`
+ever let act — both pass cleanly at 0% and 100%.
+
+**So the action this run supports is: none.** `PROMOTE TO TIER B` is evidence that sportskeeda
+*would qualify for Tier B if it were in shadow*; it is not a finding that it should leave Tier A,
+and the direction annotation now says so in the output rather than leaving it to the reader. What
+the number is good for is the *next* question — whether a vertical belongs in a general-news
+clustering corpus at all — and that is a product question with a counterfactual attached, not
+something this table decides.
 
 ## The two traps found before the first run, and the guards that are in the code rather than in this document
 
@@ -952,7 +1005,10 @@ production bars — a whole-corpus measurement, not a per-outlet one. `evaluate`
 | `observed_days` reads `createdAt`, never `publishedAt` | unit | ✅ |
 | **observation comes from the catalog, not the fetch window** — the same outlet is `INSUFFICIENT DATA` on the windowed span and reaches a real verdict on the catalog one | unit, both seams | ✅ (after the first production run) |
 | a window-bound observation is **detected and reported** | unit + fixture run | ✅ |
-| `--as-if` names that matched nothing are listed | fixture run | ✅ |
+| **a verdict is read against the outlet's CURRENT tier** — `PROMOTE TO TIER B` on a Tier A outlet prints as a demotion | unit (7 cases) + fixture run | ✅ (after the second production run) |
+| an `INSUFFICIENT *` verdict carries **no** direction — it is not an instruction | unit | ✅ |
+| an outlet pinned to the **retention floor** is marked as a lower bound | unit + fixture run | ✅ |
+| `--as-if` names that matched nothing are listed, **with which cause** | fixture run | ✅ |
 | too-new ⇒ `INSUFFICIENT DATA`, never `REJECT` | unit | ✅ |
 | no verdict branches on `assignmentRate` / `assignmentStories` / `attached` | structural, both modules | ✅ |
 | syndication sees the Tier A corpus, not the cohort alone | unit (1 carrier vs 2) | ✅ |

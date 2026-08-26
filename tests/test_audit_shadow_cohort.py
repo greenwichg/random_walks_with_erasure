@@ -113,6 +113,43 @@ def test_outlet_stats_takes_observation_from_the_catalog_not_the_fetched_rows():
     assert catalog["echodaily.example"]["firstSeen"] == "2026-06-01T00:00:00+00:00"
 
 
+@pytest.mark.parametrize("verdict, tier, expect", [
+    # The production case: sportskeeda is in Tier A by grandfathering, and the run printed
+    # "PROMOTE TO TIER B". For an outlet already in Tier A that is a DEMOTION wearing the word
+    # "promote" — no number is wrong, the word is.
+    ("PROMOTE TO TIER B", "A", "DEMOTION"),
+    ("PROMOTE TO TIER B", "shadow", "UP from shadow"),
+    ("PROMOTE TO TIER B", "B", "no change"),
+    ("TIER A CANDIDATE", "shadow", "UP from shadow"),
+    ("TIER A CANDIDATE", "A", "no change"),
+    ("REJECT", "A", "DEMOTION"),
+    ("REJECT", "shadow", "no change"),
+])
+def test_a_verdict_is_read_against_where_the_outlet_is_today(verdict, tier, expect):
+    assert expect in asc.direction(verdict, tier)
+
+
+@pytest.mark.parametrize("verdict", ["INSUFFICIENT DATA", "INSUFFICIENT VOLUME"])
+def test_an_insufficient_verdict_has_no_direction(verdict):
+    """It is not an instruction, so it must not be dressed as one in either direction."""
+    assert asc.direction(verdict, "A") == ""
+
+
+def test_catalog_first_seen_is_the_retention_floor(tmp_path):
+    """The disambiguation `observedDays` needs. An outlet whose first-seen equals the oldest
+    surviving row in the catalog has not been observed for that long — it just has not been trimmed,
+    and its true first-seen is unknowable from what we still hold."""
+    import store as store_mod
+    st = store_mod.Store(f"sqlite:///{tmp_path}/floor.db")
+    assert st.catalog_first_seen() is None
+    st.upsert_feed_article(canonical_url="h.example/a", url="https://h.example/a",
+                           publisher="Echo", source_publisher=None, title="t", description="",
+                           body=None, published_at="2026-08-01T00:00:00+00:00", source_feed="t",
+                           scored={})
+    floor = st.catalog_first_seen()
+    assert floor and floor == st.publisher_first_seen({"echo"})["echo"]
+
+
 def test_window_bound_observation_is_detected():
     """A gate that cannot fire is worse than no gate — it reads as a measurement. The runner checks
     rather than trusting, because this exact shape has now appeared three times in its instruments."""

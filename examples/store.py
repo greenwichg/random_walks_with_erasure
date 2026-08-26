@@ -2318,6 +2318,20 @@ class Store:
                     out[key] = iso
             return out
 
+    def catalog_first_seen(self) -> "str | None":
+        """The oldest surviving ``created_at`` in the catalog, or ``None`` when empty.
+
+        The **retention floor**, and it exists to disambiguate :meth:`publisher_first_seen`. An
+        outlet whose first-seen equals this has not been observed for that long — it has merely not
+        been trimmed yet, and its true first-seen is unknowable from what we still hold. Reporting a
+        floor-pinned span as an observation would be the same class of error as reporting a fetch
+        window as one (M8, `docs/SCALE_ROADMAP.md` Part 10)."""
+        with self.session() as s:
+            first = s.scalar(select(func.min(FeedArticle.created_at)))
+        if first is None:
+            return None
+        return first.isoformat() if hasattr(first, "isoformat") else str(first)
+
     # -- content lifecycle (Commit 18: extension-created articles) --------------------
     def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:
         """Promote a ``provisional`` article to active once ``min_readers`` **distinct** users have
