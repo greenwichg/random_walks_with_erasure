@@ -1934,6 +1934,39 @@ The probe now prints and records up to three **sample article URLs** per admitte
 "acceptable in shadow" to "verified", and it needs no new crawling — the URLs are already in the
 discovery document the probe fetched.
 
+### ⚠ The switch reached one container and its precondition reached the other
+
+Caught while writing the operator instructions, before anything was set. The wiring added
+`RWE_CRAWL_ENABLED` to **both** `api` and `ingest`, and `RWE_CORPUS_SHADOW` to **`api` only** —
+`ingest`'s `environment:` block never had the corpus vars, and the stack has no `env_file:`, so an
+undeclared variable does not reach that container whatever `deploy/.env` says.
+
+Following the two-line instruction exactly would have produced, inside `ingest`:
+`RWE_CRAWL_ENABLED=1` visible, `RWE_CORPUS_SHADOW` **absent**.
+
+**It fails closed, and that part held.** An outlet absent from the shadow list is Tier A,
+`CrawlAdapter.enabled()` demands shadow, so every adapter refuses. Nothing would have been promoted
+by omission — the structural protection worked exactly as designed, in the one service where the
+config was wrong.
+
+**But it refuses for a reason the operator has already fixed.** `ingest` would print *"not in
+RWE_CORPUS_SHADOW — this is promotion by omission"* naming a variable they had just set, in a file
+they were looking at. A diagnostic that describes a container's environment while the operator reads
+the host's is worse than no diagnostic: it sends them to re-check the thing that is already right.
+
+Both vars are now declared on `ingest`, not just the shadow one: `corpus.tier_of` reads
+`RWE_CORPUS_TIER_B` and `RWE_CORPUS_SHADOW` together, so passing one would resolve an outlet Tier B
+in the api and Tier A in ingest — on the same catalog.
+
+**Why the existing guard missed it.** `test_rec_flags_deployable.py` exists for precisely this
+failure mode and has three prior occurrences recorded in its docstring. It greps the whole compose
+file for the variable's name, so a declaration in *any* service passes — the right shape for "can
+this flag ever reach a container", blind to "reaches the wrong one". This is the first occurrence
+where the flag did reach a container, just not the one whose code reads it. The new guard is
+per-service: every service given `RWE_CRAWL_ENABLED` must also be given both corpus vars, plus a
+guard-the-guard asserting the loop is non-empty and covers `api` and `ingest`. Verified to fail on
+the pre-fix file.
+
 ### Failure isolation
 
 A malformed or missing crawl config returns an empty adapter list rather than raising. A supplement

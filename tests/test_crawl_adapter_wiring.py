@@ -256,3 +256,42 @@ def test_the_admit_advice_names_BOTH_switches_in_the_order_they_must_be_set():
     src = (ROOT / "examples" / "audit_source_discovery.py").read_text()
     assert "RWE_CRAWL_ENABLED" in src and "RWE_CORPUS_SHADOW" in src
     assert "crawler_publishers.json" in src, "the config file is the third thing that must change"
+
+
+# --------------------------------------------------------------------------- the switch must REACH the container
+
+def _compose_services():
+    import yaml
+    doc = yaml.safe_load((ROOT / "deploy" / "docker-compose.yml").read_text())
+    return doc["services"]
+
+
+def test_every_service_given_the_crawl_switch_can_also_see_its_precondition():
+    """`environment:` is an explicit allowlist and this stack has no `env_file:`, so a variable
+    absent from a service's block never reaches that container whatever deploy/.env says.
+
+    The wiring shipped `RWE_CRAWL_ENABLED` to both `api` and `ingest` but `RWE_CORPUS_SHADOW` only
+    to `api`. That failed CLOSED — an outlet absent from the list is Tier A and `enabled()` demands
+    shadow — but it would have refused for a reason the operator had already fixed, printing "not in
+    RWE_CORPUS_SHADOW" about a variable they had just set. Both vars, because `corpus.tier_of` reads
+    them together: passing one would resolve an outlet Tier B in the api and Tier A in ingest.
+
+    `test_rec_flags_deployable.py` guards the same family and did NOT catch this: it greps the whole
+    compose file for the name, so a variable declared in ANY service passes. That is the right shape
+    for "can this flag ever reach a container"; it cannot see "reaches the wrong one". This is the
+    first occurrence of the failure mode where the flag DID reach a container — just not the one
+    whose code reads it — so the guard has to be per-service."""
+    for name, svc in _compose_services().items():
+        env = svc.get("environment") or {}
+        if "RWE_CRAWL_ENABLED" not in env:
+            continue
+        missing = {"RWE_CORPUS_SHADOW", "RWE_CORPUS_TIER_B"} - set(env)
+        assert not missing, f"service {name!r} gets the crawl switch but not {sorted(missing)}"
+
+
+def test_the_service_that_actually_runs_the_poller_is_covered():
+    """Guards the guard: a loop over "every service with the switch" proves nothing if no service
+    has it. Both the long-running engine and the one-shot seeding run import the same adapters."""
+    have = [n for n, s in _compose_services().items()
+            if "RWE_CRAWL_ENABLED" in (s.get("environment") or {})]
+    assert set(have) == {"api", "ingest"}, f"expected both pollers to carry the switch, got {have}"

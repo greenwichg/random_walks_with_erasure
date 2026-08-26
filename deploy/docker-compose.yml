@@ -754,6 +754,17 @@ services:
       #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
       RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
       RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
+      # The tier assignment the switch above DEPENDS ON, and the reason it must be listed here: the
+      # crawl flag shipped to this service without it, so `RWE_CRAWL_ENABLED=1` was visible here and
+      # `RWE_CORPUS_SHADOW` was not. That failed CLOSED — every adapter refused, because an outlet
+      # absent from the list is Tier A and `CrawlAdapter.enabled()` requires shadow — but it refused
+      # for a reason the operator had already fixed, printing "not in RWE_CORPUS_SHADOW" about a
+      # variable they had just set. A switch whose precondition cannot reach the container is the
+      # RWE_FEED_MIN_INTERVAL lesson again, one service over.
+      # Both vars, not just the shadow one: `corpus.tier_of` reads them together, so passing one
+      # would make an outlet resolve Tier B in the api and Tier A here, on the same catalog.
+      RWE_CORPUS_TIER_B: ${RWE_CORPUS_TIER_B:-}
+      RWE_CORPUS_SHADOW: ${RWE_CORPUS_SHADOW:-}
       # The same block list the api poller uses — the seeding run must not import what the poller
       # would refuse. See the comment on the api service.
       RWE_CATALOG_BLOCKED_OUTLETS: ${RWE_CATALOG_BLOCKED_OUTLETS:-}
