@@ -73,6 +73,7 @@ def test_the_breaking_detector_DOES_still_hold_it(poller, monkeypatch):
     to stay after it — and it re-enters the lock for its own duration rather than racing an
     adapter's ingest. Brief and explicit beats moving a writer off the write lock."""
     seen = {}
+    monkeypatch.setenv("RWE_BREAKING_NOTIFICATIONS", "1")
     monkeypatch.setattr(sources.story_service, "request_warm", lambda *a, **k: None)
     monkeypatch.setattr(story_events, "detect_breaking_stories",
                         lambda *a, **k: seen.__setitem__("held", _lock_is_held(poller)))
@@ -116,6 +117,7 @@ def test_a_failing_breaking_detector_RELEASES_the_lock(poller, monkeypatch):
     """The failure mode a `with` block exists to prevent, asserted anyway because this one is fatal:
     an exception inside the re-acquired lock that escaped without releasing would deadlock every
     adapter thread in the process, and the symptom would be "ingestion stopped", not "an error"."""
+    monkeypatch.setenv("RWE_BREAKING_NOTIFICATIONS", "1")
     monkeypatch.setattr(sources.story_service, "request_warm", lambda *a, **k: None)
     monkeypatch.setattr(story_events, "detect_breaking_stories",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
@@ -157,6 +159,7 @@ def test_a_lock_that_cannot_be_retaken_LOGS_instead_of_hanging(poller, monkeypat
     error logged anywhere, which is the worst shape a fault can take in this loop.
 
     A timed acquire turns the impossible wait into a line an operator can search for."""
+    monkeypatch.setenv("RWE_BREAKING_NOTIFICATIONS", "1")
     monkeypatch.setattr(sources, "_BREAKING_LOCK_TIMEOUT_S", 0.2)
     monkeypatch.setattr(sources.story_service, "request_warm", lambda *a, **k: None)
     ran = []
@@ -176,7 +179,52 @@ def test_a_lock_that_cannot_be_retaken_LOGS_instead_of_hanging(poller, monkeypat
 
 
 def test_the_timeout_is_generous_enough_not_to_fire_on_ordinary_contention(poller):
-    """Guard on the guard. A timeout short enough to trip while another adapter is mid-ingest would
-    convert a working system into a stream of ERROR lines — and post-cycle maintenance passes were
-    measured at ~96 s, so this has to clear that."""
-    assert sources._BREAKING_LOCK_TIMEOUT_S >= 120.0
+    """Guard on the guard, corrected by production.
+
+    This asserted `>= 120.0` on the reasoning that maintenance passes were measured at ~96 s so 120
+    "has to clear that". The reasoning was too narrow — it cleared ONE pass and ignored queueing
+    behind one — and production fired `breaking_detect_lock_timeout` once in an hour at 16%
+    occupancy. A genuine deadlock never resolves, so any finite value catches it; the only cost of a
+    large one is an idle thread that now blocks nobody."""
+    assert sources._BREAKING_LOCK_TIMEOUT_S >= 600.0
+
+
+def test_the_detector_is_not_even_QUEUED_FOR_when_the_feature_is_off(poller, monkeypatch):
+    """What actually fired the timeout in production. `detect_breaking_stories` returns 0 at its
+    first line when `RWE_BREAKING_NOTIFICATIONS` is unset — the default — so taking a contended lock
+    to call it buys nothing and can cost the full wait. Asking first is free."""
+    monkeypatch.delenv("RWE_BREAKING_NOTIFICATIONS", raising=False)
+    monkeypatch.setattr(sources, "_BREAKING_LOCK_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(sources.story_service, "request_warm", lambda *a, **k: None)
+    events = []
+    poller._log = lambda lvl, ev, **f: events.append(ev)
+
+    poller._lock.acquire()                       # the lock is unavailable...
+    try:
+        poller._post_cycle_unlocked({"new": 1})  # ...and we must not care
+    finally:
+        poller._lock.release()
+
+    assert "breaking_detect_lock_timeout" not in events, \
+        "a disabled feature must not block on a lock, let alone time out waiting for one"
+
+
+def test_source_poll_does_not_reuse_the_warmMs_field_name(poller, monkeypatch):
+    """`warmMs` on two events made `grep -o '"warmMs"' | sum` double every warm — which it did, on
+    the very first measurement of this change. One field, one event."""
+    monkeypatch.setattr(sources.story_service, "request_warm", lambda *a, **k: None)
+    events = []
+    poller._log = lambda lvl, ev, **f: events.append((ev, f))
+    poller.store = type("S", (), {"count_feed_articles": lambda self: 0})()
+
+    class _Adapter:
+        provider, source_type = "probe", "test"
+
+        def poll_once(self, *a, **k):
+            return {"new": 1}
+
+    poller.poll_adapter_once(_Adapter())
+    poll = dict(next(f for ev, f in events if ev == "source_poll"))
+    unlocked = dict(next(f for ev, f in events if ev == "post_cycle_unlocked"))
+    assert "warmMs" in unlocked and "warmMs" not in poll
+    assert "offLockWarmMs" in poll, "still reported, just not under a colliding name"

@@ -88,9 +88,17 @@ def _float_env(name: str, default: float) -> float:
 
 
 #: How long `_post_cycle_unlocked` waits to re-take the ingest lock for breaking-story detection
-#: before giving up on this cycle and saying so. Generous — it only contends with one adapter's
-#: ingest — and its purpose is not tuning but making an impossible wait VISIBLE rather than silent.
-_BREAKING_LOCK_TIMEOUT_S = 120.0
+#: before giving up on this cycle and saying so.
+#:
+#: Its purpose is to make an IMPOSSIBLE wait visible, not to tune anything: a genuine deadlock never
+#: resolves, so any finite value catches it, and the only cost of a large one is that thread sitting
+#: idle — which now blocks nobody, because the warm ahead of it no longer holds the lock either.
+#:
+#: 120 s was the first guess and it was WRONG, on reasoning that was too narrow: it cleared a single
+#: ~96 s maintenance pass but ignored QUEUEING behind one. Production fired the timeout once in an
+#: hour at 16% occupancy. Sized now against the real shape — a maintenance pass plus several
+#: adapters queued behind it — rather than against one pass in isolation.
+_BREAKING_LOCK_TIMEOUT_S = 600.0
 
 
 def _maintenance_interval() -> float:
@@ -1641,7 +1649,13 @@ class MultiSourcePoller:
         # take in this loop. The timeout turns it into something an operator can find.
         try:
             import story_events                  # lazy: keeps story_intelligence out of this import graph
-            if not self._lock.acquire(timeout=_BREAKING_LOCK_TIMEOUT_S):
+            # ASK BEFORE QUEUEING. `detect_breaking_stories` returns 0 at its first line when the
+            # feature is off, which is the default — so taking a contended lock to call it buys
+            # nothing and can cost the wait below. Production fired `breaking_detect_lock_timeout`
+            # once in an hour doing exactly that: blocking on a lock in order to invoke a no-op.
+            if not story_events.enabled():
+                pass
+            elif not self._lock.acquire(timeout=_BREAKING_LOCK_TIMEOUT_S):
                 self._log(logging.ERROR, "breaking_detect_lock_timeout",
                           waitedSeconds=_BREAKING_LOCK_TIMEOUT_S,
                           detail="could not re-take the ingest lock; skipping breaking detection "
@@ -1700,7 +1714,10 @@ class MultiSourcePoller:
                   # work that moved OUT of it — reported, not hidden, so the change shows up as
                   # occupancy falling rather than as time disappearing from the logs.
                   pollMs=round((t1 - t0) * 1000.0, 1), postCycleMs=round((t2 - t1) * 1000.0, 1),
-                  warmMs=round(warm_ms, 1))
+                  # NOT `warmMs`: that name is already on `post_cycle_unlocked`, and one field name
+                  # across two events makes `grep -o '"warmMs"' | sum` silently double every warm.
+                  # It did, on the first measurement of this change.
+                  offLockWarmMs=round(warm_ms, 1))
         return agg
 
     def _run_adapter(self, adapter: SourceAdapter) -> None:

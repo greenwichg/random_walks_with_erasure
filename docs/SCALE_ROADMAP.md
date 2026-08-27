@@ -2181,6 +2181,43 @@ Predicted effect, to be checked against production rather than assumed: occupanc
 24.9% by roughly the warm's share (~13% of wall clock), landing near 12%. The warm still costs what
 it costs — it is simply no longer anyone else's problem.
 
+### Verified live: 16.0%, and the canary fired
+
+```
+OCCUPANCY     : 577.8 s / 3,600 s = 16.0%      (87.8% -> 24.9% -> 16.0%)
+off-lock warm : 380.2 s across 22 warms        (~17.3 s each, all outside the lock)
+breaking_detect_lock_timeout : 1
+```
+
+**The prediction was 12% and the answer was 16%.** Directionally right, quantitatively off, and the
+reason is worth stating rather than rounding away: the residual is poll + retention + refresh, which
+this change never touched and which varies with ingestion volume hour to hour. Total work is roughly
+flat (577.8 + 380.2 = 958 s, against 895.5 s the previous hour) — the change moved work off the
+lock, it did not remove any.
+
+**⚠ The timeout fired once in an hour, and both causes were mine.**
+
+Not the deadlock: that would fire on every cycle, not one in 22. It was contention, and the
+diagnosis is instructive.
+
+* **Queueing for a lock without asking whether the work needed doing.** `story_events.enabled()`
+  defaults **off**, so `detect_breaking_stories` returns 0 at its first line. The code waited up to
+  120 s for a contended lock **in order to call a function that does nothing**. It now asks first,
+  and in the default configuration stops touching the lock on that path entirely.
+* **120 s was too tight, on reasoning that was too narrow.** It was sized against a single ~96 s
+  maintenance pass and ignored *queueing behind one* — and a test was written asserting `>= 120.0`
+  on exactly that reasoning, which production contradicted within the hour. A genuine deadlock never
+  resolves, so any finite timeout catches it; the only cost of a large one is an idle thread that
+  now blocks nobody. Raised to 600 s.
+
+**And the first measurement of this change was wrong because of a duplicate field name.** `warmMs`
+was logged on both `post_cycle_unlocked` and `source_poll`, so `grep -o '"warmMs"' | sum` doubled
+every warm — reporting 728.7 s across "62 cycles" for what was 380.2 s across 22. The echo is now
+`offLockWarmMs`. One field, one event; a naive sum cannot double-count.
+
+**Three measurements, same box, same catalog: 87.8% -> 24.9% -> 16.0%.** A 5.5x reduction from two
+changes that between them add no threads and remove no work.
+
 **A note on where the cost went last time.** The comment at `sources.py:1547` records the previous
 investigation landing on `story_cache_warm` — *"~93% of the most expensive loop in the process was
 inside a step nobody had timed"* — and its fix worked: warm is now the smallest segment at 11–17%.

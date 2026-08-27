@@ -1214,7 +1214,10 @@ def test_post_cycle_attributes_its_time_to_a_named_step():
     assert unlocked and "warmMs" in unlocked[0], "the warm must still report its own duration"
     assert "warmMs" not in post[0], "and must not be double-counted inside the locked phase"
     poll = [f for event, f in events if event == "source_poll"]
-    assert poll and "warmMs" in poll[0], "source_poll carries it so occupancy stays computable"
+    assert poll and "offLockWarmMs" in poll[0], \
+        "source_poll carries it so occupancy stays computable"
+    assert "warmMs" not in poll[0], \
+        "under a DIFFERENT name: one field on two events let a naive sum double every warm"
     assert calls, "the on_cycle hook must still run"
     assert post[0]["refreshMs"] >= 30.0, \
         f"refreshMs must measure the hook, got {post[0]['refreshMs']}"
