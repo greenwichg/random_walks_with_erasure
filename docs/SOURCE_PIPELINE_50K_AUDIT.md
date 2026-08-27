@@ -247,18 +247,39 @@ is the number this section predicts, it is checkable by re-running `audit_source
 the change with no network involved, and if it comes back near 177 the change did not do what this
 audit says it does.
 
-**Built, not yet verified on production.** `store.list_discovery_rows()` is the narrow projection
+**Verified on production 2026-08-27, running `b0bd3b1`:**
+
+| | `--window-days 6` (the old behaviour) | default (the catalogue) | |
+|---|---:|---:|---:|
+| articles | 28,246 | 149,647 | 5.30× |
+| hosts seen | 4,244 | 9,388 | 2.21× |
+| already tracked | 547 | 837 | 1.53× |
+| aggregator / proxy | 28 | 59 | 2.11× |
+| below the floor | 3,492 | 7,319 | 2.10× |
+| **CANDIDATES** | **177** | **1,173** | **6.63×** |
+
+**The bar was ≥ 800. The result is 1,173.** The control run still reports exactly 177 — the
+pre-M10 number — so the two runs are measuring what they claim.
+
+> **My estimate of ~951 was 23% low, and the reason is worth recording.** `census()`'s buckets are
+> **mutually exclusive**, with precedence `eligible > proxy > tracked > belowFloor` — so
+> "below the floor: 7,319" means *below the floor AND not tracked AND not proxy*. Of the 896 hosts
+> the gates remove, only **352 are above the floor**; the other 544 were below it and would never
+> have been candidates. My arithmetic subtracted all 574 of the gate-removals from the 1,525
+> above-floor hosts, double-counting the ones the floor had already taken out. `1,525 − 352 = 1,173`
+> — the measured answer, exactly.
+>
+> Conservative in the useful direction this time, but conservative by accident rather than by
+> design, which is not the same thing.
+
+**Built, and this is what it does:** `store.list_discovery_rows()` is the narrow projection
 (six fields: the host pair, publisher, language, publishedAt, and sourceType for the runner's
 language table); `audit_source_discovery.py` calls it instead of `story_service._fetch`, keeping the
 tier exclusions and dropping the window. `--window-days 6` reproduces the old behaviour so the change
 stays auditable against what it replaced.
 
-The bar is checked by re-running Stage 1 — offline, no network, no writes:
-
-```bash
-cd /opt/ih && source deploy/ops/_compose.sh
-dc exec -T api python examples/audit_source_discovery.py 2>&1 | head -8
-dc exec -T api python examples/audit_source_discovery.py --window-days 6 2>&1 | head -8
-```
-
-The second command must still report ~177, or the two runs are not measuring what they claim.
+**What 1,173 candidates now costs at Stage 2** — the number a ToS review is actually being asked
+about: **3,519 requests** (up to 5,865 if every host needs a sitemap descent), ~2.0 hours serial at
+the configured 2 s politeness. That is a scheduled campaign against real publishers, and it is
+exactly the point at which L2 — *validation is not resumable* — stops being a nuisance and starts
+being the reason to build M11 before running it.
