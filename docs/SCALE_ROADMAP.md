@@ -2086,6 +2086,52 @@ dirty_check` — failed on precisely this and was the right thing to fail; it ow
 condition* and now pins that with the throttle disabled, while `tests/test_post_cycle_coalescing.py`
 owns *how often* an eligible pass may run.
 
+### Verified live (2026-08-26): 87.8% → 24.9%, and the cost moved exactly as predicted
+
+Measured over 60 minutes against ~1 h of uptime, same box, same 150,000-row catalog:
+
+```
+post-cycle    775.3 s
+poll          120.2 s
+             --------
+              895.5 s / 3,600 s  =  24.9%      (was 87.8%)
+
+maintenance: false  x23        <- deferred, cheap
+maintenance: true   x 4        <- one per 600 s window, as designed
+```
+
+**3.5× reduction**, and the throttle is demonstrably engaging rather than the load simply being
+lighter: 4 maintenance passes in an hour is exactly one per window. A deferred cycle now logs
+`cleanupMs: 0.0, refreshMs: 0.0` — the two catalog-wide steps genuinely skipped, not merely faster.
+The maintenance passes still cost ~96 s each, which is right: they are supposed to cost the same,
+there are just a twelfth as many.
+
+*(Uptime read "About an hour", which Docker rounds. If the box had been up less than 60 minutes the
+denominator is generous and the true figure is somewhat higher — at 45 minutes it would be 33%. The
+conclusion survives either reading.)*
+
+**And the cost moved, as the previous round warned it would.** Of the 775.3 s of post-cycle time,
+roughly 460 s is `warmMs` — ~17 s on *every* ingesting cycle, deferred or not, because the warm was
+deliberately left un-coalesced. That is now **the single largest remaining contributor**: ~51% of
+post-cycle time and ~13% of wall clock on its own.
+
+**⚠ And the comment describing that step was wrong about production.** `sources.py` read *"Requesting
+is non-blocking, so the lock is released immediately and the build happens on the warmer thread."*
+`request_warm` is non-blocking **only when `warm_coalesce_window() > 0`**, and that defaults to **0**
+— off by decision, not oversight: `story_service:2829` records two measurements rejecting the
+coalescing hypothesis (production warms sit ~60 s apart, so there is no burst to merge, and delaying
+a warm costs more than it saves). With the window at 0, `request_warm` calls `warm_cache` **inline,
+on the poller thread, holding the lock**, for a full clustering build.
+
+The 14–20 s `warmMs` and the 13,624 ms full build `audit_corpus_boundary.py` reports at 27,764
+articles are the same number. The behaviour is intended; the comment describing it was not, and it
+briefly misled this very analysis. Corrected in place.
+
+**Left alone deliberately.** Making the warm asynchronous is not a scheduling change like the
+coalescing — the warm reads and builds and does not need the ingest *write* lock at all, so removing
+it from the lock is the "narrow the global lock" work, which is M6. At 24.9% there is now headroom
+to do that as a designed change rather than under pressure, which was the entire point.
+
 **A note on where the cost went last time.** The comment at `sources.py:1547` records the previous
 investigation landing on `story_cache_warm` — *"~93% of the most expensive loop in the process was
 inside a step nobody had timed"* — and its fix worked: warm is now the smallest segment at 11–17%.

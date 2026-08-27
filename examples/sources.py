@@ -1557,6 +1557,23 @@ class MultiSourcePoller:
         # build happens on the warmer thread. That introduces no new concurrency: API requests
         # already read this store while adapters write to it, which is what WAL is for.
         #
+        # ⚠ THAT LAST PARAGRAPH DOES NOT DESCRIBE PRODUCTION, and the correction is measured.
+        # `request_warm` is non-blocking only when `warm_coalesce_window() > 0`. It defaults to 0 —
+        # OFF by decision, not oversight: story_service:2829 records two measurements rejecting the
+        # coalescing hypothesis (production warms are ~60 s apart, so there is no burst to merge,
+        # and delaying a warm costs more than it saves). With the window at 0, `request_warm` calls
+        # `warm_cache` INLINE on this thread, holding this lock, for a full clustering build.
+        #
+        # Measured 2026-08-26 after the maintenance steps were coalesced: `warmMs` is 14-20 s on
+        # every ingesting cycle, against the 13,624 ms full build `audit_corpus_boundary.py` reports
+        # at 27,764 articles. Those are the same number. It is now the single largest contributor to
+        # what remains of lock occupancy (~13% of wall clock on its own, ~51% of post-cycle time).
+        #
+        # Left alone deliberately. Making it truly asynchronous is not a scheduling change like the
+        # coalescing above — it is the "narrow the global lock" work, which is M6, and the warm does
+        # not need the ingest WRITE lock at all since it reads and builds. Recorded here so the next
+        # person to measure this does not re-derive it from the comment that used to be above.
+        #
         # Fail-soft, like the cleanup above: a warm that cannot be built is a slow next request,
         # never a broken poll loop.
         def _warm_log(event, **fields):
