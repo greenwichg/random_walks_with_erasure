@@ -28,8 +28,16 @@ whose cadence is not. In rank order: the **age-based retention pass** loads the 
 into Python (90 s and **+5.6 GB of RSS at 1 M rows** — it exhausts a 4 GiB box at roughly
 730 k); **`corpus.tier_of` is linear in the number of configured sources** (4.1 ms *per article* at
 50 k, i.e. ~4,000× slower than it needs to be); and **three of the five bounded prunes full-scan
-their table** because the column they filter on has no index. All three are fixable inside SQLite,
-none requires a substrate migration, and none is visible today because retention is switched off.
+their table** because the column they filter on has no index. All three are fixable inside SQLite
+and none requires a substrate migration.
+
+> **Correction, and it changes the urgency.** The first version of this document said "none of it is
+> visible today because retention is switched off". **That was wrong** — I read the commented
+> defaults in `deploy/.env.production.example` and the compose fallback (`:-0`) instead of the live
+> value. Production has `RWE_RETENTION_MAX_COUNT=150000` and the catalogue is at **150,076 rows**:
+> the cap is not just on, it has **just crossed**, which switches `run_retention` out of its cheap
+> pre-gate and into the full whole-catalogue Python planner on every maintenance pass. §2.10 has the
+> measurement. S1 is not a future risk; it is the current state of the box.
 
 ---
 
@@ -83,9 +91,10 @@ target, not a single-host catalogue.
 | 1,000,000 | 2,473.4 MB | 2,473.4 | 19% |
 
 **Growth is linear and the constant is stable from 100 k rows up.** The harness's 2,473 B/article is
-below production's measured **3,078 B** because the synthetic rows carry no images and no body; the
-gap is content, not structure, so **3,078 B stays the projection constant** and 2,473 B is what a
-body-free Tier B / shadow row costs.
+below production's, because the synthetic rows carry no images, no body, and none of the enrichment
+side tables. **The projection constant is production's own: 3,912 B/article, measured on the live
+database in §2.11** — not the 3,078 B this document originally took from `CAPACITY_AND_COST.md`,
+which predates the entity enricher. 2,473 B is what a bare, body-free Tier B / shadow row costs.
 
 Nine indexes cost **18–19%** of the file, and that share is flat across the ladder, so indexes do not
 become disproportionate with size. But the *attribution* is the finding — from the `dbstat` virtual
@@ -103,11 +112,11 @@ table at the 1 M rung:
 | `ix_feed_publisher` / `ix_feed_publisher_lower` | 30.9 MB each | 2.5% |
 | `ix_feed_category` / `ix_feed_lean` / `ix_feed_country` | 19.5 / 10.3 / 10.3 MB | 1.6% |
 
-**The score cache is 30.6% of the database** (table + its primary-key index), and it is a *pure
-cache* — `ingest.score_with_cache` re-derives an entry deterministically. Its retention default is
-30 days, and §2.8 shows the column its prune filters on has no index. At 50,000 sources that makes
-it the largest single storage lever after the catalogue horizon itself: **~30% of the volume, for
-data the product can regenerate.**
+**The score cache is 30.6% of the database here and 25.5% in production** (table + its primary-key
+index), and it is a *pure cache* — `ingest.score_with_cache` re-derives an entry deterministically.
+Its retention default is 30 days, and §2.8 shows the column its prune filters on has no index. At
+50,000 sources that makes it the largest single storage lever after the catalogue horizon itself:
+**a quarter of the volume, for data the product can regenerate.**
 
 `ix_feed_source_feed` is the largest secondary index because `source_feed` stores a full feed URL —
 worth noting, not worth acting on at 1.8%.
@@ -342,18 +351,93 @@ once — **the first time a horizon is shortened on an already-grown catalogue**
 At 18.7 GB that is ~100 seconds of exclusive lock and 18.7 GB of headroom, and it belongs in the
 volume sizing rather than in a surprise.
 
+### 2.10 Production, measured — and it is already in the expensive state
+
+`storage_lifecycle.py --stats` and the `dbstat` vtable against the live database, 2026-08-27:
+
+| | value |
+|---|---:|
+| `feed_articles` | **150,076** rows |
+| `RWE_RETENTION_MAX_COUNT` | **150,000** |
+| `scored_articles` | 163,146 rows (1.087 per article) |
+| `article_entities` | — (24.9 MB table + 17.9 MB index) |
+| `article_event_locations` | 32,067 rows |
+| `dbBytes` (file + WAL + shm) | **587.2 MB** |
+| volume | 29 GB, **22 GB used, 6.3 GB free — 78%** |
+| `/opt/ih/data` | 3.6 GB |
+
+**The catalogue is 76 rows over its cap, and that is the worst place it can be.** `run_retention`'s
+count-only fast path is `if catalog <= max_count: skip`. At 150,076 > 150,000 it does not skip — so
+every maintenance pass now runs the full planner: `list_feed_articles(limit=10_000_000)` materialises
+**150,076 rows** as Python dicts, sorts them, runs up to four repair passes and a `corpus_metrics`
+pass over the kept set — **to delete about 76 rows** — and does it holding the global ingest lock.
+
+Interpolating §2.5's curve (1,271 ms at 25 k, 5,331 ms at 100 k) puts that at **~8–9 seconds and
+~840 MB of RSS per pass**, on a 2-vCPU / 4 GiB box, every maintenance window. And it does not
+self-correct: ingestion keeps the catalogue pinned just above the cap, so the cheap pre-gate can
+never re-engage.
+
+*Estimated, not measured on the box* — the confirming number is in the logs, and §"What to check
+next" says how to read it.
+
+### 2.11 Production's storage constants, which are higher than the ones this document projected from
+
+| quantity | this document assumed | production says |
+|---|---:|---:|
+| all-in bytes per article | 3,078 B (`CAPACITY_AND_COST`, 2026-07-27) | **3,912 B** |
+| daily growth at 50 k sources | 770 MB/day | **978 MB/day** |
+| OS + Docker overhead on the volume | 10 GB | **18.4 GB** (22 GB used − 3.6 GB of data) |
+| score cache share of the database | 30.6% (bench) | **25.5%** |
+
+Attribution per article, from `dbstat`:
+
+| object | B/article | note |
+|---|---:|---|
+| `feed_articles` + primary key | 2,121.6 | |
+| score cache + primary key | 999.4 | 919.4 B/row × 1.087 rows per article |
+| **`article_entities` + its index** | **285.2** | **7.3% of the database — see §2.12** |
+| visible `feed_articles` secondary indexes | 137.3 | `fetched_at`, `published_at`, `source_feed` |
+| `article_event_locations` + its index | 75.3 | |
+
+**Why the constant rose.** `CAPACITY_AND_COST` measured 3,078 B on 2026-07-27. `article_entities` is
+populated by the GDELT entity enricher, whose X5b adoption is dated **2026-08-16** — after that
+measurement. The old constant is not wrong; it is pre-entities. **Every projection in §5 uses
+3,912 B.**
+
+### 2.12 `article_entities` has no orphan reaper — and retention is actively creating orphans
+
+`article_event_locations` is a side table keyed by canonical URL with no foreign key, so catalogue
+retention would strand its rows forever — which is exactly why `prune_orphan_event_locations` exists
+and why `run_cleanup` runs it second, right after the catalogue prune that creates the orphans.
+
+**`article_entities` is the same shape and has no equivalent.** The only `delete(ArticleEntity)` in
+the codebase is inside `replace_article_entities`, scoped to one `canonical_url` and one `source` —
+a per-article replace, not a reaper. It is also absent from `retention_policy.PROTECTED_TABLES`, so
+it is not deliberately protected either: it was simply never given a lifecycle.
+
+That would be a slow leak on its own. §2.10 makes it a live one: the count cap is binding, so
+`feed_articles` rows are being deleted continuously, and **each deletion strands that article's
+entity rows permanently.** At 285.2 B/article the table is already 7.3% of the database, and the
+orphaned fraction only grows.
+
+The fix is the one that already exists one table over: a bounded `prune_orphan_article_entities`
+beside `prune_orphan_event_locations`, in the same step of the same pass. `ix_article_entities_
+canonical_url` already indexes the join column, so the plan is the same covering-index search that
+makes the event-location reaper cheap.
+
 ---
 
 ## 3 · Ranked bottlenecks
 
 | # | Bottleneck | Binds at | Shape | Fix class |
 |---|---|---|---|---|
-| **S1** | Age-retention loads the whole catalogue (time **and** RSS), under the ingest lock | **~730 k rows** on a 4 GiB box | O(n) memory, supra-linear time | code — make it SQL-shaped |
+| **S1** | Retention loads the whole catalogue (time **and** RSS), under the ingest lock | **binding NOW** (§2.10) — and OOMs a 4 GiB box at ~730 k rows | O(n) memory, supra-linear time | code — make it SQL-shaped |
 | **S2** | `corpus.tier_of` is O(configured sources) per article | **any** per-tier age policy, today | O(sources × articles) | code — O(labels) suffix lookup |
 | **S3** | Hourly full-file backup + `integrity_check` + gzip | ~5 GB database | 25.5 s/GB, cadence fixed | ops — cadence + compressor |
 | **S4** | A backup pins the WAL for its whole duration, so WAL ∝ duration × write rate | scales with backup time, not catalogue size | mechanism measured; magnitude at production write rates is small | ops — same fix as S3, plus S9 |
 | **S5** | Three prune columns unindexed (`scored_articles` worst) | ~1 M rows in the score cache | full scan per pass — **117.6 ms of a 235.8 ms pass at 400 k** | schema — three indexes |
-| **S5b** | The score cache is **30.6%** of the database, for regenerable data on a 30-day default | now | linear | ops — one env var |
+| **S5b** | The score cache is **25.5%** of the database (production), for regenerable data on a 30-day default | now | linear | ops — one env var |
+| **S12** | `article_entities` has **no orphan reaper**, and the binding count cap is stranding rows every pass | **now** | monotonic leak, 285 B/article | code — one bounded prune beside the event-location reaper |
 | **S6** | Volume capacity | depends entirely on the retention horizon | linear | ops — size the volume |
 | **S7** | `storage_stats()` — 11 full COUNTs on every cleanup pass | ~5 M rows | linear | code — sample, don't count |
 | **S8** | Tier lists live in environment variables | ~30 k sources (1 MB of a 2 MB `ARG_MAX`) | linear | code — move to a table |
@@ -371,7 +455,7 @@ a problem that does not exist.
 
 ## 4 · The smallest architecture that clears them
 
-**Stay on SQLite.** Nothing measured here is a substrate problem. The design is four code changes,
+**Stay on SQLite.** Nothing measured here is a substrate problem. The design is five code changes,
 one schema change, and a handful of settings — no migration, no second database, no new service on
 the critical path.
 
@@ -531,6 +615,20 @@ Small, and named separately so they are not lost inside D5:
   shortened, the file does not shrink until a `VACUUM` that holds an exclusive lock and needs one
   extra file's worth of disk. Schedule it beside the horizon change; do not discover it.
 
+### D7 — An orphan reaper for `article_entities`
+
+The one change on this list that is not about 50,000 sources: it is about the box today. §2.12 —
+catalogue retention deletes `feed_articles` rows and nothing ever deletes the `article_entities`
+rows that pointed at them, and the count cap has been binding, so the leak is running.
+
+`prune_orphan_event_locations` is the template, one table over and in the same step of the same
+pass: a bounded `SELECT id … WHERE NOT EXISTS (…) LIMIT :batch` followed by a `DELETE … WHERE id IN
+(…)`, with `ix_article_entities_canonical_url` giving the same covering-index plan.
+
+Two properties to keep from the original: it must be **harmless when retention is off** (no pruned
+articles means no orphans, and the query returns nothing), and it must run **after** the catalogue
+prune, which is the thing that creates the orphans.
+
 ### D6 — Tier assignment moves out of the environment
 
 `RWE_CORPUS_TIER_B` and `RWE_CORPUS_SHADOW` are comma-separated strings. 50,000 hosts is **999,999
@@ -548,35 +646,45 @@ listed here so the tier lane's storage is decided deliberately rather than disco
 ## 5 · Sizing: the horizon is the design variable
 
 Everything downstream of retention is a function of one number nobody has chosen yet: **how long the
-archive keeps a Tier B / shadow article.** At 50,000 sources and 3,078 B/article:
+archive keeps a Tier B / shadow article.** At 50,000 sources and production's measured
+**3,912 B/article** (§2.11):
 
 ```
-250,000 articles/day × 3,078 B  =  770 MB/day
+250,000 articles/day × 3,912 B  =  978 MB/day
 ```
 
-Volume required ≈ OS and images (10 GB) + database + 1 GB of WAL headroom + one transient
-uncompressed snapshot + 23 tiered local backups at 7.8× compression. The transient column does
-double duty: it is the uncompressed snapshot a backup writes before gzip *and* the free space a
-`VACUUM` needs (§2.9), and the two never happen at the same moment.
+Volume required ≈ OS and images + database + 1 GB of WAL headroom + one transient uncompressed
+snapshot + 23 tiered local backups at 7.8× compression. The transient column does double duty: it is
+the uncompressed snapshot a backup writes before gzip *and* the free space a `VACUUM` needs (§2.9),
+and the two never happen at the same moment.
+
+**The fixed term is production's, not an estimate.** The box reports 22 GB used with 3.6 GB in
+`/opt/ih/data` — so OS, Docker images and layers are **18.4 GB**, not the 10 GB this table first
+assumed.
 
 | horizon | catalogue rows | database | local backups | transient | **volume needed** | gp3 $/mo |
 |---:|---:|---:|---:|---:|---:|---:|
-| 7 days | 1.75 M | 5.4 GB | 15.9 GB | 5.4 GB | **37.7 GB** → 50 GB | $4.00 |
-| 14 days | 3.5 M | 10.8 GB | 31.8 GB | 10.8 GB | **64.4 GB** → 80 GB | $6.40 |
-| 30 days | 7.5 M | 23.1 GB | 68.1 GB | 23.1 GB | **125.3 GB** → 150 GB | $12.00 |
-| 90 days | 22.5 M | 69.3 GB | 204.3 GB | 69.3 GB | **353.9 GB** → 400 GB | $32.00 |
+| 7 days | 1.75 M | 6.8 GB | 20.2 GB | 6.8 GB | **53.2 GB** → 64 GB | $5.12 |
+| 14 days | 3.5 M | 13.7 GB | 40.4 GB | 13.7 GB | **87.2 GB** → 100 GB | $8.00 |
+| 30 days | 7.5 M | 29.3 GB | 86.4 GB | 29.3 GB | **164.4 GB** → 200 GB | $16.00 |
+| 90 days | 22.5 M | 88.0 GB | 259.5 GB | 88.0 GB | **454.9 GB** → 500 GB | $40.00 |
 
-**Disk is cheap and is not the constraint** — a 30-day archive at 50,000 sources costs **$12/month**
-of gp3. What the horizon really buys and spends is the two things above it: the retention pass
-(D1 makes it indexed, so it stops being the limit) and the backup CPU (D5, and §4's table shows
-23 GB hourly is 40% of the sustainable vCPU).
+**Disk is still cheap and still not the constraint** — a 30-day archive at 50,000 sources costs
+**$16/month** of gp3 — but the correction is worth naming: at production's real constant and real OS
+overhead, every row above is **30–40% larger** than the first version of this table said. What the
+horizon really buys and spends is the two things above it: the retention pass (D1 makes it indexed,
+so it stops being the limit) and the backup CPU (D5).
+
+**And the box has no room to wait.** The volume is at **78% used with 6.3 GB free** today, at a
+150,000-row catalogue. That is already past the 70% alert line A5 proposes, and every horizon in the
+table needs a bigger volume before it can be chosen.
 
 The table prices a single horizon applied to everything. Two refinements move it, both downward:
 
-* **The score cache has its own horizon.** Of the 3,078 B/article, ~757 B is the `scored_articles`
-  row and ~2,321 B is the catalogue row plus its indexes (§2.1). So
-  `DB ≈ H_catalogue × 0.580 GB + H_cache × 0.189 GB` per day-of-horizon. A 30-day catalogue with a
-  7-day score cache is **18.7 GB, not 23.1** — D3's env var alone.
+* **The score cache has its own horizon.** Of the 3,912 B/article, ~999 B is the `scored_articles`
+  row (919.4 B × 1.087 rows per article) and ~2,913 B is everything else (§2.11). So
+  `DB ≈ H_catalogue × 0.728 GB + H_cache × 0.250 GB` per day-of-horizon. A 30-day catalogue with a
+  7-day score cache is **23.6 GB, not 29.3** — D3's env var alone.
 * **Tier B and shadow can have different horizons**, which is exactly what
   `RWE_RETENTION_MAX_AGE_DAYS_TIER_B` / `_SHADOW` were built for in M2.
 
@@ -584,11 +692,10 @@ The table prices a single horizon applied to everything. Two refinements move it
 existing 83,000-row budget.** Shadow only has to outlive M8's evaluation window (~14 days); Tier B
 carries the searchability contract; Tier A is already bounded by design. The resulting size depends
 on how much of the 50,000 has been promoted out of shadow, which nobody knows yet — so it is a
-**bracket, not a point**: from **9.4 GB** of database (everything still in shadow at 14 days) to
-**18.7 GB** (everything promoted to Tier B at 30 days) — which by the same formula as the table is a
-**58 GB** volume at the low end and **104 GB** at the high end. **Provision 120 GB** ($9.60/month)
-and the horizon stays a product decision rather than a capacity one. It is priced here, not made
-here.
+**bracket, not a point**: from **11.9 GB** of database (everything still in shadow at 14 days) to
+**23.6 GB** (everything promoted to Tier B at 30 days) — which by the same formula as the table is a
+**78 GB** volume at the low end and **136 GB** at the high end. **Provision 150 GB** ($12/month) and
+the horizon stays a product decision rather than a capacity one. It is priced here, not made here.
 
 ---
 
@@ -602,7 +709,7 @@ the next reader does not re-solve them:
 | 🔴 "EBS 30 GiB exhausts in ~25 days from 48 hourly full-copy backups" | **Closed.** `BACKUP_KEEP=60` is now a runaway ceiling only; real retention is tiered in `deploy/ops/prune-backups.sh` (12h/7d/4w ≈ 23 files) and stops growing with time. |
 | 🔴 "S3 backups grow without bound — no lifecycle rules" | **Closed.** `terraform/s3.tf` now has `aws_s3_bucket_lifecycle_configuration.ih_backups`: GLACIER_IR at 7 d, DEEP_ARCHIVE at 90 d, expiry at 365 d, noncurrent expiry at 30 d, abort-incomplete-multipart at 7 d. |
 | "Backups are full **uncompressed** copies" (also in `STORAGE_LIFECYCLE.md` §3) | **Stale.** `store.backup_compression()` defaults **on**; measured **7.8–8.6×**. Both documents should be corrected. |
-| 🟠 "Catalog retention is OFF" | **Still true**, and now the interesting part: §2.5 says turning the *age* form on is what breaks. D1 is the prerequisite. |
+| 🟠 "Catalog retention is OFF" | **No longer true, and I got this wrong in the first draft.** Production runs `RWE_RETENTION_MAX_COUNT=150000` — recommendation #1 of that document was applied — and the catalogue is at **150,076 rows**, i.e. *just over*, which is the one place the cheap pre-gate stops applying. §2.10. |
 | 🟢 "SQLite write concurrency — not on this trajectory" | **Confirmed, with numbers** — §2.2. |
 
 One thing checked and found **not** to be a defect: `RWE_RETENTION_*` is declared on the `api`
@@ -625,9 +732,9 @@ is visibly distinct from one that is aspirational.
 |---|---|---|---|---|
 | **A1** | **Storage growth** | ≤ **3,300 B/article** all-in, index share ≤ **25%**, both measured over ≥ 100 k rows | 2,473–2,492 B, 18–19% ✅ | — (already met) |
 | **A2** | **Write throughput** | ≥ **250 articles/s** sustained through the real `ingest_entries` at **16** concurrent writers, p95 ≤ **250 ms**, **zero** `database is locked` | 284.8/s, p95 172.1 ms, 0 errors, at 1 M rows ✅ | — (already met) |
-| **A3** | **Retention / cleanup** | a steady-state pass that deletes nothing completes in ≤ **2,000 ms** with an RSS delta ≤ **150 MB**, at the design size | **89,765 ms / +5,582 MB at 1 M rows** ❌ — D1's replacement measures **5.4 ms** on the same data | D1, D2, D3, D4 |
+| **A3** | **Retention / cleanup** | a steady-state pass that deletes nothing completes in ≤ **2,000 ms** with an RSS delta ≤ **150 MB**, at the design size | **89,765 ms / +5,582 MB at 1 M rows** ❌; production is estimated at **~8–9 s / ~840 MB per pass right now** (§2.10, unconfirmed on the box) — D1's replacement measures **5.4 ms** on the same data | D1, D2, D3, D4 |
 | **A4** | **Backup / restore** | full backup + integrity + compress ≤ **15 min**, and ≤ **5%** of the 0.40 sustainable vCPU averaged over an hour; verified restore ≤ **30 min**; WAL forced by one backup ≤ **1 GB** | 15.0 s/GB → **4.7 min** at 18.7 GB ✅; **19.5% of vCPU** if hourly ❌; restore 19.9 s/GB → 6.2 min ✅; WAL 478 MB at 2.5 GB ✅, unmeasured at 18.7 GB ⚠ | D5 |
-| **A5** | **Database size** | database ≤ **60%** of the volume, local backups ≤ **25%**, ≥ **15%** free at all times; alert at 70% used | 0.5 GB of 30 GB ✅ | §5 sizing (120 GB) |
+| **A5** | **Database size** | database ≤ **60%** of the volume, local backups ≤ **25%**, ≥ **15%** free at all times; alert at 70% used | **78% used, 6.3 GB free** on the 29 GB volume ❌ — already past the alert line | §5 sizing (150 GB) |
 | **A6** | **Memory / disk** | no single pass exceeds **50%** of box RAM; steady-state ingest RSS ≤ **1 GiB** | the age pass needs **5.58 KB per catalogue row** — 50% of a 4 GiB box at **~366 k rows** ❌ | D1 |
 | **A7** | **Concurrent ingestion** | **16** pool workers with zero lock errors, and post-cycle lock occupancy ≤ **25%** of wall time | 0 lock errors at every rung ✅; occupancy 12.8% at 13 adapters ✅ — but **never measured with retention on**, and retention is what holds the lock ⚠ | D1 |
 
@@ -656,22 +763,68 @@ own right, and it is short:
 | step | change | why here | risk |
 |---|---|---|---|
 | 1 | **D2** — `_host_match` becomes O(labels) | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
-| 2 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
-| 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
-| 4 | **D4** — `storage_stats` off the cleanup path | trivially safe once 3 lands, and 94.7 ms of a 235.8 ms pass | lowest |
-| 5 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
-| 6 | **§5** — choose the horizons, resize the volume, raise the batch limit for the drain, plan the `VACUUM` | needs 1–5 in place, and it is the step that actually changes production data | the only one with a maintenance window — and the drain takes days at the default batch limit (§4 D3) |
-| 7 | **D6** — tier lists out of the environment | binds at ~30 k sources; nothing before it needs it | medium, and deferrable |
+| 2 | **D7** — an orphan reaper for `article_entities` | the count cap is binding **now**, so every pass strands more rows; the reaper is a copy of the one already beside it for `article_event_locations` | lowest — bounded delete of rows nothing references |
+| 3 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
+| 4 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
+| 5 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |
+| 6 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
+| 7 | **§5** — choose the horizons, resize the volume, raise the batch limit for the drain, plan the `VACUUM` | needs 1–6 in place, and it is the step that actually changes production data | the only one with a maintenance window — and the drain takes days at the default batch limit (§4 D3) |
+| 8 | **D6** — tier lists out of the environment | binds at ~30 k sources; nothing before it needs it | medium, and deferrable |
 
-**Steps 1–4 are all code changes that can be validated entirely by `storage_bench.py` against a
+**Steps 1–5 are all code changes that can be validated entirely by `storage_bench.py` against a
 synthetic catalogue, with no production data and no source expansion** — which is the property that
 makes them safe to do next.
 
 ---
 
-## 9 · What this milestone does not settle
+## 9 · What to check on the box next
 
-* **Nothing is implemented.** This is the audit and the design. D1–D6 are proposals with measured
+Three read-only checks. The first two turn §2.10 and §2.12 from estimates into measurements; the
+third settles a question this audit could not.
+
+**1 — Is the retention pass actually costing what §2.10 estimates?** The poller already logs it.
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+dc logs --since 6h api 2>/dev/null | grep -o '"cleanupMs": [0-9.]*' | tail -20
+dc logs --since 6h api 2>/dev/null | grep '"event": "feed_retention"' | tail -5
+```
+
+`cleanupMs` is the whole `run_cleanup` pass, inside the lock. `feed_retention` carries `pruned`,
+`kept` and `catalog`. If `pruned` is a double-digit number and `cleanupMs` is in the thousands, that
+is the state §2.10 describes, measured rather than interpolated.
+
+**2 — How many `article_entities` rows are already orphaned?**
+
+```bash
+dc exec -T api python -c "import sqlite3;c=sqlite3.connect('/app/data/ih_beta.db');\
+print('entities', c.execute('select count(*) from article_entities').fetchone()[0]);\
+print('orphans ', c.execute('select count(*) from article_entities e where not exists \
+(select 1 from feed_articles f where f.canonical_url=e.canonical_url)').fetchone()[0])"
+```
+
+Read-only, and index-backed on both sides. A large orphan count is the direct evidence for §2.12.
+
+**3 — What is actually in the backups directory?** `du -sh /opt/ih/data/backups` returned no line
+during this audit, which for a root-owned `0700` directory is what an unprivileged `du` looks like —
+`db_backup.py` already carries a comment about exactly this permissions trap biting the off-host
+sync. But "probably permissions" is not a check:
+
+```bash
+sudo du -sh /opt/ih/data/* | sort -h
+sudo ls -1 /opt/ih/data/backups 2>/dev/null | wc -l
+sudo ls -1t /opt/ih/data/backups 2>/dev/null | head -3
+```
+
+`/opt/ih/data` is 3.6 GB against a 587 MB database, so ~3 GB is unaccounted for and backups are the
+obvious candidate — but the count and the newest filename are what say whether the tiered retention
+and the off-host sync are running, and neither can be inferred from here.
+
+---
+
+## 10 · What this milestone does not settle
+
+* **Nothing is implemented.** This is the audit and the design. D1–D7 are proposals with measured
   justifications, not landed changes.
 * **The box.** Every fix here keeps a 50k-source catalogue inside SQLite; none of them makes a
   `t3.medium` a 50k-source machine. `SCALE_ROADMAP.md` already says the hardware is not priced, and
