@@ -1594,6 +1594,50 @@ class Store:
                      "scored": {"outlet": r[6], "lean": r[7]}}
                     for r in s.execute(sql)]
 
+    def list_discovery_rows(self, *, exclude_publishers=None) -> list:
+        """The whole catalogue as the narrow projection **source discovery** reads (M10).
+
+        Stage 1 used to call `story_service._fetch`, which is the *clustering* candidate set. That
+        borrowed two things: the tier exclusions, which are right for discovery — a shadow or Tier B
+        host is one we already found — and `scan_days()`, the **6-day clustering window**, which is
+        not. Measured on production 2026-08-27:
+
+            through `_fetch`      28,217 articles   4,238 hosts     751 above the floor
+            the whole catalogue  150,076 articles   9,397 hosts   1,525 above the floor
+
+        A host publishing twice a week has ~1.7 articles in six days and ~9 across the catalogue's
+        span, so it never reached the 10-article floor however long we carried it — and the long tail
+        of local and regional publishers that a 50,000-source corpus is made of publishes at exactly
+        that rate. **Two thirds of the hosts we already ingest from were invisible to discovery
+        purely because their articles were older than six days.**
+
+        Narrow for the same reason `list_retention_rows` is: `source_discovery.candidates` reads five
+        fields — `canonicalUrl`/`url` for the host, `publisher`, `language`, `publishedAt` — plus
+        `sourceType`, which `candidates` itself never touches but the audit runner's
+        language-coverage table groups by. Dropping it did not fail; it printed `(none)` for every
+        row, which is how a projection quietly deletes a report. And
+        `list_feed_articles` would hand back ~25 plus a JSON parse per row, which at 150,000 rows
+        measured 7.77 s and 888.9 MB against 0.54 s and 46.9 MB.
+
+        ``exclude_publishers`` takes `corpus.sql_exclusions()` — the same set and the same NULL-safe
+        shape `search_feed_articles` uses, so a row with no publisher is kept rather than silently
+        dropped by `lower(NULL) NOT IN (…)` evaluating to NULL.
+
+        **These rows are for discovery.** They carry no `scored`, so they cannot be handed to the
+        tier selector or the planner; that is deliberate, and the same rule as the retention
+        projection.
+        """
+        stmt = select(FeedArticle.canonical_url, FeedArticle.url, FeedArticle.publisher,
+                      FeedArticle.language, FeedArticle.published_at, FeedArticle.source_type)
+        if exclude_publishers:
+            stmt = stmt.where(or_(
+                FeedArticle.publisher.is_(None),
+                func.lower(FeedArticle.publisher).notin_(sorted(exclude_publishers))))
+        with self.session() as s:
+            return [{"canonicalUrl": r[0], "url": r[1], "publisher": r[2] or "",
+                     "language": r[3] or "", "publishedAt": r[4], "sourceType": r[5]}
+                    for r in s.execute(stmt)]
+
     def delete_feed_articles(self, canonical_urls) -> int:
         """Delete FeedArticle rows by canonical URL (retention). Chunked to stay under SQLite's bound
         parameter limit. Returns the number deleted. Touches ONLY the ``feed_articles`` table — reads,

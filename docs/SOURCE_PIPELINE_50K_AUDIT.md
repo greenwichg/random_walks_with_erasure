@@ -145,7 +145,7 @@ already enforced.**
 
 ## 5 · The next milestone
 
-### M10 — Discovery reads the catalogue, not the clustering window
+### M10 — Discovery reads the catalogue, not the clustering window  ✅ **BUILT**
 
 **The defect, in one line.** `audit_source_discovery.py:74` is
 
@@ -246,3 +246,19 @@ M10 is worth building if a discovery run over the full catalogue reports **≥ 8
 is the number this section predicts, it is checkable by re-running `audit_source_discovery.py` after
 the change with no network involved, and if it comes back near 177 the change did not do what this
 audit says it does.
+
+**Built, not yet verified on production.** `store.list_discovery_rows()` is the narrow projection
+(six fields: the host pair, publisher, language, publishedAt, and sourceType for the runner's
+language table); `audit_source_discovery.py` calls it instead of `story_service._fetch`, keeping the
+tier exclusions and dropping the window. `--window-days 6` reproduces the old behaviour so the change
+stays auditable against what it replaced.
+
+The bar is checked by re-running Stage 1 — offline, no network, no writes:
+
+```bash
+cd /opt/ih && source deploy/ops/_compose.sh
+dc exec -T api python examples/audit_source_discovery.py 2>&1 | head -8
+dc exec -T api python examples/audit_source_discovery.py --window-days 6 2>&1 | head -8
+```
+
+The second command must still report ~177, or the two runs are not measuring what they claim.

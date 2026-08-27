@@ -35,7 +35,9 @@ from __future__ import annotations
 import argparse
 import os
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 
+import corpus
 import crawler
 import outlet_registry
 import source_discovery as sd
@@ -67,11 +69,37 @@ def main(argv=None) -> int:
                          "publishers should leave a record of exactly what it asked and was told.")
     ap.add_argument("--interval", type=float, default=crawler.DEFAULT_MIN_INTERVAL,
                     help="seconds between requests to the same host (default: %(default)s)")
+    ap.add_argument("--window-days", type=float, default=0.0,
+                    help="observe only the last N days instead of the whole retained catalogue. "
+                         "0 (the default) is the catalogue. This exists to reproduce the pre-M10 "
+                         "behaviour — `--window-days 6` is what Stage 1 used to see — not because "
+                         "a narrow window is ever what discovery wants.")
     args = ap.parse_args(argv)
 
     st = store_mod.Store(args.db)
     reg = outlet_registry.default_registry()
-    rows = story_service._fetch(st)
+    # THE WHOLE RETAINED CATALOGUE, not the clustering window (M10).
+    #
+    # This was `story_service._fetch(st)` — the CLUSTERING candidate set. It borrowed two things
+    # from that function. The tier exclusions are right and are kept: a shadow or Tier B host is
+    # one discovery already found, and re-reporting it is noise. `scan_days()` is not right, and it
+    # was the whole constraint: it defaults to `clustering.DEFAULT_WINDOW_DAYS`, six days.
+    #
+    # Measured on production 2026-08-27, same database, same moment:
+    #
+    #     through `_fetch`      28,217 articles   4,238 hosts     751 above the floor   177 candidates
+    #     the whole catalogue  150,076 articles   9,397 hosts   1,525 above the floor  ~950 candidates
+    #
+    # A host publishing twice a week has ~1.7 articles in six days. It could never reach the
+    # 10-article floor, however many months we carried it — and that is the publication rate of the
+    # local and regional long tail a 50,000-source corpus is made of. The floor was never the
+    # problem; the window was.
+    if args.window_days > 0:
+        rows = story_service._fetch(
+            st, date_from=(datetime.now(timezone.utc)
+                           - timedelta(days=args.window_days)).isoformat())
+    else:
+        rows = st.list_discovery_rows(exclude_publishers=corpus.sql_exclusions())
 
     cands = sd.candidates(rows, reg, floor=args.floor)
     work = sd.worklist(cands)
