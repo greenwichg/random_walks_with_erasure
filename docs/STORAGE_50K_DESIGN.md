@@ -36,8 +36,13 @@ and none requires a substrate migration.
 > defaults in `deploy/.env.production.example` and the compose fallback (`:-0`) instead of the live
 > value. Production has `RWE_RETENTION_MAX_COUNT=150000` and the catalogue is at **150,076 rows**:
 > the cap is not just on, it has **just crossed**, which switches `run_retention` out of its cheap
-> pre-gate and into the full whole-catalogue Python planner on every maintenance pass. §2.10 has the
-> measurement. S1 is not a future risk; it is the current state of the box.
+> pre-gate and into the full whole-catalogue Python planner on every maintenance pass. The poller's
+> own logs measure it at **11–21 s per pass** — 1.3× to 2.5× worse than I then estimated — which at a
+> 600 s maintenance window is **1.9–3.5% lock occupancy**: pure waste, and not an outage. §2.10.
+>
+> **A second correction, this one against me.** I also predicted `article_entities` was leaking
+> orphans on every prune. Production measured **97 orphans of 134,088 rows — 0.072%**. The missing
+> reaper is real; the leak I sized it against is not. §2.12.
 
 ---
 
@@ -372,13 +377,34 @@ every maintenance pass now runs the full planner: `list_feed_articles(limit=10_0
 **150,076 rows** as Python dicts, sorts them, runs up to four repair passes and a `corpus_metrics`
 pass over the kept set — **to delete about 76 rows** — and does it holding the global ingest lock.
 
-Interpolating §2.5's curve (1,271 ms at 25 k, 5,331 ms at 100 k) puts that at **~8–9 seconds and
-~840 MB of RSS per pass**, on a 2-vCPU / 4 GiB box, every maintenance window. And it does not
-self-correct: ingestion keeps the catalogue pinned just above the cap, so the cheap pre-gate can
-never re-engage.
+**Measured on the box, and my estimate was low.** Interpolating §2.5's curve put this at ~8–9 s. The
+poller's own `post_cycle` log over a 6-hour window says:
 
-*Estimated, not measured on the box* — the confirming number is in the logs, and §"What to check
-next" says how to read it.
+```
+"cleanupMs": 11144.2   "cleanupMs": 11190.1   "cleanupMs": 11541.9   "cleanupMs": 20889.8
+```
+
+**11.1–20.9 seconds per maintenance pass — 1.3× to 2.5× my estimate.** The intervening `0.0` values
+are the M6.1 coalescing working as designed: only the pass that is *due* pays.
+
+The `feed_retention` events confirm the mechanism exactly:
+
+```
+{"event": "feed_retention", "pruned": 104, "kept": 150000, "catalog": 150000, "publishers": 11097, …}
+{"event": "feed_retention", "pruned": 140, "kept": 150000, "catalog": 150000, …}
+{"event": "feed_retention", "pruned":  58, "kept": 150000, "catalog": 150000, …}
+```
+
+The catalogue is held at exactly the cap; each pass loads 150,000 rows to delete **58–140 of them**.
+
+**And here is the honest size of it today: at a 600 s maintenance window, 11–21 s is 1.9–3.5% lock
+occupancy.** That is real, it is pure waste, and it is not an outage. The reason S1 is ranked first
+is not today's number — it is the shape behind it: supra-linear in catalogue size, ~5.58 KB of RSS
+per row, and an OOM on this box at ~730 k rows. What production confirms is that the expensive path
+is *live*, not that it is currently hurting.
+
+*Still unconfirmed:* the ~840 MB RSS per pass. `cleanupMs` proves the time; nothing in the logs
+proves the memory.
 
 ### 2.11 Production's storage constants, which are higher than the ones this document projected from
 
@@ -415,15 +441,30 @@ the codebase is inside `replace_article_entities`, scoped to one `canonical_url`
 a per-article replace, not a reaper. It is also absent from `retention_policy.PROTECTED_TABLES`, so
 it is not deliberately protected either: it was simply never given a lifecycle.
 
-That would be a slow leak on its own. §2.10 makes it a live one: the count cap is binding, so
-`feed_articles` rows are being deleted continuously, and **each deletion strands that article's
-entity rows permanently.** At 285.2 B/article the table is already 7.3% of the database, and the
-orphaned fraction only grows.
+> **I predicted this would be a live leak, and production says it is not. Measured:**
+>
+> ```
+> entities 134088
+> orphans      97
+> ```
+>
+> **97 orphaned rows out of 134,088 — 0.072%, about 28 KB.** I sized this defect against the whole
+> 42.8 MB the table occupies and called it "a monotonic leak, growing every pass". That was wrong by
+> roughly three orders of magnitude, and it was wrong for a reason I should have thought through:
+> retention prunes the **oldest articles by `published_at`**, while entity rows are written by the
+> GDELT enricher over a much narrower and more recent slice. Most pruned articles never had an entity
+> row to strand.
+>
+> What survives is the *class*, not the *size*: there genuinely is no reaper, rows genuinely do
+> strand — 97 of them prove the path is real — and nothing bounds it if entity coverage ever widens
+> or the catalogue horizon shortens. It is a cheap gap to close and a bad one to leave open. It is
+> not urgent, and **it is no longer step 2 in §8.**
 
 The fix is the one that already exists one table over: a bounded `prune_orphan_article_entities`
-beside `prune_orphan_event_locations`, in the same step of the same pass. `ix_article_entities_
-canonical_url` already indexes the join column, so the plan is the same covering-index search that
-makes the event-location reaper cheap.
+beside `prune_orphan_event_locations`, in the same step of the same pass.
+`ix_article_entities_canonical_url` already indexes the join column, so the plan is the same
+covering-index search that makes the event-location reaper cheap — and the measurement above is what
+that reaper would delete on its first run.
 
 ---
 
@@ -431,13 +472,13 @@ makes the event-location reaper cheap.
 
 | # | Bottleneck | Binds at | Shape | Fix class |
 |---|---|---|---|---|
-| **S1** | Retention loads the whole catalogue (time **and** RSS), under the ingest lock | **binding NOW** (§2.10) — and OOMs a 4 GiB box at ~730 k rows | O(n) memory, supra-linear time | code — make it SQL-shaped |
+| **S1** | Retention loads the whole catalogue (time **and** RSS), under the ingest lock | **running NOW** at **11–21 s/pass, 1.9–3.5% lock occupancy** (§2.10); OOMs a 4 GiB box at ~730 k rows | O(n) memory, supra-linear time | code — make it SQL-shaped |
 | **S2** | `corpus.tier_of` is O(configured sources) per article | **any** per-tier age policy, today | O(sources × articles) | code — O(labels) suffix lookup |
 | **S3** | Hourly full-file backup + `integrity_check` + gzip | ~5 GB database | 25.5 s/GB, cadence fixed | ops — cadence + compressor |
 | **S4** | A backup pins the WAL for its whole duration, so WAL ∝ duration × write rate | scales with backup time, not catalogue size | mechanism measured; magnitude at production write rates is small | ops — same fix as S3, plus S9 |
 | **S5** | Three prune columns unindexed (`scored_articles` worst) | ~1 M rows in the score cache | full scan per pass — **117.6 ms of a 235.8 ms pass at 400 k** | schema — three indexes |
 | **S5b** | The score cache is **25.5%** of the database (production), for regenerable data on a 30-day default | now | linear | ops — one env var |
-| **S12** | `article_entities` has **no orphan reaper**, and the binding count cap is stranding rows every pass | **now** | monotonic leak, 285 B/article | code — one bounded prune beside the event-location reaper |
+| **S12** | `article_entities` has **no orphan reaper** | not yet — **measured at 97 orphans of 134,088 (0.072%)**; the class is real, the size is not | unbounded in principle, negligible today | code — one bounded prune beside the event-location reaper |
 | **S6** | Volume capacity | depends entirely on the retention horizon | linear | ops — size the volume |
 | **S7** | `storage_stats()` — 11 full COUNTs on every cleanup pass | ~5 M rows | linear | code — sample, don't count |
 | **S8** | Tier lists live in environment variables | ~30 k sources (1 MB of a 2 MB `ARG_MAX`) | linear | code — move to a table |
@@ -763,15 +804,15 @@ own right, and it is short:
 | step | change | why here | risk |
 |---|---|---|---|
 | 1 | **D2** — `_host_match` becomes O(labels) | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
-| 2 | **D7** — an orphan reaper for `article_entities` | the count cap is binding **now**, so every pass strands more rows; the reaper is a copy of the one already beside it for `article_event_locations` | lowest — bounded delete of rows nothing references |
-| 3 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
-| 4 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
-| 5 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |
-| 6 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
-| 7 | **§5** — choose the horizons, resize the volume, raise the batch limit for the drain, plan the `VACUUM` | needs 1–6 in place, and it is the step that actually changes production data | the only one with a maintenance window — and the drain takes days at the default batch limit (§4 D3) |
+| 2 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
+| 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
+| 4 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |
+| 5 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
+| 6 | **D7** — an orphan reaper for `article_entities` | demoted from step 2: production measured 97 orphans, not a leak. Worth closing, not worth leading with | lowest — bounded delete of rows nothing references |
+| 7 | **§5** — choose the horizons, resize the volume, raise the batch limit for the drain, plan the `VACUUM` | needs 1–5 in place, and it is the step that actually changes production data | the only one with a maintenance window — and the drain takes days at the default batch limit (§4 D3) |
 | 8 | **D6** — tier lists out of the environment | binds at ~30 k sources; nothing before it needs it | medium, and deferrable |
 
-**Steps 1–5 are all code changes that can be validated entirely by `storage_bench.py` against a
+**Steps 1–4 are all code changes that can be validated entirely by `storage_bench.py` against a
 synthetic catalogue, with no production data and no source expansion** — which is the property that
 makes them safe to do next.
 
@@ -805,20 +846,41 @@ print('orphans ', c.execute('select count(*) from article_entities e where not e
 
 Read-only, and index-backed on both sides. A large orphan count is the direct evidence for §2.12.
 
-**3 — What is actually in the backups directory?** `du -sh /opt/ih/data/backups` returned no line
-during this audit, which for a root-owned `0700` directory is what an unprivileged `du` looks like —
-`db_backup.py` already carries a comment about exactly this permissions trap biting the off-host
-sync. But "probably permissions" is not a check:
+**3 — What is in the backups directory?** *Answered: it is healthy, and the missing `du` line was
+the permissions trap `db_backup.py` already documents.*
 
-```bash
-sudo du -sh /opt/ih/data/* | sort -h
-sudo ls -1 /opt/ih/data/backups 2>/dev/null | wc -l
-sudo ls -1t /opt/ih/data/backups 2>/dev/null | head -3
+```
+4.0K  allowlist.txt        44K  score_reference.json     16M  feed_corpus.csv
+6.7M  ih_beta.db-wal      554M  ih_beta.db             3.0G  backups
 ```
 
-`/opt/ih/data` is 3.6 GB against a 587 MB database, so ~3 GB is unaccounted for and backups are the
-obvious candidate — but the count and the newest filename are what say whether the tiered retention
-and the off-host sync are running, and neither can be inferred from here.
+Backups are being taken (newest `ih_beta-20260827T114616Z.db.gz`) and the whole `/opt/ih/data`
+tree accounts for itself: 3.0 + 0.581 + 0.016 + 0.007 = **3.60 GB**, exactly what `du` reported.
+
+**The one number that is not yet answerable is the backup count**, and it is worth being careful
+with. `ls -1 … | wc -l` returned **92 entries** — but a backup *set* is up to three files
+(`.db.gz` plus the `allowlist.txt` and `score_reference.json` sidecars `db_backup.py` writes beside
+it). So 92 entries is anywhere from **31 backups** (three files each) to **92** (one file each),
+against a tiered target of ~23 and the AWS ceiling of `BACKUP_KEEP=48`. **31 is mildly over the
+tiered target; 92 would mean neither retention mechanism is running.** Those are different
+situations and the entry count cannot tell them apart:
+
+```bash
+sudo sh -c 'ls -1 /opt/ih/data/backups/*.db.gz | wc -l'      # the real backup count
+sudo sh -c 'ls -1 /opt/ih/data/backups/*.db 2>/dev/null | wc -l'   # uncompressed leftovers
+sudo tail -30 /var/log/ih-backup.log                          # is the :33 prune cron running?
+```
+
+**4 — Where is the other 18.4 GB?** `/opt/ih/data` is 3.6 GB of a 22 GB used volume, so OS + Docker
+is the rest, and repeated `update.sh` builds accumulate layers and build cache:
+
+```bash
+docker system df
+```
+
+This matters because A5 currently FAILS at 78% used, and the two candidates for reclaiming
+space — over-retained backups and stale Docker layers — are both cheap to check and neither is the
+database.
 
 ---
 
