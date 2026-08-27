@@ -68,11 +68,11 @@ def rig(monkeypatch):
 
 
 def _ingest(poller, n=1):
-    poller._post_cycle({"new": n})
+    return poller._post_cycle({"new": n})
 
 
 def _quiet(poller):
-    poller._post_cycle({"new": 0})
+    return poller._post_cycle({"new": 0})
 
 
 # --------------------------------------------------------------------------- the point of the change
@@ -87,14 +87,29 @@ def test_eleven_adapters_in_one_window_pay_for_ONE_pass_not_eleven(rig):
     assert calls["refresh"] == 1, "every rebuild but the last is superseded"
 
 
-def test_the_warm_and_detect_steps_still_run_on_EVERY_cycle_that_brought_content(rig):
-    """Deliberately un-coalesced: they are the latency-sensitive half (a breaking story people
-    should be told about now) and the cheapest — 11-17% of a post-cycle, of which `request_warm`
-    is non-blocking. Coalescing them would trade a real product property for almost no time."""
+def test_the_locked_phase_no_longer_warms_but_REPORTS_that_a_warm_is_wanted(rig):
+    """The warm moved out of the locked phase (M6). `_post_cycle` now answers one question for its
+    caller — "did content arrive?" — and `_post_cycle_unlocked` does the work after the lock drops.
+
+    Un-coalesced on purpose, unchanged by the move: the warm and breaking detection are the
+    latency-sensitive half, and a breaking story is worth telling people about now."""
     poller, calls, _clock, _dirty = rig
     for _ in range(11):
-        _ingest(poller)
-    assert calls["warm"] == 11
+        assert _ingest(poller) is True, "content arrived — the caller must be told to warm"
+    assert calls["warm"] == 0, "and it must NOT have warmed while holding the lock"
+
+    for _ in range(11):
+        poller._post_cycle_unlocked({"new": 1})
+    assert calls["warm"] == 11, "every ingesting cycle still warms — just off the lock"
+
+
+def test_a_cycle_that_brought_nothing_reports_no_warm_wanted(rig):
+    """A warm rebuilds the story cache from a catalog that did not change. The old code reached the
+    same conclusion by returning early; the split has to preserve it explicitly."""
+    poller, calls, clock, _dirty = rig
+    _ingest(poller)
+    clock.advance(sources._maintenance_interval() + 1)
+    assert _quiet(poller) is False, "no content, no warm"
 
 
 def test_the_next_window_pays_again(rig):

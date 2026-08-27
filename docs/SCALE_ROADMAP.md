@@ -2132,6 +2132,55 @@ coalescing — the warm reads and builds and does not need the ingest *write* lo
 it from the lock is the "narrow the global lock" work, which is M6. At 24.9% there is now headroom
 to do that as a designed change rather than under pressure, which was the entire point.
 
+### M6, first piece: the warm comes off the lock
+
+The change the measurement above pointed at. `poll_adapter_once` now holds `self._lock` across the
+poll and the **write** half of the post-cycle only — retention and the hot refresh. The story-cache
+warm, breaking detection and push delivery move to `_post_cycle_unlocked`, which runs after the lock
+is released.
+
+**This is not "turn coalescing on".** Coalescing *delays* the warm, and that delay is precisely what
+`story_service:2829`'s two measurements rejected. The warm stays synchronous and immediate; it just
+stops blocking other adapters, which is the part that was never justified — `warm_cache` reads the
+catalog and builds an in-process cache and never needed the **write** lock.
+
+Two things make the unlocked version better rather than merely faster:
+
+* **`warm_cache`'s single-flight guard starts working.** `sources.py` records that the guard "was
+  written for concurrent adapters ... so adapter warms are SERIALIZED and the guard has never fired
+  for them." Off the lock, concurrent adapters collapse to one build instead of queueing N
+  sequential ones.
+* **The writer keeps the write lock.** `detect_breaking_stories` writes event rows and reads the
+  cache the warm just built, so it stays after the warm and re-takes the lock for its own duration.
+  Moving a writer off the write lock to save a few seconds would have been the wrong trade.
+
+### ⚠ Checking that the tests flip found a deadlock, not a failure
+
+Reverting the warm back inside the lock — the standard "does this test actually catch it" check —
+**hung the test run** rather than failing it. `threading.Lock` is not reentrant, so
+`_post_cycle_unlocked` re-taking it while the caller already held it blocks that thread forever.
+
+That is a real footgun in the new shape, and its symptom is the worst available: **"ingestion
+stopped", with no error logged anywhere.** The re-acquisition is now `acquire(timeout=120)` rather
+than a bare `with`, so an impossible wait becomes a `breaking_detect_lock_timeout` ERROR naming the
+likely cause. The timeout is deliberately generous — it only ever contends with one adapter's
+ingest, and maintenance passes were measured at ~96 s — because its job is visibility, not tuning.
+
+Found only because the flip-check was run. A guard nobody tries to break is a guard nobody has
+tested.
+
+### What the logs say now
+
+`pollMs + postCycleMs` is still **exactly lock-held time**, so the occupancy sum that has tracked
+this whole investigation keeps meaning the same thing. `warmMs` moved to its own `post_cycle_unlocked`
+event and is also echoed on `source_poll` — reported rather than hidden, so the change shows up as
+occupancy falling instead of as time vanishing from the logs. It is deliberately **absent** from
+`post_cycle` rather than reported as `0.0`: a zero there would read as "the warm was free".
+
+Predicted effect, to be checked against production rather than assumed: occupancy should fall from
+24.9% by roughly the warm's share (~13% of wall clock), landing near 12%. The warm still costs what
+it costs — it is simply no longer anyone else's problem.
+
 **A note on where the cost went last time.** The comment at `sources.py:1547` records the previous
 investigation landing on `story_cache_warm` — *"~93% of the most expensive loop in the process was
 inside a step nobody had timed"* — and its fix worked: warm is now the smallest segment at 11–17%.

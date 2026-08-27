@@ -87,6 +87,12 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+#: How long `_post_cycle_unlocked` waits to re-take the ingest lock for breaking-story detection
+#: before giving up on this cycle and saying so. Generous — it only contends with one adapter's
+#: ingest — and its purpose is not tuning but making an impossible wait VISIBLE rather than silent.
+_BREAKING_LOCK_TIMEOUT_S = 120.0
+
+
 def _maintenance_interval() -> float:
     """Minimum seconds between catalog-wide post-cycle passes (retention + hot refresh).
 
@@ -1492,7 +1498,7 @@ class MultiSourcePoller:
     # an extension read creates an article the poller's own counters never see; without this check a
     # quiet feed stalls that article's graph entry indefinitely). Trigger condition only — ingestion,
     # retention, and the refresh machinery are untouched. --
-    def _post_cycle(self, agg: dict) -> None:
+    def _post_cycle(self, agg: dict) -> bool:
         grew = agg.get("new", 0) > 0
         dirty = self._dirty_check is not None and self._dirty_check()
         if grew or dirty:
@@ -1527,7 +1533,7 @@ class MultiSourcePoller:
             dirty or self._last_maintenance is None
             or (time.monotonic() - self._last_maintenance) >= _maintenance_interval())
         if not (grew or dirty or due):
-            return
+            return False
         # Storage lifecycle: catalog retention PLUS the bounded prunes for derived/operational
         # tables (orphaned event locations, score cache, analytics, rec-events, snapshots). One
         # incremental pass per WINDOW — never user data, never a long write lock.
@@ -1539,87 +1545,10 @@ class MultiSourcePoller:
                 self._log(logging.WARNING, "storage_cleanup_failed",
                           error=f"{type(e).__name__}: {e}")
         t_cleanup = time.perf_counter()
-        # REQUEST a story rebuild rather than performing one here. The catalog has settled (this
-        # runs after retention, so the fingerprint is final) and this ingest has just invalidated
-        # the cache; without a warm the next reader pays the full rebuild — 5.4 s measured.
-        #
-        # It used to warm INLINE, and that was wrong in two ways that only production showed.
-        #
-        # The single-flight guard in warm_cache was written for concurrent adapters, but
-        # `poll_adapter_once` holds `self._lock` across poll_once AND _post_cycle, so adapter warms
-        # are SERIALIZED and the guard has never fired for them. Every provider that ingested
-        # anything therefore ran its own full rebuild — measured live: `story_cache_warm` at 5.6 s,
-        # several times per polling window, on a two-core box, with all but the last superseded
-        # before a reader could use it.
-        #
-        # And it ran while holding that lock, so a 5.6 s rebuild stalled every other adapter's
-        # ingest behind it. Requesting is non-blocking, so the lock is released immediately and the
-        # build happens on the warmer thread. That introduces no new concurrency: API requests
-        # already read this store while adapters write to it, which is what WAL is for.
-        #
-        # ⚠ THAT LAST PARAGRAPH DOES NOT DESCRIBE PRODUCTION, and the correction is measured.
-        # `request_warm` is non-blocking only when `warm_coalesce_window() > 0`. It defaults to 0 —
-        # OFF by decision, not oversight: story_service:2829 records two measurements rejecting the
-        # coalescing hypothesis (production warms are ~60 s apart, so there is no burst to merge,
-        # and delaying a warm costs more than it saves). With the window at 0, `request_warm` calls
-        # `warm_cache` INLINE on this thread, holding this lock, for a full clustering build.
-        #
-        # Measured 2026-08-26 after the maintenance steps were coalesced: `warmMs` is 14-20 s on
-        # every ingesting cycle, against the 13,624 ms full build `audit_corpus_boundary.py` reports
-        # at 27,764 articles. Those are the same number. It is now the single largest contributor to
-        # what remains of lock occupancy (~13% of wall clock on its own, ~51% of post-cycle time).
-        #
-        # Left alone deliberately. Making it truly asynchronous is not a scheduling change like the
-        # coalescing above — it is the "narrow the global lock" work, which is M6, and the warm does
-        # not need the ingest WRITE lock at all since it reads and builds. Recorded here so the next
-        # person to measure this does not re-derive it from the comment that used to be above.
-        #
-        # Fail-soft, like the cleanup above: a warm that cannot be built is a slow next request,
-        # never a broken poll loop.
-        def _warm_log(event, **fields):
-            self._log(logging.WARNING if event.endswith("_failed") else logging.INFO,
-                      event, **fields)
-        # These three stay on EVERY cycle that brought content, deliberately un-coalesced. They are
-        # the latency-sensitive half (a breaking story people should be told about now) and the
-        # cheapest — 11-17% of a post-cycle, of which `request_warm` is non-blocking and
-        # `request_delivery` starts a thread. Guarded on `grew or dirty` rather than run
-        # unconditionally, because a due-but-quiet pass has nothing new to warm or detect on: its
-        # rows were already warmed by the cycle that ingested them.
-        if grew or dirty:
-            try:
-                story_service.request_warm(self.store, log=_warm_log)
-            except Exception as e:
-                self._log(logging.WARNING, "story_cache_warm_failed",
-                          error=f"{type(e).__name__}: {e}")
-
-        # Breaking-story detection (OFF unless RWE_BREAKING_NOTIFICATIONS is set) — the same seam as
-        # FeedPoller's copy in feed_service.py, and it must exist in BOTH: either chassis may be the
-        # one polling, and a producer wired to only one of them would simply never fire in whichever
-        # deployment ran the other. Idempotent and stateless; the event row's UNIQUE constraint is
-        # what makes running it every cycle correct rather than merely harmless.
-            try:
-                import story_events              # lazy: keeps story_intelligence out of this import graph
-                story_events.detect_breaking_stories(self.store, log=_warm_log)
-            except Exception as e:
-                self._log(logging.WARNING, "breaking_detect_failed",
-                          error=f"{type(e).__name__}: {e}")
-
-        # Push delivery (OFF unless RWE_PUSH_DELIVERY is set). Hangs off the same post-cycle seam as
-        # breaking-story detection, immediately after it, so an event recorded above can be delivered
-        # on this cycle rather than the next.
-        #
-        # `request_delivery` STARTS A THREAD and returns: the fan-out is network I/O against a third
-        # party, and blocking ingestion on it would trade a delayed notification for a stale corpus.
-        # One run at a time — a request during a run is dropped, not queued, so a slow push service
-        # cannot turn every cycle into another overlapping fan-out.
-            try:
-                import push_delivery             # lazy: keeps the push stack out of this import graph
-                push_delivery.request_delivery(
-                    self.store, log=lambda lvl, ev, **f: self._log(lvl, ev, **f))
-            except Exception as e:
-                self._log(logging.WARNING, "push_delivery_request_failed",
-                          error=f"{type(e).__name__}: {e}")
-        t_warm = time.perf_counter()
+        # THE WARM IS NO LONGER HERE. It ran on this thread, holding this lock, for a full
+        # clustering build — see `_post_cycle_unlocked`, which now owns it and runs after the lock
+        # is released. What stays locked is what actually writes the catalog: retention above and
+        # the hot refresh below.
         if due and self._on_cycle is not None:
             try:
                 self._on_cycle(agg)
@@ -1634,22 +1563,129 @@ class MultiSourcePoller:
         # Production measured postCycleMs at 83-122 s per cycle against a 5.7 s warm, so ~93% of the
         # most expensive loop in the process was inside a step nobody had timed. These three numbers
         # are what turn "the post-cycle is slow" into a named owner.
+        # `warmMs` is deliberately GONE from this line rather than reported as 0.0: it is no longer
+        # a segment of the locked phase, and a zero would read as "the warm was free" instead of
+        # "the warm is measured elsewhere". `post_cycle_unlocked` carries it now.
         self._log(logging.INFO, "post_cycle",
                   cleanupMs=round((t_cleanup - t0) * 1000.0, 1),
-                  warmMs=round((t_warm - t_cleanup) * 1000.0, 1),
-                  refreshMs=round((t_hook - t_warm) * 1000.0, 1),
+                  refreshMs=round((t_hook - t_cleanup) * 1000.0, 1),
                   # Which of the two shapes this was. Without it a coalesced cycle and an expensive
                   # one differ only by their durations, and "why is cleanupMs 0" has no answer in
                   # the log — the same complaint that produced the three timings above.
                   maintenance=bool(due), coalesced=bool(self._maintenance_pending))
+        return grew or dirty
+
+    def _post_cycle_unlocked(self, agg: dict) -> float:
+        """The post-cycle steps that do NOT need the ingest write lock. Returns milliseconds spent.
+
+        ## Why this phase exists
+
+        `request_warm` is non-blocking only when `warm_coalesce_window() > 0`, and that defaults to
+        **0** — OFF by measured decision, not oversight (`story_service:2829`: production warms sit
+        ~60 s apart so there is no burst to merge, and *delaying* a warm costs more than it saves).
+        With the window at 0 it calls `warm_cache` inline on the caller's thread. That was fine; the
+        bug was doing it while holding `self._lock`.
+
+        Measured on production 2026-08-26, after the catalog-wide steps were coalesced: `warmMs` was
+        14-20 s on **every** ingesting cycle against a 13,624 ms full clustering build — the same
+        number — making it the largest single contributor to the 24.9% lock occupancy that remained.
+
+        ## Why taking it off the lock is safe, and not the same as turning coalescing on
+
+        Turning coalescing on would re-introduce the **delay** those measurements rejected. This
+        keeps the warm synchronous and immediate and only stops it blocking other adapters, which is
+        the part that was never justified: `warm_cache` reads the catalog and builds an in-process
+        cache. It never needs the **write** lock the poller holds to serialise ingests.
+
+        Two properties make the unlocked version strictly better rather than merely faster:
+
+        * **`warm_cache` already single-flights** on its own `_WARM_LOCK` with a non-blocking
+          acquire. `sources.py` records that this guard "was written for concurrent adapters ... so
+          adapter warms are SERIALIZED and the guard has never fired for them". Off the lock it
+          starts working as designed: concurrent adapters collapse to one build instead of queueing
+          up N sequential ones. A stood-down warm is not a lost one — the winner's build covers the
+          same catalog.
+        * **Breaking detection keeps its ordering AND its write lock.** It reads the cache the warm
+          just built, so it has to stay after it; it also WRITES event rows, so it re-enters
+          `self._lock` for its own duration rather than racing an adapter's ingest. Brief and
+          explicit beats moving a writer off the write lock to save a few seconds.
+        """
+        t0 = time.perf_counter()
+
+        def _warm_log(event, **fields):
+            self._log(logging.WARNING if event.endswith("_failed") else logging.INFO,
+                      event, **fields)
+
+        # Fail-soft throughout: a warm that cannot be built is a slow next request, never a broken
+        # poll loop.
+        try:
+            story_service.request_warm(self.store, log=_warm_log)
+        except Exception as e:
+            self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
+
+        # Breaking-story detection (OFF unless RWE_BREAKING_NOTIFICATIONS is set) — the same seam as
+        # FeedPoller's copy in feed_service.py, and it must exist in BOTH: either chassis may be the
+        # one polling, and a producer wired to only one of them would simply never fire in whichever
+        # deployment ran the other. Idempotent and stateless; the event row's UNIQUE constraint is
+        # what makes running it every cycle correct rather than merely harmless.
+        #
+        # It WRITES, so it takes the lock back for exactly its own duration. Cheap when the feature
+        # is off (`detect_breaking_stories` returns 0 at its first line) and correct when it is on.
+        #
+        # `acquire(timeout=)` rather than `with self._lock:` — the difference is a hang versus a log
+        # line. This method MUST NOT be called while already holding the lock, and if it ever is,
+        # `threading.Lock` is not reentrant, so a bare `with` deadlocks the calling adapter thread
+        # forever. That is not hypothetical: reverting the warm back inside the lock to check that
+        # these tests actually flip hung the test run instead of failing it. A deadlock here
+        # presents as "ingestion stopped", with no error anywhere — the worst shape a fault can
+        # take in this loop. The timeout turns it into something an operator can find.
+        try:
+            import story_events                  # lazy: keeps story_intelligence out of this import graph
+            if not self._lock.acquire(timeout=_BREAKING_LOCK_TIMEOUT_S):
+                self._log(logging.ERROR, "breaking_detect_lock_timeout",
+                          waitedSeconds=_BREAKING_LOCK_TIMEOUT_S,
+                          detail="could not re-take the ingest lock; skipping breaking detection "
+                                 "for this cycle. If this repeats, _post_cycle_unlocked is being "
+                                 "called while the lock is already held.")
+            else:
+                try:
+                    story_events.detect_breaking_stories(self.store, log=_warm_log)
+                finally:
+                    self._lock.release()
+        except Exception as e:
+            self._log(logging.WARNING, "breaking_detect_failed", error=f"{type(e).__name__}: {e}")
+
+        # Push delivery (OFF unless RWE_PUSH_DELIVERY is set). Hangs off the same post-cycle seam as
+        # breaking-story detection, immediately after it, so an event recorded above can be delivered
+        # on this cycle rather than the next.
+        #
+        # `request_delivery` STARTS A THREAD and returns: the fan-out is network I/O against a third
+        # party, and blocking ingestion on it would trade a delayed notification for a stale corpus.
+        # One run at a time — a request during a run is dropped, not queued, so a slow push service
+        # cannot turn every cycle into another overlapping fan-out.
+        try:
+            import push_delivery                 # lazy: keeps the push stack out of this import graph
+            push_delivery.request_delivery(
+                self.store, log=lambda lvl, ev, **f: self._log(lvl, ev, **f))
+        except Exception as e:
+            self._log(logging.WARNING, "push_delivery_request_failed",
+                      error=f"{type(e).__name__}: {e}")
+        ms = (time.perf_counter() - t0) * 1000.0
+        self._log(logging.INFO, "post_cycle_unlocked", warmMs=round(ms, 1))
+        return ms
 
     def poll_adapter_once(self, adapter: SourceAdapter) -> dict:
         with self._lock:                                    # write-safe: one adapter ingests at a time
             t0 = time.perf_counter()
             agg = adapter.poll_once(self.store, self.scorer, on_feed=self._record_health)
             t1 = time.perf_counter()
-            self._post_cycle(agg)
+            warm_wanted = self._post_cycle(agg)
             t2 = time.perf_counter()
+        # ── OUTSIDE THE LOCK ───────────────────────────────────────────────────────────────────
+        # M6's first piece. Everything above serialises adapters against each other because it
+        # WRITES the catalog; the warm only reads it and builds an in-process cache, so holding the
+        # lock across it bought nothing and cost 14-20 s of every other adapter's time.
+        warm_ms = self._post_cycle_unlocked(agg) if warm_wanted else 0.0
         # pollMs / postCycleMs: fetch+parse+score+write against retention+warm+refresh. The split is
         # the point — they are different problems with different fixes, and without it a slow cycle
         # is just "slow". Measured after `story_cache_warm` turned out to be logged on a branch
@@ -1659,7 +1695,12 @@ class MultiSourcePoller:
                   provider=adapter.provider, sourceType=adapter.source_type, new=agg.get("new", 0),
                   duplicates=agg.get("duplicates", 0), failed=agg.get("failed", 0),
                   catalog=self.store.count_feed_articles(),
-                  pollMs=round((t1 - t0) * 1000.0, 1), postCycleMs=round((t2 - t1) * 1000.0, 1))
+                  # pollMs + postCycleMs is still exactly LOCK-HELD time, so the occupancy sum
+                  # that has tracked this all along keeps meaning the same thing. warmMs is the
+                  # work that moved OUT of it — reported, not hidden, so the change shows up as
+                  # occupancy falling rather than as time disappearing from the logs.
+                  pollMs=round((t1 - t0) * 1000.0, 1), postCycleMs=round((t2 - t1) * 1000.0, 1),
+                  warmMs=round(warm_ms, 1))
         return agg
 
     def _run_adapter(self, adapter: SourceAdapter) -> None:

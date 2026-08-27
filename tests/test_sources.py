@@ -855,18 +855,26 @@ def test_default_registry_registers_all_providers_with_unique_health_keys():
 def test_post_cycle_requests_a_story_cache_warm(store, monkeypatch):
     """The seam moved from `warm_cache` to `request_warm`, and the move is the point.
 
-    `poll_adapter_once` holds a global lock across poll_once AND _post_cycle, so warming inline
-    both serialized every adapter's warm (defeating warm_cache's single-flight guard, which was
-    written for the concurrent case) and held that lock for the 5.6 s a rebuild takes, stalling
-    every other adapter's ingest behind it. Requesting is non-blocking; the build happens on the
-    warmer thread."""
+    `poll_adapter_once` held a global lock across poll_once AND _post_cycle, so warming inline both
+    serialized every adapter's warm (defeating warm_cache's single-flight guard, which was written
+    for the concurrent case) and held that lock for the duration of a rebuild, stalling every other
+    adapter's ingest behind it.
+
+    The last sentence of this docstring used to read "Requesting is non-blocking; the build happens
+    on the warmer thread." That is true only when `warm_coalesce_window() > 0`, and it defaults to
+    0 — so in production `request_warm` built INLINE and the lock was never actually released. M6
+    fixed it properly by moving the call out of the locked phase entirely: `_post_cycle` now only
+    REPORTS that a warm is wanted, and `_post_cycle_unlocked` does it after the lock drops. See
+    tests/test_warm_off_the_lock.py."""
     import story_service
     asked = []
     monkeypatch.setattr(story_service, "request_warm",
                         lambda s, log=None: asked.append(s) or True)
     poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
                                        log=lambda *a, **k: None)
-    poller._post_cycle({"new": 3})
+    assert poller._post_cycle({"new": 3}) is True, "the locked phase must ASK for a warm"
+    assert asked == [], "but must not perform one while holding the lock"
+    poller._post_cycle_unlocked({"new": 3})
     assert asked == [store], "the warm was not requested on the poller the API actually starts"
 
 
@@ -891,7 +899,7 @@ def test_a_failing_warm_never_breaks_the_poll_cycle(store, monkeypatch):
     events = []
     poller = sources.MultiSourcePoller(store, ri.make_scorer(), registry=sources.SourceRegistry(),
                                        log=lambda lvl, ev, **f: events.append(ev))
-    poller._post_cycle({"new": 1})                       # must not raise
+    poller._post_cycle_unlocked({"new": 1})              # must not raise (the warm moved here, M6)
     assert "story_cache_warm_failed" in events
 
 
@@ -1195,8 +1203,18 @@ def test_post_cycle_attributes_its_time_to_a_named_step():
 
     post = [f for event, f in events if event == "post_cycle"]
     assert len(post) == 1, f"expected one post_cycle event, got {[e for e, _ in events]}"
-    for field in ("cleanupMs", "warmMs", "refreshMs"):
+    for field in ("cleanupMs", "refreshMs"):
         assert field in post[0], f"{field} missing — the step it covers would be unattributable"
+    # `warmMs` left this event when the warm left the lock (M6). It is reported on its own event
+    # rather than as 0.0 here, because a zero would read as "the warm was free" instead of "the
+    # warm is measured elsewhere" — and an unattributable step is exactly what this test exists to
+    # prevent. It also appears on `source_poll`, so lock occupancy and the off-lock cost can both
+    # still be summed from the log.
+    unlocked = [f for event, f in events if event == "post_cycle_unlocked"]
+    assert unlocked and "warmMs" in unlocked[0], "the warm must still report its own duration"
+    assert "warmMs" not in post[0], "and must not be double-counted inside the locked phase"
+    poll = [f for event, f in events if event == "source_poll"]
+    assert poll and "warmMs" in poll[0], "source_poll carries it so occupancy stays computable"
     assert calls, "the on_cycle hook must still run"
     assert post[0]["refreshMs"] >= 30.0, \
         f"refreshMs must measure the hook, got {post[0]['refreshMs']}"
