@@ -8,8 +8,8 @@ Everything else exists because one of them could pass for the wrong reason.
 
 The recurring defect in this repository's own instruments is a test whose premise is switched off —
 by the harness, by an environment default, or by a guard that cannot fire. Every invariant below was
-checked by reverting the specific product line it is about and confirming a test fails. **Thirteen
-mutations, thirteen caught:**
+checked by reverting the specific product line it is about and confirming a test fails. **Seventeen
+mutations, seventeen caught:**
 
     COMPLETED made empty                        the probing claim made a no-op
     re-seeding downgrades the state             record_admission_probe refuses nothing
@@ -17,7 +17,14 @@ mutations, thirteen caught:**
     corpus.enabled ignores admissions           tier_index REPLACES the env list
     admitted_configs skips the is_shadow check  the runner catches BaseException
     INCOMPLETE maps to `rejected`               an incomplete probe gets no cooloff
-    _lifecycle_identity drifts from M8's
+    _lifecycle_identity drifts from M8's        the partition guard never fires
+    the CLI pre-flight does not refuse          the window count is the catalogue count
+    shadow_exclusions stops hiding admitted hosts
+
+The last four are the partition guard, and they exist because the first 49 tests here **could not
+have caught its absence**: every one of them built an admission row with no `feed_articles` rows
+behind it — a state no real candidate is ever in, since discovery mines the crawl exhaust — so the
+guard had nothing to fire on. Vacuity by fixture, in the file whose docstring is about vacuity.
 
 The reproduction script is `mutate.py` in the session scratchpad; each entry is a one-line
 substitution against the anchor named in the left column.
@@ -483,6 +490,152 @@ def test_withdrawal_stops_the_crawl_and_keeps_the_shadow_assignment(_wired):
     assert st.reopen_admission("alpha.example")["tier"] == "shadow"
     corpus.wire_admissions(st.admitted_shadow_hosts)
     assert corpus.tier_of("alpha.example", "https://alpha.example/a/1") == "shadow"
+
+
+# ------------------------------------------------- admission is a DEMOTION for a host we ingest
+#
+# The tests above admit hosts that have no `feed_articles` rows at all, so the partition guard
+# cannot fire in any of them. That is the shape of vacuity this file's docstring is about, and it is
+# why these exist: they build the catalogue rows first, which is the ONLY state a real candidate is
+# ever in — `source_discovery` mines the crawl exhaust and the 10-article floor guarantees a history.
+def _ingest(st, host, n, *, days_apart=0.25):
+    for i in range(n):
+        st.upsert_feed_article(
+            canonical_url=f"https://{host}/a/{i}", url=f"https://{host}/a/{i}",
+            publisher=host, source_publisher=host, title=f"headline {i}", description="d",
+            body=None,
+            published_at=(datetime.now(timezone.utc) - timedelta(days=days_apart * i)).isoformat(),
+            source_feed=f"https://{host}/feed",
+            scored={"outlet": host, "lean": None, "category": "Politics"},
+            source_type="rss", language="en")
+
+
+@pytest.fixture()
+def _real_window(monkeypatch):
+    """The suite-wide conftest opens `RWE_STORIES_SCAN_DAYS` to a century, which would put the whole
+    catalogue inside the "clustering window" and make the two impact numbers identical. Dropping it
+    is what lets these tests tell the partition impact from the reader-surface impact."""
+    monkeypatch.delenv("RWE_STORIES_SCAN_DAYS", raising=False)
+    import story_service
+    assert story_service.scan_days() == 6.0, (
+        f"expected the shipped 6-day window, got {story_service.scan_days()}")
+
+
+def test_admitting_a_host_we_already_ingest_is_refused_without_acknowledgement(st, _real_window):
+    """`crosses_tier_a("A", "shadow")` is True and M9 marks the same move `automatic=False`. This
+    command performed it in bulk with no counterfactual and a message that read like an addition."""
+    _ingest(st, "heavy.example", 40)                    # 40 articles, ~10 days, so ~24 in window
+    rows = st.list_discovery_rows()
+    import outlet_registry
+    st.record_admission_candidates(sd_candidates(rows, outlet_registry.default_registry()))
+    st.claim_admission_probe("heavy.example")
+    st.record_admission_probe("heavy.example", verdict="ADMIT", feed_url="https://heavy.example/f")
+
+    impact = st.admission_partition_impact("heavy.example")
+    assert impact["catalogue"] == 40
+    assert 0 < impact["window"] < 40, (
+        f"the window and the catalogue must be different numbers here, got {impact}")
+
+    with pytest.raises(ValueError, match="A -> shadow move on articles that are LIVE"):
+        st.admit_source("heavy.example")
+    assert st.admission_row("heavy.example")["state"] == "validated", "refused but admitted anyway"
+
+    row = st.admit_source("heavy.example", accept_partition_change=True)
+    assert row["state"] == "admitted"
+
+
+def test_a_host_with_no_live_rows_is_genuinely_neutral_and_needs_no_acknowledgement(st):
+    """Retention aged its articles out, or it was discovered from a host-observation record rather
+    than from live rows. Nothing leaves the product, so nothing needs acknowledging — a guard that
+    fired here would be demanding a counterfactual for a no-op."""
+    st.record_admission_candidates([_cand("gone.example")])
+    st.claim_admission_probe("gone.example")
+    st.record_admission_probe("gone.example", verdict="ADMIT", feed_url="https://gone.example/f")
+    assert st.admission_partition_impact("gone.example") == {
+        "host": "gone.example", "window": 0, "catalogue": 0,
+        "windowDays": pytest.approx(st.admission_partition_impact("gone.example")["windowDays"])}
+    assert st.admit_source("gone.example")["state"] == "admitted"
+
+
+def test_the_articles_actually_leave_tier_a_and_the_reader_surfaces(_wired, _real_window):
+    """The consequence itself, not just the warning about it. Measured through `corpus.select`,
+    which is what the story builder calls."""
+    st = _wired
+    _ingest(st, "heavy.example", 40)
+    rows = st.list_discovery_rows()
+    import outlet_registry
+    st.record_admission_candidates(sd_candidates(rows, outlet_registry.default_registry()))
+    st.claim_admission_probe("heavy.example")
+    st.record_admission_probe("heavy.example", verdict="ADMIT", feed_url="https://heavy.example/f")
+
+    def in_tier_a():
+        kept = corpus.select(list(rows), log=lambda *a, **k: None)
+        return sum(1 for r in kept if "heavy.example" in (r.get("publisher") or ""))
+
+    assert in_tier_a() == 40 and "heavy.example" not in corpus.shadow_exclusions()
+    st.admit_source("heavy.example", accept_partition_change=True)
+    corpus.wire_admissions(st.admitted_shadow_hosts)
+    assert in_tier_a() == 0, "admission did not actually remove the rows from the clustering corpus"
+    assert "heavy.example" in corpus.shadow_exclusions()
+
+
+def test_the_cli_refuses_a_bulk_admit_and_names_the_numbers(tmp_path, monkeypatch, _real_window):
+    db = f"sqlite:///{tmp_path / 'bulk.db'}"
+    st = store_mod.Store(db)
+    _ingest(st, "heavy.example", 40)
+    _ingest(st, "other.example", 20)
+    import outlet_registry
+    st.record_admission_candidates(
+        sd_candidates(st.list_discovery_rows(), outlet_registry.default_registry()))
+    for host in ("heavy.example", "other.example"):
+        st.claim_admission_probe(host)
+        st.record_admission_probe(host, verdict="ADMIT", feed_url=f"https://{host}/f")
+    st.engine.dispose()
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = sc.main(["admit", "--db", db, "--all-validated"])
+        out = buf.getvalue()
+        assert rc == 2, "a bulk admit went through without acknowledging the partition change"
+        assert "THIS IS A PARTITION CHANGE, NOT AN ADDITION" in out
+        # 24 of heavy's 40 fall inside six days at a 6-hour cadence; all 20 of other's do.
+        assert "44 article(s) inside the 6-day clustering window would LEAVE" in out
+        assert "60 article(s) in the catalogue would LEAVE Search and Discover" in out
+        assert "audit_clustering_change.py" in out
+        assert store_mod.Store(db).admission_census().get("admitted", 0) == 0
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = sc.main(["admit", "--db", db, "--all-validated", "--accept-partition-change"])
+        assert rc == 0 and "2 admitted, 0 refused" in buf.getvalue()
+    finally:
+        corpus.wire_admissions(None)
+
+
+def test_status_says_what_admitting_the_validated_set_would_move(tmp_path, _real_window):
+    db = f"sqlite:///{tmp_path / 'st.db'}"
+    st = store_mod.Store(db)
+    _ingest(st, "heavy.example", 40)
+    import outlet_registry
+    st.record_admission_candidates(
+        sd_candidates(st.list_discovery_rows(), outlet_registry.default_registry()))
+    st.claim_admission_probe("heavy.example")
+    st.record_admission_probe("heavy.example", verdict="ADMIT", feed_url="https://heavy.example/f")
+    st.engine.dispose()
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            sc.main(["status", "--db", db])
+        out = buf.getvalue()
+        assert "would leave the 6-day story partition" in out
+        assert "40 article(s) would leave Search and Discover" in out
+    finally:
+        corpus.wire_admissions(None)
+
+
+def sd_candidates(rows, reg):
+    import source_discovery
+    return source_discovery.candidates(rows, reg)
 
 
 @pytest.mark.parametrize("publisher", [

@@ -137,6 +137,16 @@ def _print_status(st, args) -> None:
 def cmd_status(args) -> int:
     st = _store(args)
     _print_status(st, args)
+    validated = st.admission_rows(states=["validated"])
+    if validated:
+        impacts = [st.admission_partition_impact(r["host"]) for r in validated]
+        win = sum(i["window"] for i in impacts)
+        cat = sum(i["catalogue"] for i in impacts)
+        print(f"\n=== what admitting the {len(validated):,} validated host(s) would move ===")
+        print("    Admission is an A -> shadow move on rows that are LIVE, because every candidate")
+        print("    is a host we already ingest. It is a partition change, not an addition.")
+        print(f"  {win:,} article(s) would leave the {impacts[0]['windowDays']:g}-day story partition")
+        print(f"  {cat:,} article(s) would leave Search and Discover")
     if args.show:
         for state in ("validated", "rejected", "incomplete"):
             rows = st.admission_rows(states=[state], limit=args.show)
@@ -273,12 +283,40 @@ def cmd_admit(args) -> int:
     print("    Not Tier A, and there is no flag that would make it Tier A. Tier A promotion is M9's")
     print("    decision on M8's evidence with a clustering counterfactual — source_lifecycle.plan.")
     print("    Shadow means stored, deduped, attributed, and surfaced NOWHERE, pending evaluation.")
+
+    # ---------------------------------------------------------------- the pre-flight
+    #
+    # Every candidate is a host we ALREADY ingest — that is what discovery is, and the 10-article
+    # floor guarantees a history. Its articles are Tier A today, so admission is an A -> shadow move
+    # on live rows: they leave the story partition AND every reader surface. "Admit this source" and
+    # "take N articles out of Search" are the same command, and only one of them is in the name.
+    impacts = [st.admission_partition_impact(h) for h in wanted]
+    live = [i for i in impacts if i["window"] or i["catalogue"]]
+    if live:
+        win = sum(i["window"] for i in live)
+        cat = sum(i["catalogue"] for i in live)
+        print(f"\n  *** THIS IS A PARTITION CHANGE, NOT AN ADDITION ***")
+        print(f"      {len(live)} of these {len(wanted)} host(s) are already in the catalogue.")
+        print(f"      {win:,} article(s) inside the {live[0]['windowDays']:g}-day clustering window "
+              f"would LEAVE the story partition.")
+        print(f"      {cat:,} article(s) in the catalogue would LEAVE Search and Discover.")
+        print(f"      source_lifecycle.crosses_tier_a('A', 'shadow') is True; M9 marks this move")
+        print(f"      automatic=False and requires a clustering counterfactual for it.")
+        for i in sorted(live, key=lambda i: -i["catalogue"])[:10]:
+            print(f"        {i['host']:<38} {i['window']:>7,} in window   {i['catalogue']:>7,} in catalogue")
+        if not args.accept_partition_change:
+            print(f"\n  REFUSING. Measure it first, then say so explicitly:")
+            print(f"    python examples/audit_clustering_change.py --db ...")
+            print(f"    python examples/source_campaign.py admit ... --accept-partition-change")
+            return 2
+
     ok, failed = 0, 0
     for host in wanted:
         try:
             row = st.admit_source(host, tier=sa.ADMISSION_TIER, publisher=args.publisher or None,
                                   article_pattern=args.pattern, force=args.force,
-                                  reason=args.reason or "")
+                                  reason=args.reason or "",
+                                  accept_partition_change=args.accept_partition_change)
         except ValueError as exc:
             print(f"  REFUSED  {host}: {exc}")
             failed += 1
@@ -387,6 +425,11 @@ def main(argv=None) -> int:
         p.add_argument("--pattern", default=None)
         p.add_argument("--reason", default="")
         p.add_argument("--all-validated", action="store_true")
+        p.add_argument("--accept-partition-change", action="store_true",
+                       help="acknowledge that admitting a host we already ingest REMOVES its "
+                            "articles from the story partition and from Search. Required whenever "
+                            "the hosts being admitted have live rows — which, since discovery "
+                            "mines the crawl exhaust, is nearly always.")
         return p
 
     common(sub.add_parser("seed", help="upsert candidate rows from the catalogue (offline)"))

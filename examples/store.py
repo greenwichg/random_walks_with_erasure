@@ -2945,6 +2945,58 @@ class Store:
             s.flush()
             return self._admission_row(row)
 
+    def host_article_counts(self, *, window_days: "float | None" = None) -> dict:
+        """``{host: article count}`` over the catalogue, or over the last ``window_days``.
+
+        Built from :meth:`list_discovery_rows` — the narrow six-field projection M10 measured at
+        0.54 s / 46.9 MB for 150k rows — and grouped in Python because the host is derived from the
+        URL and SQL cannot key on it. Memoized per ``(window_days)`` for the life of this ``Store``:
+        an admission run is a short-lived process, and a bulk admit of 1,173 hosts must not pay the
+        scan 1,173 times. A long-lived process must not use this for anything time-sensitive; today
+        the only caller is :meth:`admit_source`."""
+        key = float(window_days) if window_days else 0.0
+        cached = getattr(self, "_host_count_memo", None)
+        if cached is None:
+            cached = self._host_count_memo = {}
+        if key in cached:
+            return cached[key]
+        import source_discovery as _sd
+        rows = self.list_discovery_rows()
+        if key:
+            floor = (_utcnow() - timedelta(days=key)).isoformat()
+            rows = [r for r in rows if (r.get("publishedAt") or "") >= floor]
+        counts: dict = {}
+        for r in rows:
+            host = _sd._host(r)
+            if host:
+                counts[host] = counts.get(host, 0) + 1
+        cached[key] = counts
+        return counts
+
+    def admission_partition_impact(self, host: str) -> dict:
+        """What admitting ``host`` would take out of the product, measured rather than assumed.
+
+        **Every M11 candidate is a host we already ingest from** — that is what
+        `source_discovery` does, it mines the crawl exhaust, and the 10-article floor guarantees
+        each one has a history. Those articles are Tier A *today*, because `corpus.DEFAULT_TIER` is
+        ``"A"`` and nothing has said otherwise. So admitting one is an **A → shadow** move on live
+        rows, not the neutral act "admit a new source" sounds like:
+
+        ``window``      articles inside the clustering window. These leave the story partition —
+                        `source_lifecycle.crosses_tier_a("A", "shadow")` is ``True``, and M9 marks
+                        exactly this move ``automatic=False`` requiring a clustering counterfactual.
+        ``catalogue``   articles in the whole retained catalogue. These leave Search and Discover
+                        too, because `corpus.shadow_exclusions` hides the shadow lane from readers.
+
+        Both are reported because they answer different questions and the second is much the larger.
+        """
+        import story_service as _ss
+        key = (host or "").strip().lower()
+        return {"host": key,
+                "window": self.host_article_counts(window_days=_ss.scan_days()).get(key, 0),
+                "catalogue": self.host_article_counts().get(key, 0),
+                "windowDays": _ss.scan_days()}
+
     @staticmethod
     def _lifecycle_identity(publisher: str) -> str:
         """The key ``SourceLifecycle`` rows are stored under, for a publisher string.
@@ -2962,12 +3014,33 @@ class Store:
 
     def admit_source(self, host: str, *, tier: str = "shadow", publisher: "str | None" = None,
                      article_pattern: "str | None" = None, reason: str = "",
-                     at: "str | None" = None, force: bool = False) -> dict:
+                     at: "str | None" = None, force: bool = False,
+                     accept_partition_change: bool = False) -> dict:
         """``validated`` -> ``admitted``, and record the shadow lifecycle transition.
 
-        This is the **only** method in the codebase that puts a discovered source into serving
-        configuration, and it does three things in one transaction so none of them can happen
-        without the others:
+        ## Admitting a host we already ingest is a DEMOTION, and it needs saying
+
+        `source_discovery` mines the crawl exhaust, so every candidate is a host already in the
+        catalogue with at least ten articles — all of them Tier A today by
+        `corpus.DEFAULT_TIER`. Admission moves them to shadow, which **removes them from the story
+        partition and from every reader surface**. `source_lifecycle.crosses_tier_a("A", "shadow")`
+        is ``True``, and `source_lifecycle.plan` marks that move ``automatic=False`` requiring
+        ``NEEDS_COUNTERFACTUAL``.
+
+        So this method refuses unless ``accept_partition_change`` is passed, whenever
+        :meth:`admission_partition_impact` finds live rows. The refusal names the counts, because
+        "admit this source" and "take 5,079 articles out of Search" are the same command and only
+        one of them is in the name. A host with no articles left — retention aged them out — is
+        genuinely neutral and needs no acknowledgement.
+
+        This is not an argument that the move is wrong. Carrying an unrated, unregistered host in
+        the clustering corpus is itself promotion by omission, and shadow is where an unevaluated
+        source belongs; the point is that it is a **partition change**, and this repository does not
+        make those without a human and a counterfactual (`audit_clustering_change.py`).
+
+        Beyond that, this is the **only** method in the codebase that puts a discovered source into
+        serving configuration, and it does three things in one transaction so none of them can
+        happen without the others:
 
         1. sets ``state='admitted'`` and ``tier='shadow'`` — which is what
            :meth:`admitted_shadow_hosts` and :meth:`admitted_crawl_rows` read, so the crawl config
@@ -2981,9 +3054,20 @@ class Store:
         already in ``crawler_publishers.json`` — they were admitted by a human before this table
         existed and have no probe record — and it is the *only* way past the ``validated`` gate."""
         import source_admission as _sa
+        import source_lifecycle as _sl
         _sa.check_admission_tier(tier)
         now = at or _utcnow().isoformat()
         key = (host or "").strip().lower()
+        impact = self.admission_partition_impact(key)
+        if not accept_partition_change and (impact["window"] or impact["catalogue"]):
+            raise ValueError(
+                f"admitting {key!r} is an A -> shadow move on articles that are LIVE today: "
+                f"{impact['window']:,} in the {impact['windowDays']:g}-day clustering window (they "
+                f"leave the story partition) and {impact['catalogue']:,} in the catalogue (they "
+                f"leave Search and Discover). source_lifecycle.crosses_tier_a('A', 'shadow') is "
+                f"True, and M9 requires a {_sl.NEEDS_COUNTERFACTUAL} for the same move — run it, "
+                f"then pass accept_partition_change=True (--accept-partition-change on "
+                f"source_campaign.py).")
         with self.session() as s:
             row = s.get(SourceAdmission, key)
             if row is None:

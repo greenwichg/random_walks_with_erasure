@@ -399,15 +399,60 @@ not relax `RWE_CRAWL_ENABLED` (still off by default), the robots gate, the rate 
 offline discovery gates — the table changes **which** hosts are asked, never **how**. And it does not
 discharge the ToS review, which still gates the 1,173-candidate campaign it makes runnable.
 
+### 7.5b · The defect the production dry-run exposed: admission is a DEMOTION
+
+Seeding on production put `sportskeeda.com` at the head of the probe queue with **5,079 articles**,
+and that number is what makes the problem visible.
+
+`source_discovery` mines the **crawl exhaust** — it finds hosts *we already ingest from* — and the
+10-article floor guarantees every candidate has a history. Those articles are Tier A **today**,
+because `corpus.DEFAULT_TIER` is `"A"` and nothing has said otherwise. So admitting a candidate is
+not "add a source". It is an **A → shadow move on live rows**:
+
+* they leave the **story partition** — `select()` drops non-Tier-A rows;
+* they leave **Search and Discover** — `corpus.shadow_exclusions` hides the shadow lane from readers.
+
+`source_lifecycle.crosses_tier_a("A", "shadow")` returns **True**, and `plan()` marks exactly that
+move `automatic=False` requiring `NEEDS_COUNTERFACTUAL`. As first shipped, `admit_source` performed
+it with `applied=True` and no counterfactual, and `admit --all-validated` did it in bulk behind a
+message that read like an addition. **I built the thing M9 refuses to do, one table over.**
+
+Verified rather than argued — 40 articles on one host, through `corpus.select`:
+
+```
+BEFORE admission   tier_of: A        in Tier A: 40 of 40    searchable: True
+AFTER  admission   tier_of: shadow   in Tier A:  0 of 40    searchable: False
+```
+
+The move itself is defensible: carrying an unrated, unregistered host in the clustering corpus is
+promotion by omission, and shadow is where an unevaluated source belongs. The defect was never
+saying so. The fix:
+
+* `store.admission_partition_impact(host)` reports **two** numbers — articles in the clustering
+  window (the partition impact) and in the whole catalogue (the reader-surface impact, much the
+  larger). Built on `list_discovery_rows`, memoized per `Store`, so a 1,173-host bulk admit pays the
+  scan once rather than 1,173 times.
+* `admit_source` **refuses** unless `accept_partition_change=True` whenever either count is non-zero.
+  Computed by the store, so no caller can pass a convenient zero. A host whose articles have aged
+  out is genuinely neutral and needs no acknowledgement — a guard that fired there would be
+  demanding a counterfactual for a no-op.
+* `source_campaign.py admit` prints a pre-flight naming the totals and the ten largest hosts, and
+  exits 2 without `--accept-partition-change`. `status` reports the same for the validated set.
+
+**The first 54-test pass did not catch this, and the reason is the point of §7.6.** Every admission
+test built an `source_admission` row without any `feed_articles` rows behind it — a state no real
+candidate is ever in — so the guard could not fire and its absence was invisible. The new tests
+ingest the catalogue rows first.
+
 ### 7.6 · Verification
 
-49 tests in `tests/test_source_admission.py`, and the two that carry the requirement are
+54 tests in `tests/test_source_admission.py`, and the two that carry the requirement are
 `test_a_second_full_campaign_makes_no_requests` and
 `test_an_interrupted_campaign_resumes_where_it_stopped`. Both assert *how many times `validate` was
 called* and *the per-host `probe_count`*, not that the output got shorter — the latter would pass for
 any change that printed less.
 
-Every guard was checked by breaking the product and confirming a test fails. **13 mutations, 13
+Every guard was checked by breaking the product and confirming a test fails. **17 mutations, 17
 caught:**
 
 ```
@@ -417,7 +462,9 @@ check_admission_tier never raises                withdrawal clears the tier
 corpus.enabled ignores admissions                the table REPLACES the env shadow list
 crawl configs skip the is_shadow re-check        the runner swallows a real interruption
 INCOMPLETE is recorded as a rejection            an incomplete probe gets no cooloff
-_lifecycle_identity drifts from M8's
+_lifecycle_identity drifts from M8's              the partition guard never fires
+the CLI pre-flight does not refuse               the window count is the catalogue count
+shadow_exclusions stops hiding admitted hosts
 ```
 
 The last one is worth naming, because it is a defect I introduced and the mutation pass found rather
@@ -428,4 +475,4 @@ source would have looked un-evaluated forever while two rows described it. It is
 differentially — the test compares against the real function rather than restating the rule, because
 a restatement would be the third copy and a third copy cannot detect drift in the other two.
 
-Full suite: **3,953 passed, 9 skipped**.
+Full suite: **3,958 passed, 9 skipped**.
