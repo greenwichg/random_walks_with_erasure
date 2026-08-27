@@ -56,7 +56,12 @@ and none requires a substrate migration.
 >
 > **Separately, 20 orphaned backup temp files** (`17 .db.tmp`, `1 .db.gz.tmp`, `2 .db.tmp-journal`)
 > that `backup_database` never cleans up on failure, `prune-backups.sh`'s glob cannot match, and
-> `aws s3 sync` uploads to S3. §2.14, D9.
+> `aws s3 sync` uploads — **22 objects in the bucket against 20 files on disk**, so the sync has
+> caught at least two temp files mid-write during backups that then succeeded. Measured at **46 MB**:
+> a correctness defect, not a capacity one, and no restore path can select one. §2.14, D9.
+>
+> **§9b names the pattern in my own three wrong sizings**, and says which two claims in this document
+> are still unmeasured and should be read with the same scepticism.
 
 ---
 
@@ -579,9 +584,28 @@ aws s3 sync "$DATA_DIR/backups/" "s3://$S3/backups/"     # no --exclude
 so **every one of those partial database copies is uploaded to S3** and then retained by the
 lifecycle rules for a year.
 
-This is the unbounded local growth I went looking for in §2.13 and guessed wrong about twice. It is
-not the catalogue and not the backups — it is the debris beside them. Size is not yet known; the
-directory is 3.0 GB and 26 compressed backups account for roughly 1.9 GB of it.
+> **Measured, and small — I over-sized this too.** The twenty files total **46 MB**, not the ~1 GB I
+> expected. That is **2.3 MB each against a 554 MB database**: every one of these backups died at
+> roughly **0.4% of the copy**, essentially at the moment it started, which fits a container being
+> killed at recreation far better than a failure partway through.
+>
+> **S14 is a correctness defect, not a capacity one.** It stays on the list because files that
+> nothing can delete and that get uploaded to a billed bucket are worth fixing at any size — but it
+> is 46 MB, and I should not have called it "the unbounded local growth I went looking for".
+
+**The S3 count is the more interesting number, and it is the real argument for the fix.** There are
+**22 `.tmp` objects in the bucket against 20 files on disk** — *more in S3 than exist locally*, even
+though nothing ever deletes a local temp file. So at least two were **transient**: the `:23`
+`aws s3 sync` caught a temp file mid-write during a backup that then **succeeded**, `os.replace`
+removed the local copy, and S3 — synced without `--delete` — kept the partial forever.
+
+That means `--exclude '*.tmp*'` is not only about failed backups. **A perfectly healthy backup can
+have its half-written intermediate uploaded**, purely because the sync and the backup overlapped.
+
+**And nothing can restore one, which is the reassuring half.** Both recovery paths glob the same two
+suffixes — `restore.sh:26` and `verify-restore.sh:16` use `ls -1t "$dir"/*.db "$dir"/*.db.gz` — and
+neither matches `.db.tmp`. Even if one were selected, `restore_database` runs `integrity_ok` first
+and refuses. The debris is inert for recovery; it is waste and noise, not a recovery risk.
 
 **D9** is three small pieces: remove `tmp` in `backup_database`'s failure path; widen
 `prune-backups.sh` to sweep `*.tmp` / `*-journal` older than a day; and add `--exclude '*.tmp*'` to
@@ -601,7 +625,7 @@ the S3 sync so a partial copy can never be shipped in the first place.
 | **S5b** | The score cache is **25.5%** of the database (production), for regenerable data on a 30-day default | now | linear | ops — one env var |
 | **S12** | `article_entities` has **no orphan reaper** | not yet — **measured at 97 orphans of 134,088 (0.072%)**; the class is real, the size is not | unbounded in principle, negligible today | code — one bounded prune beside the event-location reaper |
 | **S13** | **8.0 GB of Docker build cache** — `update.sh` never prunes it, and `cd-deploy.sh`'s age-based prune **freed 458 kB of 8 GB when tested**, so its policy is the wrong shape too | **now** — it is why the volume is at 76% | ~500 MB per manual deploy, unbounded | ops — a **size**-bounded prune; code — D8 |
-| **S14** | **20 orphaned backup temp files** (`17 .db.tmp`, `1 .db.gz.tmp`, `2 .db.tmp-journal`) — `backup_database` never removes `tmp` on failure, `prune-backups.sh`'s glob cannot match them, and `aws s3 sync` ships them | **now** | one file per failed backup, forever, locally **and in S3** | code — D9 |
+| **S14** | **20 orphaned backup temp files** — `backup_database` never removes `tmp` on failure, `prune-backups.sh`'s glob cannot match them, and `aws s3 sync` ships them (**22 in the bucket vs 20 on disk**: the sync can capture a *healthy* backup's temp file mid-write) | now, but **46 MB** — a correctness defect, not a capacity one; no restore path can select one | one file per failed backup, forever, locally and in S3 | code — D9 |
 | **S6** | Volume capacity | depends entirely on the retention horizon | linear | ops — size the volume |
 | **S7** | `storage_stats()` — 11 full COUNTs on every cleanup pass | ~5 M rows | linear | code — sample, don't count |
 | **S8** | Tier lists live in environment variables | ~30 k sources (1 MB of a 2 MB `ARG_MAX`) | linear | code — move to a table |
@@ -967,13 +991,12 @@ own right, and it is short:
 | step | change | why here | risk |
 |---|---|---|---|
 | 0 | **a size-bounded `docker builder prune`** (+ **D8** to keep it there) | frees up to **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today. Note §2.13: the *age*-bounded form freed 458 kB | lowest — build cache only, no images, no volumes |
-| 0b | **D9** — backup temp-file cleanup | 20 files that nothing can delete and that `aws s3 sync` bills for; three small edits, all on failure paths | lowest |
 | 1 | **D2** — `_host_match` becomes O(labels) | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
 | 2 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
 | 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
 | 4 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |
 | 5 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
-| 6 | **D7** — an orphan reaper for `article_entities` | demoted from step 2: production measured 97 orphans, not a leak. Worth closing, not worth leading with | lowest — bounded delete of rows nothing references |
+| 6 | **D7** (`article_entities` reaper) and **D9** (backup temp-file cleanup) | both demoted after measurement — 97 orphans and 46 MB, not the leaks I sized them as. Real defects, cheap fixes, no urgency | lowest — bounded deletes and three failure-path edits |
 | 7 | **§5** — choose the horizons, resize the volume, raise the batch limit for the drain, plan the `VACUUM` | needs 1–5 in place, and it is the step that actually changes production data | the only one with a maintenance window — and the drain takes days at the default batch limit (§4 D3) |
 | 8 | **D6** — tier lists out of the environment | binds at ~30 k sources; nothing before it needs it | medium, and deferrable |
 
@@ -1061,6 +1084,34 @@ sudo tail -30 /var/log/ih-backup.log                          # is the :33 prune
 
 **4 — Where is the other 18.4 GB?** *Answered, and it is the most actionable result in this
 document — see §2.13.*
+
+---
+
+## 9b · A pattern in this document's own errors, worth naming once
+
+Three times here I sized a defect by its **class** and the measurement came back an order of
+magnitude smaller:
+
+| claim | I implied | measured | over by |
+|---|---:|---:|---:|
+| `article_entities` orphan leak (§2.12) | the table's 42.8 MB | **97 rows, ~28 KB** | ~1,500× |
+| the build-cache prune (§2.13) | frees 8.0 GB | **458.5 kB** | ~17,500× |
+| backup temp debris (§2.14) | ~1 GB | **46 MB** | ~22× |
+
+Each was a real defect and each remains on the list. But "there is no reaper, therefore rows leak
+without bound" and "the cache is 100% reclaimable, therefore the prune reclaims it" are both
+*mechanism* arguments standing in for *magnitude* arguments, and they were wrong three times running
+in the same direction — always too large, always in a way that made the finding sound more urgent.
+
+**This matters for how to read the claims here that are still unmeasured**, which are exactly two:
+
+* the **~840 MB of RSS per retention pass** (§2.10). `cleanupMs` measured the time and beat my
+  estimate; nothing has measured the memory, and by the pattern above it deserves scepticism in the
+  other direction too — the OOM-at-730k projection rests on it.
+* the **WAL forced by a backup at the design size** (§2.6, A4). Already flagged as extrapolated from
+  a synthetic writer running thousands of times faster than production.
+
+Everything else in §2 is a direct reading from the harness or from the box.
 
 ---
 
