@@ -1941,17 +1941,28 @@ class MultiSourcePoller:
         every source that worker would have served next.
         """
         while not self._stop.is_set():
-            lease = self._claim()
-            if lease is None:
-                break
+            # The OUTER guard covers `_claim` and `_release` too, not just the poll. Those sit
+            # outside the inner try, so a fault in either killed the worker outright — and a pool
+            # that silently shrinks to zero stops polling with nothing logged anywhere. Found when
+            # pytest's thread-exception hook caught a worker dying in `_claim`; without that hook
+            # the symptom would have been "ingestion stopped", which is the worst shape a fault can
+            # take here and exactly what this method's docstring claims to prevent.
+            lease = None
             try:
-                self.poll_adapter_once(lease.adapter)
-            except Exception as e:                          # isolation: one source never stops another
-                self._log(logging.ERROR, "source_poll_cycle_failed",
-                          provider=lease.adapter.provider, error=repr(e))
-            finally:
-                self._release(lease)                        # even on failure — a raised source must
+                lease = self._claim()
+                if lease is None:
+                    break
+                try:
+                    self.poll_adapter_once(lease.adapter)
+                except Exception as e:                      # isolation: one source never stops another
+                    self._log(logging.ERROR, "source_poll_cycle_failed",
+                              provider=lease.adapter.provider, error=repr(e))
+                finally:
+                    self._release(lease)                    # even on failure — a raised source must
                                                             # be rescheduled, not dropped forever
+            except Exception as e:                          # a scheduler fault must not end the worker
+                self._log(logging.ERROR, "source_worker_fault", worker=index, error=repr(e))
+                self._stop.wait(0.5)                        # do not hot-spin on a persistent fault
         self._log(logging.INFO, "source_worker_stopped", worker=index)
 
     def _run_adapter(self, adapter: SourceAdapter) -> None:

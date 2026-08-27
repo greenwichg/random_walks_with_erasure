@@ -330,12 +330,54 @@ def test_the_stagger_is_actually_WIRED_into_start(poller, monkeypatch):
     monkeypatch.setenv("RWE_POLL_WORKERS", "2")
     seen = {}
     real = sources.initial_leases
-    monkeypatch.setattr(sources, "initial_leases",
-                        lambda a, workers, now: seen.setdefault("called", (len(a), workers))
-                        or real(a, workers, now))
+
+    def _spy(a, workers, now):
+        # NOT `seen.setdefault(...) or real(...)`: setdefault returns the value it stored, which is
+        # a truthy tuple, so `or` short-circuited the real call away and `_leases` became that
+        # tuple. Workers then died in `_claim` on `l.due`, which pytest's thread-exception hook
+        # caught — and which exposed that `_worker` guarded only the poll, not the scheduler calls
+        # around it.
+        seen["called"] = (len(a), workers)
+        return real(a, workers, now)
+
+    monkeypatch.setattr(sources, "initial_leases", _spy)
     for i in range(6):
         poller.registry.register(_Probe(f"s{i}", interval=600.0))
     monkeypatch.setattr(poller, "poll_adapter_once", lambda a: None)
     poller.start()
     poller.stop(join_timeout=2.0)
     assert seen.get("called") == (6, 2)
+
+
+def test_a_fault_in_the_SCHEDULER_does_not_silently_kill_a_worker(poller, monkeypatch):
+    """`_worker` guarded `poll_adapter_once` but not `_claim` or `_release`, which sit outside that
+    try. A fault in either killed the worker outright, and a pool that shrinks to zero stops polling
+    with nothing logged anywhere — "ingestion stopped", the worst shape a fault can take here, and
+    the exact failure this worker's own docstring claims to prevent.
+
+    Found because pytest's thread-exception hook caught a worker dying in `_claim`. Without that
+    hook it would have been invisible."""
+    monkeypatch.setenv("RWE_POLL_WORKERS", "2")
+    for i in range(4):
+        poller.registry.register(_Probe(f"s{i}", interval=0.05))
+    events = []
+    poller._log = lambda lvl, ev, **f: events.append(ev)
+
+    calls = [0]
+    real_claim = poller._claim
+
+    def _flaky_claim():
+        calls[0] += 1
+        if calls[0] <= 2:
+            raise RuntimeError("scheduler fault")
+        return real_claim()
+
+    monkeypatch.setattr(poller, "_claim", _flaky_claim)
+    monkeypatch.setattr(poller, "poll_adapter_once", lambda a: setattr(a, "polls", a.polls + 1))
+    poller.start()
+    time.sleep(0.8)
+    polled = sum(a.polls for a in poller.registry.enabled())
+    poller.stop(join_timeout=2.0)
+
+    assert "source_worker_fault" in events, "a scheduler fault must be reported, not swallowed"
+    assert polled > 0, "and the worker must keep working afterwards, not die"
