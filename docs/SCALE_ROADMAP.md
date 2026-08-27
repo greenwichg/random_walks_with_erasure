@@ -387,6 +387,7 @@ M1  corpus boundary ──┬── M2  bound Tier A + fix the count caps ──
 | M7 | Discovery + network validation | M5, **plus an explicit go-ahead and a ToS review** | first thing that touches a publisher |
 | M8 | Evaluation harness on shadow data | M5, M7, M4 | assignment hit rate is one of its inputs |
 | M9 | Promotion / retirement automation | M8 | the gates are only as good as the metrics |
+| **M10** | **Source admission becomes data, not deployment** — one `sources` table replacing `crawler_publishers.json` (baked into the image) and the tier environment variables; `candidate`/`validated` lifecycle states so a validation campaign is resumable | M7, M8, M9 (nothing to admit before they existed) | **`docs/SOURCE_PIPELINE_50K_AUDIT.md`.** The only step in `discover→validate→crawl→shadow→evaluate→promote` with no mechanism at all. Binds at 100–1,000 sources; subsumes M3's D6 |
 | M10 | Incremental clustering | M2 | **only if Tier A must exceed its budget** |
 
 ## Why incremental clustering is last, and why it may never be needed
