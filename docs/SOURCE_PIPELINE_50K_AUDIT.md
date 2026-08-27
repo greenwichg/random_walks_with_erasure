@@ -200,30 +200,49 @@ discharge the ToS review**, which gates any real expansion at any size.
 
 ---
 
-## 6 · Sizing M10 before building it
+## 6 · M10 sized, on production
 
-The gain is arithmetic, not a guess, and it is measurable read-only. This counts hosts by URL host —
-the same key `source_discovery.candidates` groups on — over the **whole** catalogue instead of the
-six-day window:
+Measured 2026-08-27, read-only, hosts keyed the way `source_discovery.candidates` keys them:
 
-```bash
-cd /opt/ih && source deploy/ops/_compose.sh
-dc exec -T api python -c "
-import sqlite3, collections
-from urllib.parse import urlparse
-c = sqlite3.connect('/app/data/ih_beta.db')
-n = collections.Counter()
-for (u,) in c.execute('select canonical_url from feed_articles'):
-    h = urlparse(u).netloc.lower()
-    h = h[4:] if h.startswith('www.') else h
-    if h: n[h] += 1
-print('distinct hosts in the catalogue:', len(n))
-for f in (10, 5, 3):
-    print(f'  hosts with >= {f:2} articles:', sum(1 for v in n.values() if v >= f))
-"
+```
+distinct hosts in the catalogue: 9397
+  hosts with >= 10 articles: 1525
+  hosts with >=  5 articles: 2657
+  hosts with >=  3 articles: 3912
 ```
 
-Against the windowed run's `hosts seen: 4,238` and `CANDIDATES: 177`, the `>= 10` line is the
-ceiling M10 raises the supply to, before subtracting the ~546 already tracked and ~28 proxies. If it
-comes back near 177, M10 is worth much less than this audit argues and the ranking should move back
-to L1 — which is exactly the check I did not do before writing the first version.
+| | 6-day clustering window | full catalogue | |
+|---|---:|---:|---:|
+| distinct hosts | 4,238 | **9,397** | 2.22× |
+| hosts ≥ 10 articles | 751 | **1,525** | 2.03× |
+
+The gates remove **574 specific hosts** — 546 the registry already tracks, 28 aggregators/proxies.
+That is a fixed set, not a percentage, so it subtracts the same way from a wider window:
+
+```
+1,525 − 574  =  951 candidates      5.4× today's 177
+1,525 − 650  =  875 candidates      4.9×, allowing for more registry hosts appearing over 30 days
+```
+
+**M10 takes the candidate pool from 177 to roughly 900.** That is the difference between a ceiling
+below 200 sources and a 1,000-source cohort being reachable at all — and it comes from correcting
+which window one function reads.
+
+It also confirms the mechanism rather than just the outcome: the *host count itself* more than
+doubles (4,238 → 9,397). Two thirds of the hosts we already ingest from are invisible to discovery
+purely because their articles are older than six days.
+
+### What this does not license
+
+**Lowering the floor.** At floor 5 the pool would be ~2,000 and at floor 3 ~3,300 — but that is
+6,000 and 9,800 probe requests against real publishers, and the floor's stated rationale still
+holds: it is a cost bound, and a host with three articles is one we *have no evidence about* rather
+than one we have judged. The floor is not what is broken here; the window is. Widen the window
+first, keep the floor at 10, and revisit only if 900 candidates prove insufficient.
+
+### The bar this milestone has to clear
+
+M10 is worth building if a discovery run over the full catalogue reports **≥ 800 candidates**. That
+is the number this section predicts, it is checkable by re-running `audit_source_discovery.py` after
+the change with no network involved, and if it comes back near 177 the change did not do what this
+audit says it does.
