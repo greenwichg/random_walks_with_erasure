@@ -264,6 +264,60 @@ was the **harness measuring its own compression**: 1,000 sources at 5 s demands 
 rate, so cohort size is the only variable. Recording it because the first numbers looked like a
 dramatic architectural finding and were nothing of the kind.
 
+## 4.6 The full ladder to 50,000 — what it did and did not establish
+
+Ladder run after the B6 stagger landed: 100 → 50,000, 25 s per cohort, 16 workers, 2.5 polls/s held
+constant.
+
+### Established at 50,000 sources
+
+| | measured |
+|---|---|
+| Registry build, 50,000 adapters | **0.13 s** |
+| Steady-state throughput | 78 polls / 25 s ≈ **3.1/s** against 2.5 demanded — keeping up |
+| Lock occupancy | **13.7 – 16.6%** |
+| p95 poll (locked ingest) | **60.3 ms** |
+| Concurrency cap | peak in-flight **16** = exactly the pool |
+| **Tier A rows / shadow leaks** | **0 / 0** |
+| Peak RSS | **240 – 620 MB** across runs (**B4 answered**, with real variance) |
+| Tier prefilter SQL | **277 ms** at 50k |
+| Cluster fetch / build | 209.5 ms / **0.1 ms** |
+
+**B4 is closed:** 50,000 adapter objects plus the lease table cost a few hundred MB, not gigabytes.
+Reported as a range because two runs differed 2.5× — a point estimate would be a flattering fiction.
+
+**§3.5 needs a correction.** The synthetic bench put the 50k-term `NOT IN` at 57 ms. Against a real
+table with a real query planner it is **277 ms** — ~5× worse, and now the largest single cost on the
+clustering fetch path. Still not a blocker against a 13.6 s build, but the bench understated it, and
+"measured on a toy table" was not the same as "measured".
+
+### ⚠ NOT established — and the harness said PASS anyway
+
+`polls` and `catalog_rows` came back **identical at 10k, 25k and 50k**: 78 and 156. At 2.5 polls/s
+for 25 s, ~62 polls is the correct steady-state sample — but it means **0.2% of sources were polled
+at 50k**, and these were never measured:
+
+* **Starvation.** The check is gated on `seconds >= 2 × interval`. At 50k the interval is 20,000 s
+  and the window 25 s, so it never ran — and the field kept its `0` default, printing
+  `starved_sources 0` as a PASS on an invariant it had not tested. **The same "a gate that cannot
+  fire reads as a gate that passed" failure this codebase has found ten times in its own
+  instruments, reproduced inside the instrument built to find it.** It now reports `None` /
+  `NOT MEASURED`, which is explicitly not a pass, and a new `coverage_pct` makes the sampling
+  visible.
+* **Catalogue growth at scale.** 156 rows is the sample, not 50k-scale accumulation.
+  `bytes_per_article` is meaningless at that row count and should be ignored below ~10k rows.
+
+### The structural limit this exposes
+
+**You cannot observe 50,000 sources' per-source behaviour in 25 seconds.** Steady state at 50k is
+2.5 polls/s against a 5.5-hour interval, so full coverage takes **5.5 hours** by definition. That is
+a property of the target, not a flaw in the harness.
+
+So the ladder validates **rate and isolation properties** — which is a real result — and per-source
+properties need a long-running soak, not a longer ladder. Anyone reading "50k PASS" should read it
+as *the scheduler, the lock and Tier A isolation hold at a 50,000-source registry*, and not as
+*every one of 50,000 sources was exercised*.
+
 ## 5. What this plan does not settle
 
 * **The global politeness ceiling** (B5) — how many simultaneous outbound connections Hidden View is

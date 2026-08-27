@@ -181,7 +181,8 @@ class CohortResult:
     lock_held_s: float = 0.0
     peak_inflight: int = 0
     concurrency_overrun: int = 0
-    starved_sources: int = 0
+    starved_sources = 0            # None = window too short to judge
+    sources_polled: int = 0
     catalog_rows: int = 0
     tier_a_rows: int = 0
     shadow_leak_rows: int = 0
@@ -212,6 +213,8 @@ class CohortResult:
             "peak_inflight": self.peak_inflight,
             "concurrency_overrun": self.concurrency_overrun,
             "starved_sources": self.starved_sources,
+            "sources_polled": self.sources_polled,
+            "coverage_pct": round(100.0 * self.sources_polled / max(1, self.sources), 1),
             "catalog_rows": self.catalog_rows,
             "tier_a_rows": self.tier_a_rows,
             "shadow_leak_rows": self.shadow_leak_rows,
@@ -323,9 +326,19 @@ def run_cohort(n: int, *, seconds: float, workers: int, interval_s: float, fail_
             res.lock_held_s += (float(f.get("pollMs") or 0.0)
                                 + float(f.get("postCycleMs") or 0.0)) / 1000.0
             polled.add(f.get("provider"))
-        # Starvation is only meaningful once a source has HAD two intervals to be served in.
+        # Starvation is only meaningful once a source has HAD two intervals to be served in — and
+        # when it is NOT meaningful the answer must be "not measured", never 0.
+        #
+        # The first version left the field at its 0 default when the window was too short. At 50,000
+        # sources the interval is 20,000 s and the window 25 s, so the check never ran and the
+        # harness printed `starved_sources 0` — a PASS on an invariant it had not tested. That is
+        # the same "a gate that cannot fire reads as a gate that passed" failure this codebase has
+        # found ten times in its own instruments, reproduced here in the instrument built to find it.
         if res.seconds >= 2 * interval_s:
             res.starved_sources = sum(1 for h in hosts if h not in polled)
+        else:
+            res.starved_sources = None
+        res.sources_polled = len(polled)
 
         if errs and not res.polls:
             print(f"    !! every poll raised — this is a HARNESS fault, not a finding:")
@@ -453,11 +466,14 @@ def check(summary: dict) -> "tuple[list, list]":
         if key == "lock_occupancy_pct":
             if v >= limit:
                 hard.append(f"{why}: {v}%")
+        elif v is None:
+            soft.append(f"{key} NOT MEASURED — the window was too short to judge it. This is not "
+                        f"a pass.")
         elif v > limit:
             hard.append(f"{why}: {v}")
     for key, limit in SOFT.items():
         v = summary.get(key, 0)
-        if v > limit and not any(key in h for h in hard):
+        if v is not None and v > limit and not any(key in h for h in hard):
             soft.append(f"{key} {v} > {limit}")
     return hard, soft
 
@@ -513,7 +529,7 @@ def main(argv=None) -> int:
         out.append(s)
         for k in ("registry_build_s", "polls", "polls_per_s", "poll_failure_pct", "p50_poll_ms",
                   "p95_poll_ms", "p95_fetch_ms", "lock_occupancy_pct", "peak_inflight",
-                  "starved_sources", "catalog_rows", "tier_a_rows", "shadow_leak_rows",
+                  "starved_sources", "sources_polled", "coverage_pct", "catalog_rows", "tier_a_rows", "shadow_leak_rows",
                   "cluster_fetch_ms", "cluster_build_ms", "cluster_rows_in", "warm_wrapper_ms", "warm2_ms", "warm_stood_down", "db_mb", "bytes_per_article", "peak_rss_mb", "cpu_pct",
                   "exclusion_sql_ms"):
             print(f"    {k:<22} {s[k]}")
