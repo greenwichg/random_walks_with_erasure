@@ -169,7 +169,31 @@ def main(argv=None) -> int:
     base_ms = min(timings)
 
     print(f"\n=== BAR 1 — the boundary is a no-op with nothing configured ===")
-    selected = corpus.select(rows, total=total, cap=cap, log=lambda *a, **k: None)
+    # "WITH NOTHING CONFIGURED" HAS TO BE ENFORCED, NOT ASSUMED.
+    #
+    # This bar read the LIVE environment, which was fine for as long as both tier lists were empty
+    # — the shipped state, and the state every earlier run of this script saw. The moment M7 put
+    # `RWE_CORPUS_SHADOW=kait8.com,kwch.com` on production (2026-08-26), `corpus.enabled()` became
+    # True, `select()` correctly stopped short-circuiting, and this bar reported
+    #     *** FAIL: select() returned a new list while tiering is off
+    # about an environment where tiering was demonstrably ON. The assertion was still true; its
+    # PREMISE had expired. `rows in` and `rows out` were both 27,764 — nothing was being dropped,
+    # only copied — so the failure was entirely the un-taken short-circuit.
+    #
+    # That matters beyond a confusing line: `audit_shadow_cohort.py` tells operators to run this
+    # script "before promoting anything", so a permanently-failing bar sits directly in M9's
+    # promotion path, and a check that always fails is one people learn to skip.
+    saved = {k: os.environ.pop(k, None) for k in ("RWE_CORPUS_TIER_B", "RWE_CORPUS_SHADOW")}
+    try:
+        assert not corpus.enabled(), "the bar must run with tiering genuinely off"
+        selected = corpus.select(rows, total=total, cap=cap, log=lambda *a, **k: None)
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+    if any(v for v in saved.values()):
+        print(f"  (tiering IS configured here — {', '.join(k for k, v in saved.items() if v)}"
+              f" — cleared for this bar only, then restored)")
     print(f"  rows in  : {len(rows):,}      rows out : {len(selected):,}")
     print(f"  identity : {'SAME LIST OBJECT' if selected is rows else 'A COPY'}")
     print(f"  stories  : {len(base):,}   build {base_ms:,.0f} ms"
