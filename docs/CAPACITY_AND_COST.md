@@ -1,5 +1,20 @@
 # Capacity & Cost Analysis (2026-07-27)
 
+> **Superseded in part, 2026-08-27 — see `docs/STORAGE_50K_DESIGN.md`.** Three things below have
+> changed since this was written, and one of its conclusions is now measured rather than assumed:
+>
+> * **The two 🔴 findings are closed.** Local backup retention is tiered
+>   (`deploy/ops/prune-backups.sh`, ~23 files, no longer growing with time) and the S3 bucket has a
+>   lifecycle configuration (`terraform/s3.tf`). The projection tables below assume neither.
+> * **Backups are compressed**, at a measured **7.8×**. Every "full uncompressed copy" number below
+>   overstates local and S3 footprint by roughly that factor.
+> * **"SQLite write concurrency — not on this trajectory" is confirmed with numbers.** Against a
+>   1 M-row catalogue with 16 concurrent real ingest threads: **~330 articles/second, zero
+>   `database is locked`** — 114× the 50,000-source requirement. What breaks first is the *retention
+>   pass*, not the writer.
+>
+> The measured constants, the per-provider table and the "when to upgrade what" reasoning all stand.
+
 Measured, not estimated, where measurement was possible: bytes-per-article and CPU-per-article come
 from running the real ingestion pipeline; ingestion rate comes from two production catalog counts;
 infrastructure comes from `terraform/` and the live compose/ops configuration.

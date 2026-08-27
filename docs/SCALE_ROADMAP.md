@@ -135,6 +135,17 @@ writes/second, bursty, contending with retention, `corpus_refresh` and the story
 writer. Storage at 3.3 KB/article all-in [M: 25,300 articles = 83.2 MB] projects to **181 GB/year at
 150k/day, 602 GB/year at 500k/day** [P].
 
+> **Measured and largely retired, 2026-08-27 — `docs/STORAGE_50K_DESIGN.md` §2.2.** Against a real
+> 1,000,000-row catalogue with **16 concurrent real ingest threads**, SQLite sustains **~330
+> articles/second with zero `database is locked` errors**; `busy_timeout=5000` absorbs the
+> contention entirely and it shows up as a 172 ms p95 on a background thread, never as an error.
+> 330/s is 28.5 M articles/day against the 250,000/day the 50k target implies — **114× headroom**.
+>
+> The *volume* half of this break stands: 3,078 B/article is 770 MB/day at 50k sources, and that has
+> to be bounded by an age policy. But the writer is not the ceiling, and the thing that actually
+> cannot run at 50k sources is `corpus_health.run_retention` — which loads the entire catalogue into
+> Python and needs **5.58 KB of RSS per row**, exhausting a 4 GiB box at ~730,000 rows.
+
 ---
 
 # Part 2 — What does *not* break, which is the useful surprise
@@ -369,7 +380,7 @@ M1  corpus boundary ──┬── M2  bound Tier A + fix the count caps ──
 |---|---|---|---|
 | **M1** | **Corpus boundary — the clustering corpus becomes an explicit projection** | nothing | everything else depends on it; provable today with zero new publishers |
 | M2 | Bound Tier A; replace count caps with tier-aware, age-based bounds; precompute `readingMinutes` at ingest so `_fetch` can narrow (31% of the build) | M1 | closes breaks #1 and #2 |
-| M3 | Storage substrate: Postgres or partitioned SQLite, Tier B without `body`, real search index, retention by age-per-tier | M1 (the tier column must exist before the migration, or you migrate twice) | closes break #5; long pole; parallelizable with M6 |
+| M3 | Storage substrate: ~~Postgres or partitioned SQLite~~, Tier B without `body`, real search index, retention by age-per-tier — **audited and designed, `docs/STORAGE_50K_DESIGN.md`** | M1 (the tier column must exist before the migration, or you migrate twice) | ~~closes break #5~~ — **break #5 was measured and is not the constraint**: SQLite sustains ~330 articles/s with zero lock errors, 114× the target. The real bottleneck is the age-retention pass, which is O(catalogue) in time *and* memory. Not a substrate migration; not the long pole either |
 | M4 | Tier B story attachment by assignment + the byte-identical containment test | M1, M2 | this is what makes Tier B visible in stories |
 | M5 | Shadow ingest lane; amend the corpus contract; extend the guardrail tests | M1 (**M3/M6 did not bind — see Part 9**) | nowhere safe to put candidates before this |
 | M6 | Crawler fan-out: poller out of the API process, narrow the global lock, worker leases off `next_due_at`, raise the interval ceiling, add dormancy, per-host politeness + robots cache | M1 (tier marker on ingested rows) | closes break #4; the `crawler.py` POC already has the robots gate and rate limiter, never run |

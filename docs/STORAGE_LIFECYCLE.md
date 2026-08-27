@@ -77,8 +77,14 @@ python examples/storage_lifecycle.py --stats    # sizes only, prune nothing
 
 ## 3 · Backups: tiered, not "newest N"
 
-Every backup is a **full, uncompressed copy** of the database, so a flat `BACKUP_KEEP=48` costs 48×
-the DB size. `deploy/ops/prune-backups.sh` replaces it with grandfather-father-son retention:
+Every backup is a **full copy** of the database, so a flat `BACKUP_KEEP=48` costs 48× the compressed
+DB size. `deploy/ops/prune-backups.sh` replaces it with grandfather-father-son retention:
+
+> **Correction, 2026-08-27.** This section used to say "full, **uncompressed** copy", which stopped
+> being true when `store.backup_compression()` shipped defaulting **on**. Measured in
+> `docs/STORAGE_50K_DESIGN.md` §2.6: gzip -6 gives **7.8×** on a real catalogue, so the tiered
+> footprint is ~⅛ of what the sentence above implied. The argument for tiering is unchanged — a
+> count that stops growing with time — but the multiplier is not.
 
 | Tier | Default | Buys you |
 |---|---|---|

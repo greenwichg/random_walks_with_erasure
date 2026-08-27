@@ -120,7 +120,7 @@ campaign, not a single run — and it is the one phase that genuinely touches pu
 
 | # | Bottleneck | Binds at | Status |
 |---|---|---|---|
-| **B2** | Storage substrate + backup strategy (M3) | ~1k–5k | **hard prerequisite** |
+| **B2** | Storage substrate + backup strategy (M3) | ~1k–5k | **audited — `docs/STORAGE_50K_DESIGN.md`.** Not a substrate problem: SQLite has 114× write headroom. It is the *age-retention pass* (O(catalogue) in time and RSS) and the *backup cadence* (25.5 s/GB, hourly) |
 | **B1** | Polling interval must scale with N | ~10k | needs M6 interval ceiling + dormancy |
 | B3 | Discovery/validation campaign scheduling | 25k+ | operational, not architectural |
 | B4 | 50k adapter objects + crawl config in memory | unknown | **measure** — no basis to predict |
