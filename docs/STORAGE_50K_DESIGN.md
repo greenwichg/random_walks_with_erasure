@@ -45,10 +45,18 @@ and none requires a substrate migration.
 > reaper is real; the leak I sized it against is not. §2.12.
 >
 > **And the thing actually filling the disk is not storage at all.** The volume is at 76% with
-> 6.3 GB free, and **8.0 GB of that is Docker build cache** — 100% reclaimable, accumulating at
-> ~500 MB per manual deploy, because the prune that would remove it lives in `cd-deploy.sh` and the
-> documented manual deploy runs `update.sh` directly. §2.13. One command frees it; D8 stops it
-> coming back.
+> 6.3 GB free, and **8.0 GB of that is Docker build cache**, accumulating at ~500 MB per manual
+> deploy. There is a prune for it in `cd-deploy.sh`, which the manual deploy path never reaches —
+> and **when I had it run, it freed 458 kB of 8 GB**, because it filters on last-accessed and every
+> build touches the cache. The policy needs to be a size bound, not an age bound. §2.13.
+>
+> **A third correction, and this one I authored.** My first version of D8 proposed moving that block
+> into `update.sh` unchanged — a fix that would have fixed nothing, which is the exact defect class
+> this document keeps finding in other people's code.
+>
+> **Separately, 20 orphaned backup temp files** (`17 .db.tmp`, `1 .db.gz.tmp`, `2 .db.tmp-journal`)
+> that `backup_database` never cleans up on failure, `prune-backups.sh`'s glob cannot match, and
+> `aws s3 sync` uploads to S3. §2.14, D9.
 
 ---
 
@@ -492,26 +500,92 @@ today                          22.0 / 29 GB  =  76%   (6.3 GB free)   A5 FAIL
 after `docker builder prune`   14.0 / 29 GB  =  48%   (15.0 GB free)  A5 PASS with margin
 ```
 
-**And the fix is already written — in a file this deployment does not run.** `cd-deploy.sh:149`
-carries exactly the right thing, with a comment that diagnosed exactly this failure ("*It filled the
-disk at roughly 500 MB per deploy, so the failure mode was 'PREFLIGHT starts refusing to deploy'
-some 25 deploys out*"):
+**There is a prune for this — in a file this deployment does not run.** `cd-deploy.sh:149` carries
+one, with a comment that diagnosed exactly this failure ("*It filled the disk at roughly 500 MB per
+deploy, so the failure mode was 'PREFLIGHT starts refusing to deploy' some 25 deploys out*"):
 
 ```bash
 PRUNE_WINDOW="${CD_BUILD_CACHE_KEEP_HOURS:-168}h"
 docker builder prune -f --filter "until=${PRUNE_WINDOW}"
 ```
 
-`cd-deploy.sh` **calls** `update.sh` and then prunes. But the documented manual deploy is
-`sudo bash deploy/ops/update.sh <ref>` — run directly, not through `cd-deploy` — and `update.sh`
-never prunes. Its only mention of the subject is line 133, a remediation *message* printed when a
-deploy has already failed. So every manual deploy builds, adds ~500 MB of cache, and nothing on that
-path ever removes it. 8 GB is roughly sixteen deploys' worth.
+`cd-deploy.sh` **calls** `update.sh` and then prunes; the documented manual deploy runs `update.sh`
+directly and never reaches it. `update.sh`'s only mention of the subject is line 133, a remediation
+*message* printed after a deploy has already failed.
 
-**This is the session's recurring defect class in a new dress.** Not "a gate that cannot fire" and
-not "a switch that cannot reach the container", but the same shape: **a cleanup that lives one level
-above the path anyone actually takes.** Somebody already found this problem, measured it, wrote the
-fix and documented the reasoning — and put it where this deployment never reaches.
+> **⚠ And here is where I was wrong, measured on the box.** Running that exact command freed
+> **458.5 kB of 8,037 MB — 0.006%.** Three cache records were old enough; nothing else was.
+>
+> `--filter until=168h` filters on **last accessed**, and BuildKit touches a cache record every time
+> a build reuses it. At this deploy cadence essentially the whole 8 GB is "accessed" within any
+> 7-day window, so the filter can never reach it. `docker system df` reporting "100% RECLAIMABLE"
+> means *not in use by a running build* — which is a different question, and I read one as the other.
+>
+> So the accurate statement is not "the fix exists in the wrong file". It is: **a cleanup exists in
+> the wrong file, and its policy is the wrong shape.** Moving it into `update.sh` unchanged would
+> have been a fix that fixes nothing — the same defect class I keep finding, produced by me, in the
+> proposal meant to close it.
+
+**An age bound cannot bound a cache that is touched on every build. A size bound can:**
+
+```bash
+docker builder prune -f --keep-storage 2GB     # evict least-recently-used down to 2 GB
+docker builder prune -f                        # or take all 8.037 GB; next build is cold
+```
+
+Build cache is purely a build accelerator — nothing at runtime reads it, and `builder prune` never
+touches images, containers or volumes. The only cost of pruning all of it is a slower next build.
+
+### 2.14 Twenty orphaned backup temp files that nothing will ever delete — and that ship to S3
+
+The backup directory, broken down by suffix:
+
+```
+     23 allowlist.txt          26 db.gz              23 score_reference.json
+     17 db.tmp                  1 db.gz.tmp           2 db.tmp-journal
+```
+
+**Twenty files that are not backups.** `backup_database` writes to `dest_path + ".tmp"` and then
+`os.replace`s it into place — correct, and the reason a partial backup is never published under a
+real name. But the cleanup is missing from the failure path:
+
+```python
+src = sqlite3.connect(db_path)
+tmp = dest_path + ".tmp"
+dst = sqlite3.connect(tmp)
+try:
+    src.backup(dst)
+finally:
+    dst.close()                 # closes the handles …
+    src.close()                 # … and never removes `tmp`
+os.replace(tmp, dest_path)      # only reached on success
+```
+
+Every interrupted or failed backup leaves a `.db.tmp` behind. The two `.db.tmp-journal` files say at
+least two of those were **killed** rather than raised — SQLite leaves a rollback journal when a
+process dies mid-write, and a plausible mechanism is `dc up -d` recreating the `backup-scheduler`
+container mid-copy during a deploy. *(Mechanism proposed, not established — the timestamps on those
+files against the deploy log would settle it.)*
+
+**Three separate things then fail to notice.** `prune-backups.sh` globs `-name '*.db' -o -name
+'*.db.gz'`, and `ih_beta-…db.tmp` matches **neither** — so the tiered retention that works perfectly
+on real backups (§9) cannot see these at all. `create_backup`'s gzip step does clean up on an
+exception but not on a kill, which is the stray `.db.gz.tmp`. And `backup-offhost.sh` runs
+
+```bash
+aws s3 sync "$DATA_DIR/backups/" "s3://$S3/backups/"     # no --exclude
+```
+
+so **every one of those partial database copies is uploaded to S3** and then retained by the
+lifecycle rules for a year.
+
+This is the unbounded local growth I went looking for in §2.13 and guessed wrong about twice. It is
+not the catalogue and not the backups — it is the debris beside them. Size is not yet known; the
+directory is 3.0 GB and 26 compressed backups account for roughly 1.9 GB of it.
+
+**D9** is three small pieces: remove `tmp` in `backup_database`'s failure path; widen
+`prune-backups.sh` to sweep `*.tmp` / `*-journal` older than a day; and add `--exclude '*.tmp*'` to
+the S3 sync so a partial copy can never be shipped in the first place.
 
 ---
 
@@ -526,7 +600,8 @@ fix and documented the reasoning — and put it where this deployment never reac
 | **S5** | Three prune columns unindexed (`scored_articles` worst) | ~1 M rows in the score cache | full scan per pass — **117.6 ms of a 235.8 ms pass at 400 k** | schema — three indexes |
 | **S5b** | The score cache is **25.5%** of the database (production), for regenerable data on a 30-day default | now | linear | ops — one env var |
 | **S12** | `article_entities` has **no orphan reaper** | not yet — **measured at 97 orphans of 134,088 (0.072%)**; the class is real, the size is not | unbounded in principle, negligible today | code — one bounded prune beside the event-location reaper |
-| **S13** | **8.0 GB of Docker build cache, 100% reclaimable** — `update.sh` never prunes it; the prune lives in `cd-deploy.sh`, which this deployment does not run | **now** — it is why the volume is at 76% | ~500 MB per manual deploy, unbounded | ops — one command; code — D8 |
+| **S13** | **8.0 GB of Docker build cache** — `update.sh` never prunes it, and `cd-deploy.sh`'s age-based prune **freed 458 kB of 8 GB when tested**, so its policy is the wrong shape too | **now** — it is why the volume is at 76% | ~500 MB per manual deploy, unbounded | ops — a **size**-bounded prune; code — D8 |
+| **S14** | **20 orphaned backup temp files** (`17 .db.tmp`, `1 .db.gz.tmp`, `2 .db.tmp-journal`) — `backup_database` never removes `tmp` on failure, `prune-backups.sh`'s glob cannot match them, and `aws s3 sync` ships them | **now** | one file per failed backup, forever, locally **and in S3** | code — D9 |
 | **S6** | Volume capacity | depends entirely on the retention horizon | linear | ops — size the volume |
 | **S7** | `storage_stats()` — 11 full COUNTs on every cleanup pass | ~5 M rows | linear | code — sample, don't count |
 | **S8** | Tier lists live in environment variables | ~30 k sources (1 MB of a 2 MB `ARG_MAX`) | linear | code — move to a table |
@@ -544,7 +619,7 @@ a problem that does not exist.
 
 ## 4 · The smallest architecture that clears them
 
-**Stay on SQLite.** Nothing measured here is a substrate problem. The design is six code changes,
+**Stay on SQLite.** Nothing measured here is a substrate problem. The design is seven code changes,
 one schema change, and a handful of settings — no migration, no second database, no new service on
 the critical path.
 
@@ -718,14 +793,21 @@ Two properties to keep from the original: it must be **harmless when retention i
 articles means no orphans, and the query returns nothing), and it must run **after** the catalogue
 prune, which is the thing that creates the orphans.
 
-### D8 — `update.sh` prunes the build cache, because it is the deploy that actually runs
+### D8 — `update.sh` prunes the build cache, with a policy that can actually reach it
 
-§2.13: `cd-deploy.sh` prunes cold build cache after a successful deploy; `update.sh` does not, and
-`update.sh` is what a manual deploy invokes. Move (or duplicate) the existing block into
-`update.sh`'s success path, keeping every property the original was written with:
+§2.13: `cd-deploy.sh` prunes after a successful deploy; `update.sh` does not, and `update.sh` is what
+a manual deploy invokes. Put a prune in `update.sh`'s success path — **but not the one that is
+there**. The measured result is the whole point: `--filter until=168h` freed 458 kB of 8 GB, because
+it filters on last-accessed and BuildKit touches every record a build reuses.
 
-* **the same policy** — `--filter until=${CD_BUILD_CACHE_KEEP_HOURS:-168}h`, so the last week of
-  cache survives and the rollback window is unaffected;
+Use a **size** bound instead — `--keep-storage ${CD_BUILD_CACHE_KEEP:-2GB}` — which evicts
+least-recently-used records until the cache is under the limit, and therefore bounds it no matter how
+often builds run. `cd-deploy.sh`'s own filter should change to match; leaving two different policies
+in two deploy paths is how this was missed in the first place.
+
+Keep the properties the original was written with:
+
+* **bounded, and the bound is the setting** — the last builds stay warm, the tail goes;
 * **non-fatal by construction** — a housekeeping failure must never turn a green deploy red, which
   is why the original swallows the exit status and reports the result;
 * **idempotent** — if `cd-deploy` is the caller, the second prune is a no-op, so nothing needs to
@@ -733,6 +815,23 @@ prune, which is the thing that creates the orphans.
 
 Immediate relief needs no code at all — the same command, run once by hand — but the code change is
 what stops it coming back at ~500 MB per deploy.
+
+### D9 — Backups stop leaving debris, and stop shipping it
+
+§2.14. Three pieces, none of which changes a successful backup:
+
+* **`backup_database`** — remove `tmp` when the copy does not complete. The `finally` block already
+  closes both handles; it should unlink the temp file too, on any path that does not reach
+  `os.replace`. This is the root fix: everything else below is cleaning up after it.
+* **`prune-backups.sh`** — its glob is `-name '*.db' -o -name '*.db.gz'`, which matches neither
+  `.db.tmp` nor `.db.gz.tmp` nor `.db.tmp-journal`. Add a sweep for `*.tmp*` older than a day, kept
+  separate from the tiered policy so a temp file can never occupy a retention slot.
+* **`backup-offhost.sh`** — `aws s3 sync` needs `--exclude '*.tmp*'`. A partial database copy should
+  not reach the bucket even if the two fixes above regress.
+
+The ordering matters and mirrors the ordering already inside `run_cleanup`: fix the producer first,
+then the reaper, then the shipper — otherwise each fix is tested against debris the previous one was
+still creating.
 
 ### D6 — Tier assignment moves out of the environment
 
@@ -867,7 +966,8 @@ own right, and it is short:
 
 | step | change | why here | risk |
 |---|---|---|---|
-| 0 | **D8** + one `docker builder prune` | frees **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today | lowest — removes cold build cache only, no images, no volumes |
+| 0 | **a size-bounded `docker builder prune`** (+ **D8** to keep it there) | frees up to **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today. Note §2.13: the *age*-bounded form freed 458 kB | lowest — build cache only, no images, no volumes |
+| 0b | **D9** — backup temp-file cleanup | 20 files that nothing can delete and that `aws s3 sync` bills for; three small edits, all on failure paths | lowest |
 | 1 | **D2** — `_host_match` becomes O(labels) | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
 | 2 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
 | 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
@@ -966,7 +1066,7 @@ document — see §2.13.*
 
 ## 10 · What this milestone does not settle
 
-* **Nothing is implemented.** This is the audit and the design. D1–D8 are proposals with measured
+* **Nothing is implemented.** This is the audit and the design. D1–D9 are proposals with measured
   justifications, not landed changes.
 * **The box.** Every fix here keeps a 50k-source catalogue inside SQLite; none of them makes a
   `t3.medium` a 50k-source machine. `SCALE_ROADMAP.md` already says the hardware is not priced, and
