@@ -705,6 +705,18 @@ class CrawlAdapter(sources.SourceAdapter):
 
     source_type = "crawl"
 
+    #: M6.2 — this adapter's `fetch`/`normalize` touch NO store, so the poller runs them off the
+    #: ingest write lock. Verified rather than assumed: `sources.default_registry` constructs
+    #: `CrawlAdapter(c)` with no `store_`, so `PublisherCrawler.store` is None and the one read the
+    #: ladder can make (`existing_feed_urls`, its politeness dedup) is skipped entirely. The whole
+    #: of `fetch()` is a robots check plus a discovery-document GET.
+    #:
+    #: This is the class that has to reach thousands of instances, and it was the measured cost:
+    #: ~2.4 s of lock per poll, four polls an hour, against a lock budget that saturates at ~327
+    #: sources. If `store_` is ever wired in here, re-derive this flag — a read is still safe under
+    #: WAL (API requests already read while adapters write), but a write would not be.
+    FETCH_IS_STORE_FREE = True
+
     def __init__(self, config: PublisherCrawlConfig, *, robots=None, limiter=None,
                  fetch=None, store_=None):
         self.config = config

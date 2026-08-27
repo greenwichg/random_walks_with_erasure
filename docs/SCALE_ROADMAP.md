@@ -2268,6 +2268,78 @@ so up to 120 s of pure lock-waiting had been counted as warm time; 380.2 − 120
 Three defects in one day's work, all in code written earlier the same day, every one caught by
 measuring rather than by reading.
 
+## M6.2 — the network fetch comes off the ingest lock
+
+### Which milestone, and why this one
+
+M6's remaining content is: poller out of the API process, narrow the global lock, worker leases off
+`next_due_at`, raise the interval ceiling, add dormancy. Per-host politeness and the robots cache
+landed with F1/F2; M6.1 took the warm off the lock. The question is which of the rest binds first.
+
+**Answer, from the 16.0% measurement.** Lock-held time was 577.8 s/hour — poll 120.2 s, post-cycle
+457.6 s. The two scale differently:
+
+* **Post-cycle is now O(1) per window.** Coalescing pinned it to one pass per interval regardless of
+  adapter count. Fixed cost — it does not grow with sources.
+* **Poll scales linearly.** A crawl source cost ~2.4 s of lock per poll (`pollMs` 2335.8 and 2547.6)
+  at four polls/hour = **9.6 s of lock-held time per source per hour**:
+
+```
+saturation  (3600 − 458) / 9.6  =  327 sources     lock 100% held
+50% comfort (1800 − 458) / 9.6  =  140 sources
+```
+
+**That is the wall between two crawl sources and "hundreds"** — and essentially all of that 2.4 s is
+a socket wait against a publisher, held under a database *write* lock.
+
+### The dependency argument: why not leases first
+
+Leases, a bounded pool, dormancy and an interval ceiling all assume workers can make progress in
+parallel. They cannot while the fetch holds the global lock: N workers would each take it, wait
+2.4 s on a socket, and release — serialising exactly as one worker does. **Concurrency behind a
+global lock is not concurrency.** M6.2 is the prerequisite for the rest of M6, not an alternative to
+it. Building the pool first would have produced a measurement showing no improvement and no obvious
+reason why.
+
+### What changed
+
+`SourceAdapter.poll_once` was already `fetch → normalize → quota → ingest_entries → health`, and
+only the last two touch the store. It is now the composition of two methods:
+
+* `collect()` — fetch + normalize + quota. **No store access.** Runs without the lock.
+* `persist()` — `ingest_entries` + health. The half the lock exists for.
+
+`poll_once` remains exactly their composition, so every existing caller, subclass override and test
+sees the contract it saw before.
+
+**Opt-in, default-deny, and doubly gated.** An adapter must declare `FETCH_IS_STORE_FREE` *and* not
+have overridden `poll_once` — the split lives in the base implementation, so an override would not
+use it, and honouring the flag anyway would run a store-touching override unlocked. RSS, KeyedJSON
+and both enrichers override it and are unaffected.
+
+**Exactly one adapter opts in: `CrawlAdapter`** — the class that has to reach thousands of instances,
+and the one whose store-freedom is *verified* rather than assumed: `default_registry` constructs
+`CrawlAdapter(c)` with no `store_`, so `PublisherCrawler.store` is None and the single read the
+ladder can make (`existing_feed_urls`, its politeness dedup) is skipped entirely.
+
+### Measurement continuity
+
+`pollMs` still means lock-held time and nothing else, so `sum(pollMs + postCycleMs) / wall` keeps
+meaning lock occupancy exactly as it has through 87.8% → 24.9% → 16.0%. What changed is how much
+work sits inside it. The network half is reported as `fetchMs` rather than dropped — the same rule
+`offLockWarmMs` follows, after a field name reused across two events silently doubled a measurement
+earlier in this series.
+
+**Expected effect: poll's contribution to occupancy falls to the ingest alone**, which is a database
+write of a handful of rows rather than a 2.4 s round trip. If the per-source lock cost drops from
+~9.6 s/hour to well under 1 s/hour, the saturation ceiling moves from ~327 sources to the thousands
+— at which point the binding constraint becomes thread-per-adapter, and *that* is when leases and a
+bounded pool become the next milestone.
+
+**A note on what is deliberately not done.** `MultiSourcePoller.start` still creates one thread per
+adapter. That is the next wall, and it is correctly the *next* one: until this change, the lock
+masked it entirely.
+
 **A note on where the cost went last time.** The comment at `sources.py:1547` records the previous
 investigation landing on `story_cache_warm` — *"~93% of the most expensive loop in the process was
 inside a step nobody had timed"* — and its fix worked: warm is now the smallest segment at 11–17%.

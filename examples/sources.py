@@ -322,33 +322,85 @@ class SourceAdapter:
         raise NotImplementedError
 
     # -- one poll cycle (default: single-batch sources) --
-    def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
-        """Fetch -> normalize -> apply the per-source quota -> ``ingest_entries`` -> record health.
-        Never raises for a fetch/parse error — it records the failure and returns an aggregate with the
-        error, so one source's outage can't affect another."""
+    #: Whether ``fetch``/``normalize`` touch the store at all. FALSE by default — an adapter must
+    #: opt in, because the whole value of the flag is that the poller then runs those steps WITHOUT
+    #: the ingest write lock, and a store write out there would race every other adapter's ingest.
+    #: See :meth:`MultiSourcePoller.poll_adapter_once`.
+    FETCH_IS_STORE_FREE = False
+
+    def collect(self) -> "_Collected":
+        """Fetch -> normalize -> apply the per-source quota. **No store access.**
+
+        Split out of :meth:`poll_once` so the poller can run it off the ingest lock (M6.2). It is
+        the expensive half and the half that needs nothing the lock protects: measured on production
+        2026-08-26, a crawl adapter's ``pollMs`` was ~2.4 s, essentially all of it a network round
+        trip to a publisher — held, until this split, under the lock that serialises every other
+        adapter's ingest.
+
+        Never raises: a fetch or parse error is carried in the result so one source's outage cannot
+        affect another, exactly as before.
+        """
         t0 = time.perf_counter()
-        error = None
-        batch: Optional[SourceBatch] = None
-        stats: Optional[dict] = None
         try:
             batch = self.normalize(self.fetch())
             entries = batch.entries
             cap = self.max_articles()
             if cap is not None and cap >= 0:
                 entries = entries[:cap]                    # quota applies BEFORE ingest_entries
-            stats = rss_ingest.ingest_entries(
-                entries, self.provider, self.health_key, scorer, store_,
-                source_type=self.source_type, source_provider=self.provider)
+            return _Collected(batch=batch, entries=entries, error=None, started=t0)
         except Exception as e:                              # network / parse / provider error
-            error = e
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        agg = _agg(self.provider, self.source_type, stats, batch, latency_ms, error, key=self.health_key)
+            return _Collected(batch=None, entries=[], error=e, started=t0)
+
+    def persist(self, collected: "_Collected", store_, scorer, *,
+                on_feed: Optional[Callable] = None) -> dict:
+        """``ingest_entries`` -> record health. **This is the half that needs the ingest lock.**
+
+        ``latencyMs`` still spans collect+persist, so the health record and the aggregate mean what
+        they always meant — the split is about which half holds the lock, not about redefining how
+        long a source took.
+        """
+        error = collected.error
+        stats: Optional[dict] = None
+        if error is None:
+            try:
+                stats = rss_ingest.ingest_entries(
+                    collected.entries, self.provider, self.health_key, scorer, store_,
+                    source_type=self.source_type, source_provider=self.provider)
+            except Exception as e:
+                error = e
+        latency_ms = (time.perf_counter() - collected.started) * 1000.0
+        agg = _agg(self.provider, self.source_type, stats, collected.batch, latency_ms, error,
+                   key=self.health_key)
         if on_feed is not None:
             try:
                 on_feed(self.provider, self.health_key, stats, latency_ms, error)
             except Exception:                              # health recording must never break polling
                 pass
         return agg
+
+    def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
+        """Fetch -> normalize -> apply the per-source quota -> ``ingest_entries`` -> record health.
+        Never raises for a fetch/parse error — it records the failure and returns an aggregate with the
+        error, so one source's outage can't affect another.
+
+        Kept as the composition of :meth:`collect` and :meth:`persist` so every existing caller,
+        subclass override and test sees exactly the contract it saw before M6.2.
+        """
+        return self.persist(self.collect(), store_, scorer, on_feed=on_feed)
+
+
+@dataclass
+class _Collected:
+    """What :meth:`SourceAdapter.collect` produced, waiting for the lock to be written.
+
+    ``started`` is carried so ``latencyMs`` still spans the whole cycle rather than only the part
+    that held the lock — the two are now different numbers and conflating them would misreport
+    every source's health.
+    """
+    batch: Optional[SourceBatch]
+    entries: list
+    error: Optional[BaseException]
+    started: float
 
 
 def _agg(provider, source_type, stats, batch, latency_ms, error, *, key) -> dict:
@@ -1689,9 +1741,36 @@ class MultiSourcePoller:
         return ms
 
     def poll_adapter_once(self, adapter: SourceAdapter) -> dict:
+        t_start = time.perf_counter()
+        # ── M6.2: THE FETCH COMES OFF THE LOCK ─────────────────────────────────────────────────
+        # An adapter opts in by declaring FETCH_IS_STORE_FREE *and* leaving `poll_once` alone — the
+        # split lives in the base implementation, so an override would simply not use it, and
+        # honouring the flag anyway would run a store-touching override unlocked.
+        #
+        # Why this and not more workers first: at 16.0% occupancy the remaining lock-held cost that
+        # SCALES with source count is the poll (120.2 s/h), because coalescing made the post-cycle
+        # O(1) per window. A crawl source costs ~2.4 s of lock per poll x 4 polls/h = 9.6 s/h, so
+        #     saturation  (3600 - 458) / 9.6 = 327 sources
+        #     50% comfort (1800 - 458) / 9.6 = 140 sources
+        # and essentially all of that 2.4 s is a network round trip to a publisher. Worker leases
+        # and a bounded pool — the rest of M6 — buy NOTHING until this moves: N workers would each
+        # take the same lock, fetch for 2.4 s, and release, serialising exactly as one worker does.
+        # Concurrency behind a global lock is not concurrency, so this is the dependency.
+        # `getattr` with a False default, not attribute access: the registry accepts DUCK-TYPED
+        # adapters that never inherit SourceAdapter, and an opt-in split must default to "no" for
+        # anything that has not said otherwise rather than raising at them.
+        collected = None
+        if (getattr(adapter, "FETCH_IS_STORE_FREE", False)
+                and type(adapter).poll_once is SourceAdapter.poll_once):
+            collected = adapter.collect()                   # network + parse, no lock, no store
+        t_fetch = time.perf_counter()
         with self._lock:                                    # write-safe: one adapter ingests at a time
             t0 = time.perf_counter()
-            agg = adapter.poll_once(self.store, self.scorer, on_feed=self._record_health)
+            if collected is None:
+                agg = adapter.poll_once(self.store, self.scorer, on_feed=self._record_health)
+            else:
+                agg = adapter.persist(collected, self.store, self.scorer,
+                                      on_feed=self._record_health)
             t1 = time.perf_counter()
             warm_wanted = self._post_cycle(agg)
             t2 = time.perf_counter()
@@ -1713,7 +1792,13 @@ class MultiSourcePoller:
                   # that has tracked this all along keeps meaning the same thing. warmMs is the
                   # work that moved OUT of it — reported, not hidden, so the change shows up as
                   # occupancy falling rather than as time disappearing from the logs.
+                  # pollMs REMAINS lock-held time and nothing else, so `sum(pollMs+postCycleMs)
+                  # / wall` still measures lock occupancy exactly as it has through every
+                  # measurement in this series. What changed is how much work is inside it: for a
+                  # split adapter this is now the ingest alone, and `fetchMs` carries the network
+                  # half that moved out. Reported, not hidden — the same rule as offLockWarmMs.
                   pollMs=round((t1 - t0) * 1000.0, 1), postCycleMs=round((t2 - t1) * 1000.0, 1),
+                  fetchMs=round((t_fetch - t_start) * 1000.0, 1),
                   # NOT `warmMs`: that name is already on `post_cycle_unlocked`, and one field name
                   # across two events makes `grep -o '"warmMs"' | sum` silently double every warm.
                   # It did, on the first measurement of this change.
