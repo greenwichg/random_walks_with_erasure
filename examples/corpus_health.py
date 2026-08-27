@@ -568,7 +568,17 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
                 cap=max_count, skipped="under_count_cap")
             return {"pruned": 0, "kept": catalog, "skipped": "under_count_cap"}
 
-    articles = store_.list_feed_articles(limit=10_000_000)
+    # The NARROW projection, not every column of every row (M3 / D1). `list_feed_articles` returns
+    # ~25 fields and JSON-parses the whole `scored` payload; the six functions below read six of
+    # them. Measured at 150,000 rows — production's shape — that difference was 7.77 s and 888.9 MB
+    # against 0.54 s and 46.9 MB, for byte-identical decisions: `plan_retention` and `corpus_metrics`
+    # see exactly the fields they consult, so the prune set cannot change.
+    #
+    # This was 84% of the whole pass. Production logged `cleanupMs` of 11,144-20,890 while deleting
+    # 58-140 rows, holding the global ingest lock the entire time, because a count cap sitting at
+    # 150,076 against a 150,000 limit puts `run_retention` past its cheap pre-gate on every single
+    # cycle — and then the expensive part was loading columns nobody was going to look at.
+    articles = store_.list_retention_rows()
     plan = plan_retention(articles, max_age_days=max_age_days, max_count=max_count,
                           thresholds=thresholds, now=now, age_days_for=age_days_for)
     deleted = store_.delete_feed_articles(plan["prune"]) if plan["prune"] else 0

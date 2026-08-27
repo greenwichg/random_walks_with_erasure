@@ -293,10 +293,17 @@ def _seed(st, n, *, prefix="r1", days_apart=1):
 
 
 def _no_catalog_load(monkeypatch, st):
-    """Make loading the catalog fatal, so a test can prove the fast path never does."""
+    """Make loading the catalog fatal, so a test can prove the fast path never does.
+
+    BOTH loaders. This tripwire guarded `list_feed_articles` alone, and M3/D1 moved retention onto
+    the narrower `list_retention_rows` — at which point the trap still existed, still passed, and
+    no longer covered the thing it was written to cover. A tripwire on one name is a tripwire on a
+    name; what these tests assert is that THE CATALOGUE was not loaded, by any route.
+    """
     def boom(*a, **kw):
         raise AssertionError("the full catalog was loaded even though the count cap cannot bind")
     monkeypatch.setattr(st, "list_feed_articles", boom)
+    monkeypatch.setattr(st, "list_retention_rows", boom)
 
 
 def test_count_only_under_cap_skips_the_catalog_load_entirely(monkeypatch):

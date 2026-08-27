@@ -1550,6 +1550,50 @@ class Store:
                              .limit(limit)).all()
             return [self._feed_row(r) for r in rows]
 
+    def list_retention_rows(self) -> list:
+        """The whole catalogue as the NARROW projection retention actually reads (M3 / D1).
+
+        ``list_feed_articles`` returns every column and JSON-parses the full ``scored`` payload per
+        row. Retention reads **six fields** of that, and paying for the rest is what made the pass
+        expensive. Measured at 150,000 rows — production's shape on 2026-08-27:
+
+            list_feed_articles(limit=10M)   7.77 s   +888.9 MB RSS   (6.07 KB/row)
+            this projection                 0.54 s   + 46.9 MB RSS   (0.32 KB/row)
+
+        **14× faster and 19× smaller, for byte-identical decisions** — `plan_retention` and
+        `corpus_metrics` see exactly the fields they read, so the prune set cannot differ. On a
+        4 GiB box that moves the point where a retention pass exhausts memory from ~675,000 rows to
+        ~12.8 million.
+
+        The projection is exactly what `corpus_health` consults, and no more:
+
+        * ``canonicalUrl`` / ``url`` — ``_canonical``. Both, though ``canonical_url`` is the primary
+          key and cannot be NULL: a deletion path is not where to save 12 MB by arguing that a
+          fallback is unreachable.
+        * ``publisher`` + ``scored.outlet`` — ``_outlet``
+        * ``scored.lean`` — ``_bucket``, via the ``ix_feed_lean`` expression index's own expression
+        * ``publishedAt`` / ``fetchedAt`` — ``_published``
+        * ``title`` — ``_missing_metadata``, which is a ``corpus_metrics`` field
+
+        Deliberately NOT included: ``createdAt``. It is read only through
+        ``_CANDIDACY_TIME_KEYS``, which is candidate freshness, not retention — so a caller handing
+        these rows to the candidacy path would get subtly different ages. **These rows are for
+        retention and its metrics; they are not FeedArticle rows.**
+        """
+        sql = text(
+            "SELECT canonical_url, url, publisher, title, published_at, fetched_at, "
+            "       json_extract(scored, '$.outlet') AS outlet, "
+            "       json_extract(scored, '$.lean')   AS lean "
+            "FROM feed_articles")
+        with self.session() as s:
+            return [{"canonicalUrl": r[0], "url": r[1], "publisher": r[2] or "",
+                     "title": r[3] or "", "publishedAt": r[4],
+                     # `fetched_at` is a DATETIME the ORM would hand back as a datetime; the driver
+                     # gives the raw string here, and `_published` parses ISO text either way.
+                     "fetchedAt": r[5] if isinstance(r[5], str) else (r[5].isoformat() if r[5] else None),
+                     "scored": {"outlet": r[6], "lean": r[7]}}
+                    for r in s.execute(sql)]
+
     def delete_feed_articles(self, canonical_urls) -> int:
         """Delete FeedArticle rows by canonical URL (retention). Chunked to stay under SQLite's bound
         parameter limit. Returns the number deleted. Touches ONLY the ``feed_articles`` table — reads,

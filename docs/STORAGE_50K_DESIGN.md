@@ -647,7 +647,44 @@ a problem that does not exist.
 one schema change, and a handful of settings — no migration, no second database, no new service on
 the critical path.
 
-### D1 — Retention becomes SQL-shaped for Tier B and shadow, and stays validation-aware for Tier A
+### D1 — Retention stops loading columns it never reads  ✅ **STAGE 1 LANDED**
+
+> **The audit prescribed a planner rewrite. Measuring first showed most of the win was
+> somewhere much cheaper.** At 150,000 rows — production's shape — the pass breaks down as:
+>
+> | step | cost |
+> |---|---:|
+> | `list_feed_articles(limit=10M)` | **7.77 s** ← 84% of the pass |
+> | `plan_retention` | 0.91 s |
+> | `corpus_metrics` | 0.63 s |
+> | a narrow 6-column projection | **0.54 s** (14× cheaper) |
+> | the floor aggregates, in SQL | 0.25 s |
+>
+> **84% of the cost was loading columns retention never looks at.** `list_feed_articles`
+> returns ~25 fields and JSON-parses the whole `scored` payload per row; the planner and
+> its metrics read six. So stage 1 is `store.list_retention_rows()` — same algorithm, same
+> floors, same prune set, fewer columns — and it carries no risk of changing a deletion
+> decision at all, which the planner rewrite very much does.
+>
+> Measured end to end, steady state (an age policy far beyond the data, so the planner runs
+> in full and prunes nothing — the case almost every pass is in), alternating runs against
+> an unchanged 150,000-row catalogue:
+>
+> | | before | after |
+> |---|---:|---:|
+> | cleanup pass | 7,687 ms | **2,356 ms** (3.3×) |
+> | peak RSS | 879.6 MB | **179.3 MB** (4.9×) |
+> | RSS per row | 6.07 KB | **1.22 KB** |
+> | OOM point, 4 GiB box | ~675,000 rows | **~3.35 M rows** |
+>
+> That also settles the first of §9b's two unmeasured claims: I estimated ~840 MB per pass
+> on production, and it measures **879.6 MB** at 150,000 rows.
+>
+> **It does not clear A3 at the design size** — 2,356 ms at 150 k rows extrapolates well past
+> the 2,000 ms bar at 3.5 M — so stage 2 below stands. But it fixes the live box, and it
+> does so without touching a single deletion decision.
+
+#### Stage 2 (NOT built) — SQL-shaped for Tier B and shadow, validation-aware for Tier A
 
 The Python planner exists for a real reason: `corpus_health.plan_retention` guarantees the
 configured floors (minimum total / publishers / per-political-bucket / fresh) survive any prune. That
@@ -1053,14 +1090,15 @@ own right, and it is short:
 | 0 ✅ | **a size-bounded `docker builder prune`** (+ **D8**, landed) | frees up to **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today. Note §2.13: the *age*-bounded form freed 458 kB | lowest — build cache only, no images, no volumes |
 | 1 ✅ | **D2** — `_host_match` becomes O(labels), **plus `tier_resolver()`** | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
 | 2 ✅ | **D3 indexes** (+ `RWE_RETENTION_SCORED_DAYS`, an operator decision) | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
-| 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
+| 3 ✅ | **D1 stage 1** — the narrow projection | measured first: 84% of the pass was loading columns retention never reads. 7,687 → 2,356 ms and 880 → 179 MB, with **no change to any deletion decision** | low — proven by a differential over randomised catalogues, mutation-tested three ways |
+| 3b | **D1 stage 2** — SQL-shaped retention for Tier B and shadow | what actually clears A3 at the design size; stage 1 does not | medium — a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
 | 4 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |
 | 5 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
 | 6 | **D7** (`article_entities` reaper) and **D9** (backup temp-file cleanup) | both demoted after measurement — 97 orphans and 46 MB, not the leaks I sized them as. Real defects, cheap fixes, no urgency | lowest — bounded deletes and three failure-path edits |
 | 7 | **§5** — choose the horizons, resize the volume, raise the batch limit for the drain, plan the `VACUUM` | needs 1–5 in place, and it is the step that actually changes production data | the only one with a maintenance window — and the drain takes days at the default batch limit (§4 D3) |
 | 8 | **D6** — tier lists out of the environment | binds at ~30 k sources; nothing before it needs it | medium, and deferrable |
 
-**Steps 1–4 are all code changes that can be validated entirely by `storage_bench.py` against a
+**Steps 1–3 are all code changes that can be validated entirely by `storage_bench.py` against a
 synthetic catalogue, with no production data and no source expansion** — which is the property that
 makes them safe to do next.
 
