@@ -1973,6 +1973,84 @@ A malformed or missing crawl config returns an empty adapter list rather than ra
 that can break the thing it supplements is worse than one that is absent, and the RSS poller must
 survive a bad crawl config.
 
+## The switch-on, measured live (2026-08-26) — and the wall it found
+
+`RWE_CORPUS_SHADOW=kait8.com,kwch.com` + `RWE_CRAWL_ENABLED=1`, on a 150,000-row catalog.
+
+**The ladder closed end to end.** Two cycles per publisher: `new 2 / duplicates 27 / failed 0` for
+kait8, `new 1 / duplicates 34 / failed 0` for kwch, ~2.4 s per poll. Robots passed, the declared
+news-sitemap-index parsed and descended, and the observed `article_pattern` accepted real articles.
+
+**The safety property held, verified rather than asserted:** 217 kait8 rows and 178 kwch rows in the
+catalog, **100% `shadow`, zero in Tier A.**
+
+### Turning on shadow is subtractive, and that was not said out loud
+
+Tier is computed at **query time** from the outlet's identity (`corpus.tier_of`), not stamped on the
+row at ingest. Only 3 of those 395 rows came from the crawler; the other ~392 arrived earlier
+through the aggregators — the crawl-exhaust channel Stage 1 identified — and every one of them was
+Tier A until the flag was set, because with both vars empty `corpus.enabled()` is False.
+
+So the flag did not merely route new articles into shadow. It **removed ~392 existing articles from
+Tier A and from every reader surface**, at the moment it was set. That is correct behaviour and
+exactly what the lane is for; it was presented as purely additive, which it is not. An operator
+adding a host we already carry heavily should expect coverage to *drop* first.
+
+(One worry that proved unfounded: `shadow_exclusions()` matches on publisher-name strings, so a host
+stored under a display name would slip the SQL prefilter. Both outlets store the publisher AS the
+host — `names=['kait8.com']` — so prefilter and Python authority agree here.)
+
+### ⚠ The post-cycle lock is at 87.8% occupancy, and it is the real scale ceiling
+
+Measured over a clean 6 h window against 12 h of container uptime:
+
+```
+post-cycle   18,176.9 s
+poll            797.6 s
+              ---------
+             18,974.5 s / 21,600 s  =  87.8%
+```
+
+`poll_adapter_once` holds `self._lock` across **both** `poll_once` and `_post_cycle`, and both
+timings are taken inside it — so this is lock-HELD time, not queueing, and the two sum to true
+occupancy. Ingestion is keeping up (`failed: 0` everywhere), but the headroom is ~12%.
+
+`_post_cycle` runs whenever an adapter ingested anything (`postCycleMs` is exactly `0.0` on every
+`new: 0` cycle — the dirty-check works). Its three segments decompose exactly (131722.1 + 29559.3 +
+102174.1 = 263,455.5 ms against RSS's logged 263,455.9):
+
+| segment | what it is | share |
+|---|---|---|
+| `cleanupMs` | `storage_lifecycle.run_cleanup` — retention + derived-table prunes | **38–50%** |
+| `refreshMs` | `self._on_cycle(agg)` — the hot-refresh seam | **36–50%** |
+| `warmMs` | `request_warm` (non-blocking) + `detect_breaking_stories` + push | 11–17% |
+
+**The `warm` step is the smallest.** That matters because the code comment at `sources.py:1547`
+records the previous investigation landing on it — *"~93% of the most expensive loop in the process
+was inside a step nobody had timed"* — and the fix (make the warm non-blocking) worked. The cost
+simply moved: cleanup and refresh are now the owners, and neither has been through that treatment.
+
+**The structural problem is the word "cycle".** `_post_cycle`'s own comment describes *"one
+incremental pass per cycle"*, which was true of a single poller loop. There are now ~11 adapter
+threads, each triggering a full catalog-wide retention pass and a full hot refresh whenever it finds
+even one article. Both costs scale with **catalog size**, not with what the adapter brought — which
+is why kait8 paid **216 s of post-cycle for 2 new articles** while GNews paid 90 s for 10.
+
+**This is pre-existing and was not caused by the crawler** — RSS is the single most expensive
+provider in the sample at 263 s. But it reframes the crawl adapters: they are two more claimants on
+the busiest lock in the process, and structurally the *lowest-yield* ones. At two publishers that is
+noise. At M6's fan-out or M7's 50k sources, low-yield adapters each triggering full-catalog
+maintenance is a wall, and this measurement puts a number on it.
+
+**M6 already names the fix** — *"poller out of the API process, narrow the global lock"* — so this
+is corroboration of a listed dependency rather than a new discovery. What is new is the ordering
+argument: at 87.8% the lock is not a future problem to be handled during fan-out, it is the
+prerequisite. Throttling catalog-wide maintenance to once per polling *window* rather than once per
+adapter cycle is the cheap version and would cut the dominant cost by roughly the adapter count.
+
+Not changed here. It is the ingest hot path, it is outside M7's scope, and it is a deliberate
+decision rather than a tidy-up to fold into a crawler commit.
+
 ## What M7 does NOT do
 
 It does not ingest. `--probe` reads `robots.txt`, one landing page and at most one feed per host, and
