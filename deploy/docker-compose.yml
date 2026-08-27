@@ -87,6 +87,15 @@ services:
       # exactly — an off switch that is not a rollback, which only works if the variable can
       # actually reach the container.
       RWE_POST_CYCLE_MAINTENANCE_INTERVAL: ${RWE_POST_CYCLE_MAINTENANCE_INTERVAL:-}
+      # Size of the bounded poll pool (M6.3). 0 = one thread per adapter, the pre-M6.3 model and
+      # the default, so deploying the pool changes nothing. Set it when source count reaches the
+      # hundreds: it caps CONCURRENT FETCHES rather than sources, which is the point — thread count
+      # and source count were the same number until M6.3.
+      #
+      # Declared here for the same reason as everything above it: `environment:` is an explicit
+      # allowlist with no `env_file:`, and this omission has now shipped FOUR times in this series.
+      # A switch that cannot reach the container is worse than no switch, because it is believed.
+      RWE_POLL_WORKERS: ${RWE_POLL_WORKERS:-}
       # Cheap corpus change-detection (P1-1) — ON. When the catalog fingerprint is unchanged since
       # the last candidate build, the refresh check skips its full-catalog load (measured 4,495 ms
       # at 47k rows, 2026-08-01 — a cost that otherwise grows with catalog age forever, since
@@ -768,6 +777,15 @@ services:
       # exactly — an off switch that is not a rollback, which only works if the variable can
       # actually reach the container.
       RWE_POST_CYCLE_MAINTENANCE_INTERVAL: ${RWE_POST_CYCLE_MAINTENANCE_INTERVAL:-}
+      # Size of the bounded poll pool (M6.3). 0 = one thread per adapter, the pre-M6.3 model and
+      # the default, so deploying the pool changes nothing. Set it when source count reaches the
+      # hundreds: it caps CONCURRENT FETCHES rather than sources, which is the point — thread count
+      # and source count were the same number until M6.3.
+      #
+      # Declared here for the same reason as everything above it: `environment:` is an explicit
+      # allowlist with no `env_file:`, and this omission has now shipped FOUR times in this series.
+      # A switch that cannot reach the container is worse than no switch, because it is believed.
+      RWE_POLL_WORKERS: ${RWE_POLL_WORKERS:-}
       # The tier assignment the switch above DEPENDS ON, and the reason it must be listed here: the
       # crawl flag shipped to this service without it, so `RWE_CRAWL_ENABLED=1` was visible here and
       # `RWE_CORPUS_SHADOW` was not. That failed CLOSED — every adapter refused, because an outlet

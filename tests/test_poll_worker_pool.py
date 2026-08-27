@@ -265,3 +265,20 @@ def test_backoff_is_the_SAME_function_the_per_adapter_loop_uses(poller, monkeypa
     assert lease.leased is False, "the slot must be handed back"
     assert lease.due - time.monotonic() == pytest.approx(expected, rel=0.2)
     assert expected > a.interval(), "and the guard test itself must be in the backoff regime"
+
+
+def test_the_pool_switch_can_actually_REACH_the_container():
+    """`RWE_POLL_WORKERS` is both the enable and the rollback for a scheduler change on the ingest
+    path. It is only either of those if compose passes it.
+
+    This omission has now shipped FOUR times in this series — the crawl flag reaching `ingest`
+    without its `RWE_CORPUS_SHADOW` precondition, the coalescing interval, the warm's off switch,
+    and this one. Each time the code was correct and the lever was inert. Pinned by name rather than
+    by a source sweep, for the reason `test_rec_flags_deployable.py` records: most engine-read
+    RWE_* vars are legitimately absent from compose, so a general sweep needs an allowlist of
+    deliberate absences that would itself rot."""
+    import yaml
+    doc = yaml.safe_load((ROOT / "deploy" / "docker-compose.yml").read_text())
+    carriers = [n for n, s in doc["services"].items()
+                if "RWE_POLL_WORKERS" in (s.get("environment") or {})]
+    assert set(carriers) == {"api", "ingest"}, f"both pollers must carry it, got {carriers}"
