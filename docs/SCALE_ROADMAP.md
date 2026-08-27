@@ -2218,6 +2218,56 @@ every warm — reporting 728.7 s across "62 cycles" for what was 380.2 s across 
 **Three measurements, same box, same catalog: 87.8% -> 24.9% -> 16.0%.** A 5.5x reduction from two
 changes that between them add no threads and remove no work.
 
+### Verified live: 24.9% → 16.0%, and the canary earned its keep
+
+Measured over 60 minutes against 2 h of uptime, same box, same catalog:
+
+```
+OCCUPANCY     : 577.8 s / 3,600 s = 16.0%      (was 24.9%, was 87.8%)
+off-lock warm : 380.2 s across 22 warms
+breaking_detect_lock_timeout : 1               <- the canary
+```
+
+**87.8% → 24.9% → 16.0%** across three measurements: a 5.5× reduction from two changes that between
+them add no threads and remove no work.
+
+Predicted ~12%, got 16.0%. Directionally right, quantitatively off, and the reason matters: the
+residual 577.8 s is poll + retention + refresh, which this change never touched and which varies
+with ingestion volume hour to hour. Total work is roughly flat (577.8 + 380.2 = 958 s here against
+895.5 s the previous hour) — the change **moved** work off the lock rather than eliminating it,
+which is exactly what it claimed to do.
+
+### ⚠ The canary fired, and what it found was two of my own errors
+
+Not the deadlock — that would fire every cycle, not one in 22. Contention, and the diagnosis is
+worth recording:
+
+**`story_events.enabled()` defaults OFF**, so `detect_breaking_stories` returns 0 at its first line.
+The code was waiting up to 120 s for a contended lock **in order to call a function that does
+nothing**.
+
+* **Queueing for a lock without asking whether the work needed doing.** It now checks
+  `story_events.enabled()` first and skips the acquisition entirely when the feature is off — the
+  default, so on this deployment the path stops touching the lock at all.
+* **120 s was too tight, on reasoning that was too narrow.** It cleared a single ~96 s maintenance
+  pass and ignored *queueing behind one*. There was even a test asserting `>= 120.0` on that
+  rationale. Production disagreed within the hour. A genuine deadlock never resolves, so any finite
+  value catches it, and the only cost of a large one is an idle thread that now blocks nobody —
+  raised to 600 s.
+
+**And the first measurement of this change was double-counted by its own instrument.** `warmMs` was
+logged on *two* events (`post_cycle_unlocked` and `source_poll`), so `grep -o '"warmMs"' | sum`
+doubled every warm — 728.7 s reported for ~364 s of real work. The echo is now `offLockWarmMs`. One
+field, one event.
+
+**Confirmed on the next hour:** canary `0`, off-lock warm 244.8 s across 42 cycles. That also
+reconciles the previous hour's inflated figure — the timeout wait sat *inside* `_post_cycle_unlocked`,
+so up to 120 s of pure lock-waiting had been counted as warm time; 380.2 − 120 ≈ 260 s against
+244.8 s. Occupancy is unaffected either way: the wait was never lock-*held* time.
+
+Three defects in one day's work, all in code written earlier the same day, every one caught by
+measuring rather than by reading.
+
 **A note on where the cost went last time.** The comment at `sources.py:1547` records the previous
 investigation landing on `story_cache_warm` — *"~93% of the most expensive loop in the process was
 inside a step nobody had timed"* — and its fix worked: warm is now the smallest segment at 11–17%.
