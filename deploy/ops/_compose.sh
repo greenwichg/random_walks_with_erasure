@@ -161,19 +161,37 @@ function alert() {
 # this host is actually deployed) never reached it. Two policies in two paths is how one path came to
 # have none.
 #
+# TWO SPELLINGS OF THE SAME BOUND, newest first. Docker renamed `--keep-storage` to
+# `--reserved-space`; the old name still works and prints "Flag --keep-storage has been deprecated,
+# keep-storage flag has been changed to reserved-space" — observed on the production host
+# 2026-08-27, where it reclaimed 6.179 GB of the 8.037 GB and left the cache under the 2 GB reserve.
+# Deprecated is not removed, but a deploy script that only knows the retired name is a slow-motion
+# version of the bug this function exists to fix, so try the current name and fall back.
+#
 # Never fatal: a housekeeping failure must not turn a green deploy red, so every branch returns 0.
-# And no silent fallback to an unbounded `docker builder prune -f` when the flag is unsupported —
+# And no silent fallback to an unbounded `docker builder prune -f` when NEITHER name is accepted —
 # that would surprise an operator with a fully cold build. Say so instead.
+_BUILD_CACHE_FLAGS="--reserved-space --keep-storage"
+
 function prune_build_cache() {
-  local keep="${1:-${DEPLOY_BUILD_CACHE_KEEP:-2GB}}" out
+  local keep="${1:-${DEPLOY_BUILD_CACHE_KEEP:-2GB}}" flag out last=""
   echo "== [SUCCESS] pruning build cache to ${keep} =="
-  if out="$(docker builder prune -f --keep-storage "$keep" 2>&1)"; then
-    printf '%s\n' "$out" | tail -1 | sed 's/^/    /'
-  elif printf '%s' "$out" | grep -qi 'unknown flag\|unknown shorthand\|not a valid\|flag provided but not defined'; then
-    echo "    this Docker does not support --keep-storage — build cache is NOT bounded." >&2
+  for flag in $_BUILD_CACHE_FLAGS; do
+    if out="$(docker builder prune -f "$flag" "$keep" 2>&1)"; then
+      printf '%s\n' "$out" | tail -1 | sed 's/^/    /'
+      df -h / 2>/dev/null | tail -1 | sed 's/^/    disk /'
+      return 0
+    fi
+    last="$out"
+    # Only an UNRECOGNISED flag is worth retrying under another name. A real failure — no daemon,
+    # a bad size — must not be re-run with a different spelling and reported as a flag problem.
+    printf '%s' "$out" | grep -qi 'unknown flag\|unknown shorthand\|not a valid flag\|flag provided but not defined' || break
+  done
+  if printf '%s' "$last" | grep -qi 'unknown flag\|unknown shorthand\|not a valid flag\|flag provided but not defined'; then
+    echo "    this Docker accepts neither${_BUILD_CACHE_FLAGS// / nor} — build cache is NOT bounded." >&2
     echo "    Reclaim by hand:  docker builder prune -f   (frees all cache; next build is cold)" >&2
   else
-    echo "    build-cache prune failed (harmless; the deploy succeeded) — ${out}" >&2
+    echo "    build-cache prune failed (harmless; the deploy succeeded) — ${last}" >&2
   fi
   df -h / 2>/dev/null | tail -1 | sed 's/^/    disk /'
   return 0

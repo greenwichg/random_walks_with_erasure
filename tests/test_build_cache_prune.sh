@@ -33,7 +33,18 @@ cat > "$TMP/bin/docker" <<'STUB'
 printf '%s\n' "$*" >> "$DOCKER_ARGV_LOG"
 case "${DOCKER_STUB_MODE:-ok}" in
   ok)          echo "Total reclaimed space: 6.1GB"; exit 0 ;;
-  unknownflag) echo "unknown flag: --keep-storage" >&2; exit 125 ;;
+  # A modern Docker: the current name works, the retired one only warns.
+  modern)      case "$*" in
+                 *--reserved-space*) echo "Total reclaimed space: 6.1GB"; exit 0 ;;
+                 *) echo "unknown flag: --keep-storage" >&2; exit 125 ;;
+               esac ;;
+  # An older Docker: only the retired name exists.
+  legacy)      case "$*" in
+                 *--reserved-space*) echo "unknown flag: --reserved-space" >&2; exit 125 ;;
+                 *) echo "Flag --keep-storage has been deprecated" >&2
+                    echo "Total reclaimed space: 6.179GB"; exit 0 ;;
+               esac ;;
+  unknownflag) echo "unknown flag: $2" >&2; exit 125 ;;
   broken)      echo "Cannot connect to the Docker daemon" >&2; exit 1 ;;
 esac
 STUB
@@ -54,14 +65,34 @@ out="$(prune_build_cache 2>&1)"; rc=$?
 argv="$(cat "$DOCKER_ARGV_LOG")"
 check "returns 0 on success" "$rc" "0"
 has   "invokes builder prune"            "$argv" "builder prune"
-has   "bounds by SIZE (--keep-storage)"  "$argv" "--keep-storage 2GB"
+has   "bounds by SIZE (--reserved-space)" "$argv" "--reserved-space 2GB"
 hasnt "does NOT bound by age (--filter until=)" "$argv" "--filter"
 has   "reports what was reclaimed"       "$out"  "6.1GB"
 
 # ── 2. the bound is configurable ─────────────────────────────────────────────────────────────────
 export DOCKER_ARGV_LOG="$TMP/argv2"; : > "$DOCKER_ARGV_LOG"
 DEPLOY_BUILD_CACHE_KEEP=512MB prune_build_cache >/dev/null 2>&1
-has "DEPLOY_BUILD_CACHE_KEEP overrides the default" "$(cat "$DOCKER_ARGV_LOG")" "--keep-storage 512MB"
+has "DEPLOY_BUILD_CACHE_KEEP overrides the default" "$(cat "$DOCKER_ARGV_LOG")" "--reserved-space 512MB"
+
+# ── 2b. an older Docker that only knows the retired name still gets a bound ─────────────────────
+# Observed on the production host 2026-08-27: `--keep-storage` works and warns that it is now
+# `--reserved-space`. Both names must reach a bound; only "neither" is an unbounded cache.
+export DOCKER_ARGV_LOG="$TMP/argv2b"; : > "$DOCKER_ARGV_LOG"
+export DOCKER_STUB_MODE=legacy
+out="$(prune_build_cache 2>&1)"; rc=$?
+argv="$(cat "$DOCKER_ARGV_LOG")"
+check "returns 0 on the legacy flag name" "$rc" "0"
+has   "tries the current name first" "$(head -1 "$DOCKER_ARGV_LOG")" "--reserved-space"
+has   "falls back to the retired name" "$argv" "--keep-storage 2GB"
+has   "still reports a bound was applied" "$out" "6.179GB"
+hasnt "the fallback is still not unbounded" "$argv" "prune -f$"
+
+# ── 2c. a modern Docker uses the current name and never needs the fallback ──────────────────────
+export DOCKER_ARGV_LOG="$TMP/argv2c"; : > "$DOCKER_ARGV_LOG"
+export DOCKER_STUB_MODE=modern
+prune_build_cache >/dev/null 2>&1
+check "one call when the current name works" "$(grep -c . "$DOCKER_ARGV_LOG")" "1"
+has   "and it is the current name" "$(cat "$DOCKER_ARGV_LOG")" "--reserved-space 2GB"
 
 # ── 3. an unsupported flag is REPORTED, never silently downgraded ────────────────────────────────
 # The tempting fallback is a bare `docker builder prune -f`, which frees everything and leaves the
@@ -72,7 +103,8 @@ out="$(prune_build_cache 2>&1)"; rc=$?
 argv="$(cat "$DOCKER_ARGV_LOG")"
 check "returns 0 when the flag is unsupported (non-fatal)" "$rc" "0"
 has   "says the cache is NOT bounded" "$out" "NOT bounded"
-check "made exactly one docker call — no unbounded fallback" "$(grep -c . "$DOCKER_ARGV_LOG")" "1"
+has   "names both spellings it tried" "$out" "reserved-space"
+check "tried both names and stopped — no unbounded fallback" "$(grep -c . "$DOCKER_ARGV_LOG")" "2"
 hasnt "never ran an unbounded prune" "$argv" "prune -f$"
 
 # ── 4. any other failure is non-fatal — housekeeping must not turn a green deploy red ────────────
@@ -81,6 +113,10 @@ export DOCKER_STUB_MODE=broken
 out="$(prune_build_cache 2>&1)"; rc=$?
 check "returns 0 when docker is broken" "$rc" "0"
 has   "says the deploy still succeeded" "$out" "the deploy succeeded"
+# A real failure must NOT be retried under the other spelling and then misreported as a flag
+# problem — "no daemon" is not "unknown flag".
+check "a real failure is not retried" "$(grep -c . "$DOCKER_ARGV_LOG")" "1"
+hasnt "and is not reported as unbounded" "$out" "NOT bounded"
 
 # ── 5. update.sh actually calls it, and cd-deploy no longer carries its own policy ───────────────
 has   "update.sh calls prune_build_cache" "$(cat deploy/ops/update.sh)" "prune_build_cache"

@@ -534,9 +534,16 @@ directly and never reaches it. `update.sh`'s only mention of the subject is line
 **An age bound cannot bound a cache that is touched on every build. A size bound can:**
 
 ```bash
-docker builder prune -f --keep-storage 2GB     # evict least-recently-used down to 2 GB
+docker builder prune -f --reserved-space 2GB   # evict least-recently-used down to 2 GB
+docker builder prune -f --keep-storage 2GB     # the same bound on an older Docker (deprecated name)
 docker builder prune -f                        # or take all 8.037 GB; next build is cold
 ```
+
+**Run on the box 2026-08-27: 6.179 GB reclaimed**, leaving the cache under the 2 GB reserve — and
+the run also reported *"Flag --keep-storage has been deprecated, keep-storage flag has been changed
+to reserved-space"*. `prune_build_cache` therefore tries `--reserved-space` first and falls back to
+`--keep-storage`, because a deploy script that only knows the retired name is a slow-motion version
+of the bug it was written to fix.
 
 Build cache is purely a build accelerator — nothing at runtime reads it, and `builder prune` never
 touches images, containers or volumes. The only cost of pruning all of it is a slower next build.
