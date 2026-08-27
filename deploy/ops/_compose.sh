@@ -145,6 +145,40 @@ function alert() {
     || echo "alert: webhook POST to ALERT_WEBHOOK failed (check the URL / egress)" >&2
 }
 
+# Bound the BuildKit cache. Called from update.sh AFTER a deploy is declared successful — never
+# before, because the cache is what makes the next build fast and pruning ahead of a deploy slows the
+# thing you are in the middle of.
+#
+# A SIZE bound, and the distinction from the previous age bound is the whole fix. cd-deploy.sh used
+# `--filter until=168h`, which filters on LAST ACCESSED, and BuildKit touches a record every time a
+# build reuses it — so at any normal deploy cadence nothing ages out. Measured on production
+# 2026-08-27: against 8.037 GB of cache in 77 records, that filter reclaimed 458.5 kB (0.006%), on a
+# 29 GB volume then at 78% used with a 587 MB database. `--keep-storage` evicts least-recently-used
+# records until the cache is under the limit, so it bounds the cache however often builds run.
+#
+# It lives here, in one function called by one caller, because the old arrangement had the prune in
+# cd-deploy.sh — which CALLS update.sh — so the manual deploy path (the documented rollback, and how
+# this host is actually deployed) never reached it. Two policies in two paths is how one path came to
+# have none.
+#
+# Never fatal: a housekeeping failure must not turn a green deploy red, so every branch returns 0.
+# And no silent fallback to an unbounded `docker builder prune -f` when the flag is unsupported —
+# that would surprise an operator with a fully cold build. Say so instead.
+function prune_build_cache() {
+  local keep="${1:-${DEPLOY_BUILD_CACHE_KEEP:-2GB}}" out
+  echo "== [SUCCESS] pruning build cache to ${keep} =="
+  if out="$(docker builder prune -f --keep-storage "$keep" 2>&1)"; then
+    printf '%s\n' "$out" | tail -1 | sed 's/^/    /'
+  elif printf '%s' "$out" | grep -qi 'unknown flag\|unknown shorthand\|not a valid\|flag provided but not defined'; then
+    echo "    this Docker does not support --keep-storage — build cache is NOT bounded." >&2
+    echo "    Reclaim by hand:  docker builder prune -f   (frees all cache; next build is cold)" >&2
+  else
+    echo "    build-cache prune failed (harmless; the deploy succeeded) — ${out}" >&2
+  fi
+  df -h / 2>/dev/null | tail -1 | sed 's/^/    disk /'
+  return 0
+}
+
 # Reboot-safety guard against the "dedicated EBS data volume not mounted yet" disaster: if the operator
 # runs the DB on a SEPARATE volume (IH_DATA_MOUNT=1 in deploy/.env), refuse to start unless $1 is actually
 # a mounted filesystem — otherwise the bind-mount would hit an empty directory on the root disk and the

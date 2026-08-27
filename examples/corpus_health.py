@@ -503,9 +503,20 @@ def _tier_age_resolver(policy):
         return None
     import corpus
 
+    # ONE resolver for the whole pass, not a `tier_of` per article. `tier_of` re-reads the
+    # environment on every call, and reading it is linear in the number of configured sources: at a
+    # 50,000-host list (a 999,999-byte variable) that is ~500 µs per article — ~7 hours over a 7.5 M
+    # row catalogue — against 3.6 µs once the index is in hand. `corpus.select` has always hoisted
+    # this out of its row loop; this call site did not, and it is the one inside retention.
+    #
+    # It also makes the pass self-consistent: an operator editing RWE_CORPUS_SHADOW while a plan is
+    # being built can no longer have some articles judged against the old configuration and some
+    # against the new one.
+    resolve = corpus.tier_resolver()
+
     def age_for(a: dict) -> int:
         return policy.age_days_for_tier(
-            corpus.tier_of(_outlet(a), a.get("canonicalUrl") or a.get("url")))
+            resolve(_outlet(a), a.get("canonicalUrl") or a.get("url")))
     return age_for
 
 

@@ -208,5 +208,12 @@ fi
 
 stage_enter SUCCESS "deployment complete"
 stage_clear_state
+
+# Housekeeping, and deliberately INSIDE the SUCCESS stage rather than as a stage of its own: the
+# deploy is already declared good, and `DEPLOY_STAGES` is a state machine about whether the site is
+# serving, which pruning a cache has nothing to do with. The policy and the reasoning live in
+# `prune_build_cache` (deploy/ops/_compose.sh); `tests/test_build_cache_prune.sh` drives it.
+prune_build_cache
+
 echo ""
 echo "✅ now serving $(git describe --tags --always 2>/dev/null || git rev-parse --short HEAD)."

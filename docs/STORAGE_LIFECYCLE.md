@@ -243,8 +243,26 @@ the real scripts against a real mixed directory; against the unfixed scripts it 
 
 ## 9 · Build-cache housekeeping
 
-`cd-deploy.sh` runs `docker builder prune -f --filter until=168h` **after** a successful deploy
-(`CD_BUILD_CACHE_KEEP_HOURS` overrides the window).
+`update.sh` calls `prune_build_cache` (deploy/ops/_compose.sh) **after** a successful deploy, which
+runs `docker builder prune -f --keep-storage 2GB` (`DEPLOY_BUILD_CACHE_KEEP` overrides the bound).
+Because `cd-deploy.sh` calls `update.sh`, both deploy paths get it.
+
+> **Corrected 2026-08-27, twice over.** This used to read: *"`cd-deploy.sh` runs
+> `docker builder prune -f --filter until=168h` … (`CD_BUILD_CACHE_KEEP_HOURS` overrides the
+> window)."* Both halves were wrong in a way that only production showed.
+>
+> **Wrong place.** `cd-deploy.sh` *calls* `update.sh`, so a manual `update.sh <ref>` — the documented
+> rollback, and how the host is actually deployed — never reached the prune. Measured: **8.037 GB of
+> build cache in 77 records** on a 29 GB volume at 78% used, against a 587 MB database.
+>
+> **Wrong policy.** `--filter until=` matches on *last accessed*, and BuildKit touches a record every
+> time a build reuses it, so at any normal deploy cadence nothing ages out. Run against those 8 GB it
+> reclaimed **458.5 kB — 0.006%**. A size bound evicts least-recently-used records until the cache is
+> under the limit, and therefore bounds it however often builds run.
+>
+> Moved rather than duplicated: two policies in two deploy paths is how one path came to have none.
+> `tests/test_build_cache_prune.sh` asserts the flag *shape*, because a test that only checked "a
+> prune runs" passed against the broken version.
 
 Measured on the production host: every `dc build` left ~495 MB of cache behind and nothing reclaimed
 it — **12.51 GB against a 29 GB volume, 57% of everything used**, while the database was 98 MiB. It

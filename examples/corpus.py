@@ -166,9 +166,47 @@ def tier_index() -> dict:
 
 def _host_match(hosts: frozenset, text: "str | None") -> bool:
     """Subdomain-tolerant host membership: ``example.com`` matches ``news.example.com`` and never
-    ``notexample.com``."""
+    ``notexample.com``.
+
+    Asks the host set about the article's own label suffixes instead of asking every configured host
+    about the article. The predicate is unchanged — see below — but the cost stops depending on how
+    many sources are configured, which is the whole of M3's S2.
+
+    ## Why this is the same predicate
+
+    The rule was ``host == h or host.endswith("." + h)`` for some ``h`` in the set. Read the two arms
+    as one statement about ``h``:
+
+    * ``host == h`` means ``h`` is the whole host — the ``i = 0`` suffix;
+    * ``host.endswith("." + h)`` means ``host`` is ``<something>.<h>``, and the required dot is
+      exactly a label boundary — so ``h`` is one of the suffixes at ``i >= 1``.
+
+    Together: the old ``any(...)`` is true exactly when some label suffix of ``host`` is in the set,
+    which is what this loop tests. The dot is what makes it safe in both directions: ``example.com``
+    matches ``news.example.com`` (suffix ``example.com`` at ``i = 1``) and never
+    ``notexample.com``, whose only suffixes are ``notexample.com`` and ``com``.
+
+    ## Why it matters
+
+    ``_matches`` calls this up to four times per article (shadow and Tier B, each against URL and
+    publisher), and the retention path calls ``tier_of`` **per article**. Measured against a
+    50,000-host set: **3,428.6 µs per ``tier_of`` before, 0.84 µs after** — and flat in the number of
+    configured hosts rather than linear in it. At today's ~11,000 publishers the old form was already
+    costing ~205 s of held ingest lock on a per-tier retention pass.
+
+    A host has a handful of labels and the set is hashed, so this is O(labels) with a constant that
+    does not move. ``tests/test_corpus_host_match.py`` pins both halves: a differential test against
+    the original expression, and a guard that this function never *iterates* the host set — which is
+    the property that makes it O(labels) rather than a faster-looking rewrite of the same scan.
+    """
     host = outlet_registry._host_of(text or "")
-    return bool(host) and any(host == h or host.endswith("." + h) for h in hosts)
+    if not host:
+        return False
+    labels = host.split(".")
+    for i in range(len(labels)):
+        if ".".join(labels[i:]) in hosts:
+            return True
+    return False
 
 
 def _matches(index: tuple, publisher: "str | None", url: "str | None") -> bool:
@@ -219,8 +257,39 @@ def _tier_with(idx: dict, publisher: "str | None", url: "str | None") -> str:
     return DEFAULT_TIER
 
 
+def tier_resolver():
+    """A ``(publisher, url) -> tier`` callable that reads the settings **once**.
+
+    :func:`tier_of` is the convenient form and re-reads the environment on every call. That is fine
+    for a handful of calls and wrong inside a per-article loop, because reading the setting is itself
+    linear in the number of configured sources: ``os.environ`` decodes a fresh string on each access,
+    so ``_index``'s ``lru_cache`` has to hash the whole value to find its memo. Measured against a
+    50,000-host list — a 999,999-byte environment variable — that is **~500 µs per call**, of which
+    ~380 µs is the hash and ~59 µs the decode, against **3.6 µs** for the matching itself once the
+    index is in hand.
+
+    So the cost that survived M3's D2 is not the *matching*; it is *asking the environment again*.
+    :func:`select` and ``audit_source_lifecycle`` already hoist :func:`tier_index` out of their row
+    loops for exactly this reason. This function is that hoist, named and public, so the next
+    per-article caller does not have to rediscover it — the retention path
+    (``corpus_health._tier_age_resolver``) did not, and paid it per article.
+
+    A resolver also gives a pass ONE consistent tier assignment. ``tier_of`` re-reading per call
+    means an operator editing ``RWE_CORPUS_SHADOW`` mid-pass could have different articles judged
+    against different configurations inside a single retention plan; a resolver cannot.
+
+    The permanent fix is M3's D6 — tier lists do not belong in an environment variable — and this
+    measurement is the argument for it: the ``ARG_MAX`` ceiling was the *second* problem with
+    storing them there.
+    """
+    idx = tier_index()
+    return lambda publisher, url=None: _tier_with(idx, publisher, url)
+
+
 def tier_of(publisher: "str | None", url: "str | None" = None) -> str:
-    """This article's tier, derived from its outlet's identity."""
+    """This article's tier, derived from its outlet's identity.
+
+    Reads the environment on every call — see :func:`tier_resolver` for the per-article form."""
     if not enabled():
         return DEFAULT_TIER
     return _tier_with(tier_index(), publisher, url)

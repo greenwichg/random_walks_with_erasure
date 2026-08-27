@@ -701,11 +701,35 @@ rather than `DELETE … LIMIT`: the `LIMIT` form needs `SQLITE_ENABLE_UPDATE_DEL
 time, and this repository has already been caught once assuming a SQLite build option
 (`STRESS_50K_PLAN.md` §3.5 on `SQLITE_MAX_VARIABLE_NUMBER`). The subselect form works on every build.
 
-### D2 — `corpus._host_match` becomes O(labels)
+### D2 — `corpus._host_match` becomes O(labels)  ✅ **LANDED**
 
-Replace the full-set scan with the label-suffix walk in §2.7. Provably the same predicate, 4,000×
-faster at 50 k sources, constant in source count. **D1's per-tier arm depends on this**, and so does
-`corpus.select`'s row loop — this is the change that makes tier assignment free at any N.
+Replace the full-set scan with the label-suffix walk in §2.7. Provably the same predicate, constant
+in source count.
+
+**Landed — and implementing it found a second linear term I had missed.** D2 alone did *not* make
+`tier_of` flat:
+
+| configured hosts | `tier_of` | resolver call (`_tier_with` on a held index) |
+|---:|---:|---:|
+| 100 | 7.86 µs | **3.35 µs** |
+| 1,000 | 17.08 µs | **3.31 µs** |
+| 20,000 | 198.59 µs | **3.33 µs** |
+| 50,000 | **507.50 µs** | **3.85 µs** |
+
+The matching is flat, as designed. What is still linear is *asking the environment again*:
+`os.environ` decodes a fresh string on every read and `_index`'s `lru_cache` must hash the whole
+999,999-byte value to find its memo — 59 µs to decode plus 380 µs to hash, per call.
+
+So D2 shipped in two parts: the predicate, **and a `corpus.tier_resolver()` that reads the settings
+once**. `corpus.select` and `audit_source_lifecycle` already hoisted `tier_index()` out of their row
+loops; `corpus_health._tier_age_resolver` — the retention path — did not, and was paying the full
+507 µs per article. Over a 7.5 M-row catalogue that is **~7 hours versus ~27 seconds**, inside the
+global ingest lock.
+
+Tests: `tests/test_corpus_host_match.py` (differential against the original expression, plus a guard
+that the function never *iterates* the host set) and `tests/test_retention_tier_resolver_hoist.py`
+(the settings are read once per pass, however many articles it resolves). Both guards were verified
+by reverting the product and watching them fail.
 
 ### D3 — Three indexes, and a shorter score-cache window
 
@@ -817,7 +841,7 @@ Two properties to keep from the original: it must be **harmless when retention i
 articles means no orphans, and the query returns nothing), and it must run **after** the catalogue
 prune, which is the thing that creates the orphans.
 
-### D8 — `update.sh` prunes the build cache, with a policy that can actually reach it
+### D8 — `update.sh` prunes the build cache, with a policy that can actually reach it  ✅ **LANDED**
 
 §2.13: `cd-deploy.sh` prunes after a successful deploy; `update.sh` does not, and `update.sh` is what
 a manual deploy invokes. Put a prune in `update.sh`'s success path — **but not the one that is
@@ -829,16 +853,27 @@ least-recently-used records until the cache is under the limit, and therefore bo
 often builds run. `cd-deploy.sh`'s own filter should change to match; leaving two different policies
 in two deploy paths is how this was missed in the first place.
 
-Keep the properties the original was written with:
+**Landed** as `prune_build_cache` in `deploy/ops/_compose.sh`, called from `update.sh`'s SUCCESS
+path — inside the stage rather than as a new one, because `DEPLOY_STAGES` is a state machine about
+whether the site is serving and pruning a cache is not part of that. The knob is
+`DEPLOY_BUILD_CACHE_KEEP` (default `2GB`); `CD_BUILD_CACHE_KEEP_HOURS` is retired.
 
-* **bounded, and the bound is the setting** — the last builds stay warm, the tail goes;
-* **non-fatal by construction** — a housekeeping failure must never turn a green deploy red, which
-  is why the original swallows the exit status and reports the result;
-* **idempotent** — if `cd-deploy` is the caller, the second prune is a no-op, so nothing needs to
-  change on the CD path.
+**Moved, not duplicated.** `cd-deploy.sh`'s own prune is gone: two policies in two deploy paths is
+precisely how the manual path came to have none. Since cd-deploy calls update.sh, both paths now get
+the same one.
 
-Immediate relief needs no code at all — the same command, run once by hand — but the code change is
-what stops it coming back at ~500 MB per deploy.
+Properties kept from the original: **non-fatal** (every branch returns 0 — housekeeping must not turn
+a green deploy red) and **after** the smoke test, never before. One property added: **no silent
+fallback**. If `--keep-storage` is unsupported the function says the cache is unbounded and stops,
+rather than quietly running an unbounded `prune -f` and leaving the next build fully cold.
+
+`tests/test_build_cache_prune.sh` drives it with a stubbed `docker`, asserting the flag *shape* —
+a test that only checked "a prune runs" would have passed against the version that reclaimed 458 kB.
+It is wired into pytest by `tests/test_ops_shell_suites.py`, which also picks up the pre-existing
+`test_backup_formats.sh` that nothing had been running.
+
+Immediate relief still needs no deploy — the same command by hand — but the code change is what
+stops it coming back at ~500 MB per deploy.
 
 ### D9 — Backups stop leaving debris, and stop shipping it
 
@@ -990,8 +1025,8 @@ own right, and it is short:
 
 | step | change | why here | risk |
 |---|---|---|---|
-| 0 | **a size-bounded `docker builder prune`** (+ **D8** to keep it there) | frees up to **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today. Note §2.13: the *age*-bounded form freed 458 kB | lowest — build cache only, no images, no volumes |
-| 1 | **D2** — `_host_match` becomes O(labels) | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
+| 0 ✅ | **a size-bounded `docker builder prune`** (+ **D8**, landed) | frees up to **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today. Note §2.13: the *age*-bounded form freed 458 kB | lowest — build cache only, no images, no volumes |
+| 1 ✅ | **D2** — `_host_match` becomes O(labels), **plus `tier_resolver()`** | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
 | 2 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
 | 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
 | 4 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |

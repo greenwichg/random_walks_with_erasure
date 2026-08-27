@@ -136,23 +136,21 @@ echo "== cd-deploy: handing off to update.sh for ${REF} =="
 UPDATE_RC=$?
 if [ "$UPDATE_RC" -eq 0 ]; then
   stage_clear_state
-  # ── Build-cache housekeeping ───────────────────────────────────────────────────────────────
-  # AFTER success, never before: the cache is what makes the NEXT build fast, and pruning ahead of
-  # a deploy would slow the thing we are in the middle of. Measured on this host — every `dc build`
-  # leaves ~495 MB behind and nothing ever reclaimed it: 12.51 GB of cache against a 29 GB volume,
-  # 57% of everything used, with the database at 98 MiB. It filled the disk at roughly 500 MB per
-  # deploy, so the failure mode was "PREFLIGHT starts refusing to deploy" some 25 deploys out.
+  # ── Build-cache housekeeping now lives in update.sh ────────────────────────────────────────────
+  # It used to be here, with `--filter until=${CD_BUILD_CACHE_KEEP_HOURS:-168}h`. Two things were
+  # wrong with that and both were measured on the box on 2026-08-27:
   #
-  # `until=168h` keeps the last week, which covers the rollback window and a normal iteration
-  # cycle; only genuinely cold layers go. Non-fatal by construction — a housekeeping failure must
-  # never turn a green deploy red, so the result is reported and the exit status swallowed.
-  PRUNE_WINDOW="${CD_BUILD_CACHE_KEEP_HOURS:-168}h"
-  if reclaimed="$(docker builder prune -f --filter "until=${PRUNE_WINDOW}" 2>&1 | tail -1)"; then
-    echo "cd-deploy: build cache pruned (older than ${PRUNE_WINDOW}) — ${reclaimed}"
-  else
-    echo "cd-deploy: build-cache prune failed (harmless; deploy succeeded) — ${reclaimed}" >&2
-  fi
-  df -h / 2>/dev/null | tail -1 | sed 's/^/cd-deploy: disk /'
+  #  1. WRONG PLACE. cd-deploy CALLS update.sh, so this ran only on the CD path. A manual
+  #     `update.sh <ref>` — the documented rollback, and how this host is actually deployed — never
+  #     reached it, and the build cache reached 8.037 GB on a 29 GB volume at 78% used.
+  #  2. WRONG POLICY. `until=` filters on LAST ACCESSED and BuildKit touches a record every time a
+  #     build reuses it, so at any normal deploy cadence nothing ages out. Run against those 8 GB it
+  #     reclaimed 458.5 kB — 0.006%. A size bound (`--keep-storage`) evicts least-recently-used
+  #     records until the cache is under the limit and therefore bounds it however often builds run.
+  #
+  # Moved rather than duplicated: two prune policies in two deploy paths is exactly how the manual
+  # path came to have none. update.sh owns it, so both paths get it. `CD_BUILD_CACHE_KEEP_HOURS` is
+  # retired; the knob is `DEPLOY_BUILD_CACHE_KEEP` (default 2GB).
   alert "cd-deploy [SUCCESS] deployed ${REF} — smoke green."
   echo "CD_RESULT=deployed ref=$(git rev-parse HEAD) stage=SUCCESS service_interrupted=0 rollback=none"
   exit 0
