@@ -125,6 +125,8 @@ campaign, not a single run — and it is the one phase that genuinely touches pu
 | B3 | Discovery/validation campaign scheduling | 25k+ | operational, not architectural |
 | B4 | 50k adapter objects + crawl config in memory | unknown | **measure** — no basis to predict |
 | B5 | Global politeness ceiling | any | undecided **policy**, not a resource limit |
+| B6 | Cold-start stampede (every source due at t=0) | 10k+ | small fix: jitter initial due times |
+| ~~B7~~ | ~~Clustering follows the shadow catalogue~~ | — | **closed — measured false**; a one-time subprocess spawn |
 
 ---
 
@@ -226,21 +228,35 @@ This is a real production property, not an artefact — a deploy would hammer ev
 publisher at once. **The fix is jittered initial due times**, which is a small change to
 `MultiSourcePoller.start`. Not made here: the brief was the harness.
 
-### ⚠ B7 — clustering cost does not follow Tier A membership
+### B7 — CLOSED, and it was not a bottleneck. Both of my claims were wrong.
 
-`story_service._fetch` correctly returns **0 rows** at every cohort (the shadow exclusion works),
-and `cluster_fetch_ms` stays cheap. But `warm_cache` took **6,691 ms building over those zero
-rows** at 5,000 sources, against 24.6 ms at 1,000.
+Originally recorded here as *"clustering cost does not follow Tier A membership"* and *"something on
+the warm path is proportional to the shadow catalogue"*. Attributed properly, **neither is true.**
 
-Isolation therefore holds for **correctness** and not for **cost**: something on the warm path is
-proportional to the shadow catalogue rather than to Tier A. At 50k sources and ~250k articles/day
-that is the difference between the design working and not.
+| | measured |
+|---|---|
+| `build_stories` over 0 Tier A rows | **0.1 ms** |
+| `_fetch` with the tier prefilter | 10–28 ms, scales mildly with catalogue |
+| **First** `warm_cache` in a process | 42 – 2,305 ms, **varying 50× run to run** |
+| **Second** `warm_cache`, immediately after | **1.1 ms** |
 
-**Not diagnosed here, and deliberately not guessed at.** Candidates are the warm using a different
-fetch from `_fetch`, `catalog_fingerprint` over the full catalogue, or entity extraction ahead of
-the tier filter. The harness now reports fetch and build separately, so the next run attributes it.
+The cost is a **one-time per-process startup**: the persistent build subprocess spawning and
+importing `api_server`. `build_subprocess_enabled`'s own docstring says so — *"spawn cost and the
+`api_server` import are paid once, not per build"*. The run-to-run variance was the giveaway; a
+scaling law does not move 50× on identical inputs.
 
-### On the earlier 5 s-interval runs
+**Tier A isolation therefore holds completely — correctness AND cost.** Clustering over an empty
+Tier A is free, at every cohort, with the whole catalogue in shadow. That is the premise the 50k
+design rests on and it is now measured rather than assumed.
+
+**The methodological error, recorded because it is the reusable part:** the first attribution timed
+`warm_cache` ONCE and read a startup cost as a scaling curve. `warm_cache` also single-flights and
+returns `None` in microseconds when it stands down, so a single sample can measure "did this call
+win the lock" instead of "what does this cost". The harness now times `_fetch`, `build_stories` and
+two consecutive `warm_cache` calls separately, which is what turned a false bottleneck into a
+closed one.
+
+### On the earlier 5 s-interval runs### On the earlier 5 s-interval runs
 
 A first pass used a fixed 5 s interval and every cohort above ~500 failed on lock occupancy. That
 was the **harness measuring its own compression**: 1,000 sources at 5 s demands 200 polls/s where

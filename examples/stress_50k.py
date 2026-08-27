@@ -188,6 +188,9 @@ class CohortResult:
     clustering_ms: float = 0.0
     fetch_ms_cluster: float = 0.0
     tier_a_scanned: int = 0
+    warm_ms: float = 0.0
+    warm_stood_down: bool = False
+    warm2_ms: float = 0.0
     db_bytes: int = 0
     peak_rss_mb: float = 0.0
     cpu_s: float = 0.0
@@ -215,6 +218,9 @@ class CohortResult:
             "cluster_fetch_ms": round(self.fetch_ms_cluster, 1),
             "cluster_build_ms": round(self.clustering_ms, 1),
             "cluster_rows_in": self.tier_a_scanned,
+            "warm_wrapper_ms": round(self.warm_ms, 1),
+            "warm_stood_down": self.warm_stood_down,
+            "warm2_ms": round(self.warm2_ms, 1),
             "db_mb": round(self.db_bytes / 1e6, 1),
             "bytes_per_article": round(self.db_bytes / max(1, self.catalog_rows)),
             "peak_rss_mb": round(self.peak_rss_mb, 1),
@@ -327,7 +333,13 @@ def run_cohort(n: int, *, seconds: float, workers: int, interval_s: float, fail_
         res.catalog_rows = st.count_feed_articles()
         res.tier_a_rows, res.shadow_leak_rows = _tier_census(st, corpus)
         res.exclusion_sql_ms = _time_exclusion_query(st, corpus)
-        res.fetch_ms_cluster, res.clustering_ms, res.tier_a_scanned = _time_clustering(st)
+        c = _time_clustering(st)
+        res.fetch_ms_cluster = c["fetch_ms"]
+        res.clustering_ms = c["build_ms"]
+        res.tier_a_scanned = c["rows"]
+        res.warm_ms = c["warm_ms"]
+        res.warm_stood_down = c["warm_stood_down"]
+        res.warm2_ms = c["warm2_ms"]
         res.db_bytes = sum(os.path.getsize(p) for p in pathlib.Path(tmp).glob("stress.db*"))
         return res
     finally:
@@ -370,31 +382,66 @@ def _time_exclusion_query(st, corpus) -> float:
     return (time.perf_counter() - t0) * 1000.0
 
 
-def _time_clustering(st) -> "tuple[float, float, int]":
-    """Tier A clustering, split into FETCH and BUILD — the number that must stay flat in N.
+def _time_clustering(st) -> dict:
+    """Attribute the clustering cost to its actual parts. NOT via `warm_cache` alone.
 
-    Split because the aggregate is not actionable. With every synthetic source in shadow, Tier A is
-    empty and the BUILD should be free; if the total still grows with cohort size, the cost is in
-    the fetch — i.e. the projection is paying for shadow rows it then discards, which is isolation
-    holding for correctness but not for cost. Attributing that is the difference between a finding
-    and a number.
+    The first version of this timed `warm_cache` and reported 24.6 ms at 1k sources against
+    6,691 ms at 5k — 2.5x the rows for 272x the time, which is neither linear nor a fixed
+    subprocess spawn. The measurement was unsound: `warm_cache` SINGLE-FLIGHTS on a module-level
+    lock and returns `None` in microseconds when it stands down, so the number was partly "did this
+    call win the lock", not "what does clustering cost".
+
+    Measured here instead, each on its own:
+
+    * ``fetch_ms`` / ``rows`` — `_fetch`, which applies the tier prefilter. With every source in
+      shadow this must return 0, and that is the isolation result.
+    * ``build_ms`` — `build_stories` over exactly those rows. This is the real clustering cost, and
+      over 0 rows it must be ~0. If it is not, isolation is not buying what it claims.
+    * ``warm_ms`` / ``warm_stood_down`` — the wrapper, reported separately so its overhead
+      (fingerprint, event inputs, subprocess spawn) is visible as overhead rather than misread as
+      clustering.
     """
     import story_service
+    out = {"fetch_ms": -1.0, "rows": 0, "build_ms": -1.0, "warm_ms": -1.0,
+           "warm_stood_down": False, "warm2_ms": -1.0}
     t0 = time.perf_counter()
     try:
-        report = {}
-        rows = story_service._fetch(st, report_out=report)
+        rows = story_service._fetch(st, report_out={})
     except Exception as e:
         print(f"    !! clustering FETCH failed: {type(e).__name__}: {e}")
-        return -1.0, -1.0, 0
-    t_fetch = time.perf_counter()
+        return out
+    out["fetch_ms"] = (time.perf_counter() - t0) * 1000.0
+    out["rows"] = len(rows)
+
+    t1 = time.perf_counter()
     try:
-        story_service.warm_cache(st)
+        story_service.build_stories(rows, min_articles=2, min_publishers=2)
     except Exception as e:
         print(f"    !! clustering BUILD failed: {type(e).__name__}: {e}")
-        return (t_fetch - t0) * 1000.0, -1.0, len(rows)
-    t_build = time.perf_counter()
-    return (t_fetch - t0) * 1000.0, (t_build - t_fetch) * 1000.0, len(rows)
+        return out
+    out["build_ms"] = (time.perf_counter() - t1) * 1000.0
+
+    t2 = time.perf_counter()
+    try:
+        n = story_service.warm_cache(st)
+    except Exception as e:
+        print(f"    !! warm FAILED: {type(e).__name__}: {e}")
+        return out
+    out["warm_ms"] = (time.perf_counter() - t2) * 1000.0
+    out["warm_stood_down"] = n is None
+
+    # A SECOND warm, immediately. This is what separates a one-time cost from a scaling one:
+    # `build_subprocess_enabled` is ON by default and its worker is documented as persistent —
+    # "spawn cost and the api_server import are paid once, not per build". If warm #2 is cheap, the
+    # first number was startup and B7 is not a 50k blocker. If both are slow, the wrapper really is
+    # doing catalogue-proportional work per warm and it is.
+    t3 = time.perf_counter()
+    try:
+        story_service.warm_cache(st)
+        out["warm2_ms"] = (time.perf_counter() - t3) * 1000.0
+    except Exception:
+        out["warm2_ms"] = -1.0
+    return out
 
 
 # --------------------------------------------------------------------------- verdicts
@@ -467,7 +514,7 @@ def main(argv=None) -> int:
         for k in ("registry_build_s", "polls", "polls_per_s", "poll_failure_pct", "p50_poll_ms",
                   "p95_poll_ms", "p95_fetch_ms", "lock_occupancy_pct", "peak_inflight",
                   "starved_sources", "catalog_rows", "tier_a_rows", "shadow_leak_rows",
-                  "cluster_fetch_ms", "cluster_build_ms", "cluster_rows_in", "db_mb", "bytes_per_article", "peak_rss_mb", "cpu_pct",
+                  "cluster_fetch_ms", "cluster_build_ms", "cluster_rows_in", "warm_wrapper_ms", "warm2_ms", "warm_stood_down", "db_mb", "bytes_per_article", "peak_rss_mb", "cpu_pct",
                   "exclusion_sql_ms"):
             print(f"    {k:<22} {s[k]}")
         hard, soft = check(s)
