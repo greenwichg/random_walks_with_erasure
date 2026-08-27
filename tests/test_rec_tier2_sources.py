@@ -208,7 +208,7 @@ def stack(tmp_path, monkeypatch):
     ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
                          behaviors=None, lean_tau=None, domain=None, n_users=None,
                          max_items=None, seed=0)
-    feed_csv = feed_source.prepare(st)
+    feed_csv = feed_source.prepare(st, str(tmp_path / "corpus.csv"))
     assert feed_csv, "feed corpus must activate"
     monkeypatch.setenv("RWE_QBIAS", feed_csv)
     monkeypatch.setenv("RWE_PROFILE", "qbias")
@@ -220,6 +220,34 @@ def stack(tmp_path, monkeypatch):
 
 def _urls(recs):
     return [er._canon(str((r.get("article") or {}).get("url") or "")) for r in recs]
+
+
+#: What an EMPTY url canonicalises to. Both canonicalisers agree on it, which is the problem: every
+#: card whose id failed to resolve collapses to this one value, so N unresolvable cards look exactly
+#: like N copies of one article to a set-based uniqueness check.
+_UNRESOLVED = er._canon("")
+
+
+def _assert_distinct_cards(feed):
+    """One feed, two DIFFERENT invariants — kept apart so a failure says which one broke.
+
+    `assert len(urls) == len(set(urls))` conflates them. A rare failure here printed `14 == 13` and
+    nothing else, and the first question — "is this the same article twice, or two cards whose URL
+    did not resolve?" — could not be answered from the output at all. They have unrelated causes and
+    unrelated fixes.
+    """
+    urls = _urls(feed)
+    unresolved = [r.get("strategy") for r, u in zip(feed, urls) if u == _UNRESOLVED]
+    assert not unresolved, (
+        f"{len(unresolved)} card(s) carry no resolvable URL (strategies: {unresolved}). The "
+        f"resolver is attached in this fixture, so every served column must map to a URL — this is "
+        f"a resolution failure, NOT a duplicate.")
+    seen, dupes = set(), []
+    for r, u in zip(feed, urls):
+        if u in seen:
+            dupes.append((r.get("strategy"), u))
+        seen.add(u)
+    assert not dupes, f"the same article was served twice: {dupes}"
 
 
 def test_sources_off_is_byte_identical_and_pure_rwe(stack):
@@ -253,8 +281,7 @@ def test_story_source_supersedes_the_one_card_slot(stack, monkeypatch):
     monkeypatch.setenv("RWE_REC_STORY_SOURCE", "2")
     feed = pers.recommendations(uid)
     # never double-served: the story cards are the SOURCE's (siblings can appear once each)
-    urls = _urls(feed)
-    assert len(urls) == len(set(urls))
+    _assert_distinct_cards(feed)
     assert sum(1 for r in feed if r["strategy"] == "story") <= 2
 
 

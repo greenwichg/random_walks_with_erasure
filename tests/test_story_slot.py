@@ -91,7 +91,7 @@ def stack(tmp_path, monkeypatch):
     ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
                          behaviors=None, lean_tau=None, domain=None, n_users=None,
                          max_items=None, seed=0)
-    feed_csv = feed_source.prepare(st)
+    feed_csv = feed_source.prepare(st, str(tmp_path / "corpus.csv"))
     assert feed_csv, "feed corpus must activate"
     monkeypatch.setenv("RWE_QBIAS", feed_csv)
     monkeypatch.setenv("RWE_PROFILE", "qbias")
@@ -206,7 +206,7 @@ def test_no_opportunity_is_a_noop(tmp_path, monkeypatch):
     ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
                          behaviors=None, lean_tau=None, domain=None, n_users=None,
                          max_items=None, seed=0)
-    feed_csv = feed_source.prepare(st)
+    feed_csv = feed_source.prepare(st, str(tmp_path / "corpus.csv"))
     monkeypatch.setenv("RWE_QBIAS", feed_csv)
     monkeypatch.setenv("RWE_PROFILE", "qbias")
     be = engine.Backend(engine.resolve_profile(ns))
@@ -413,7 +413,7 @@ def _lean_stack(tmp_path, monkeypatch, members):
     ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
                          behaviors=None, lean_tau=None, domain=None, n_users=None,
                          max_items=None, seed=0)
-    feed_csv = feed_source.prepare(st)
+    feed_csv = feed_source.prepare(st, str(tmp_path / "corpus.csv"))
     assert feed_csv
     monkeypatch.setenv("RWE_QBIAS", feed_csv)
     monkeypatch.setenv("RWE_PROFILE", "qbias")
