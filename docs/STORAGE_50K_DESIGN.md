@@ -40,6 +40,12 @@ and none requires a substrate migration.
 > own logs measure it at **11–21 s per pass** — 1.3× to 2.5× worse than I then estimated — which at a
 > 600 s maintenance window is **1.9–3.5% lock occupancy**: pure waste, and not an outage. §2.10.
 >
+> **Validated on production, 2026-08-27.** D1 stage 1 took the live retention pass from **11,366 ms
+> to 3,104.6 ms (3.66×)** and lock occupancy from 1.89% to 0.52%, against a 3.3× prediction. D3's
+> three indexes are confirmed in place on the live database — and are worth ~0.5% of that pass
+> today, because production's score cache is 163 k rows rather than the 7.5 M the target implies.
+> §2.15.
+>
 > **A second correction, this one against me.** I also predicted `article_entities` was leaking
 > orphans on every prune. Production measured **97 orphans of 134,088 rows — 0.072%**. The missing
 > reaper is real; the leak I sized it against is not. §2.12.
@@ -657,10 +663,41 @@ The CPU-bound step is 3.7×, which is roughly what a `t3.medium` at 0.40 sustain
 against a 4-vCPU container. The *small* steps at 18–63× are not CPU — they are a **cold page cache**
 six minutes after a container restart, reading index pages off EBS.
 
-**So D1's effect on production is NOT yet established, in either direction.** The totals are
-11,144–20,890 ms before and 9,469.5 ms after, but the "after" is a cold-start pass and there is no
-per-step breakdown from before. A warm sample settles it; one cold sample does not, and the
-temptation to read 9,469 < 11,144 as a win is exactly the reasoning §9b is about.
+**The warm sample, thirteen minutes later — same code, same catalogue:**
+
+```json
+{"total": 239, "deleted": {"feed_articles": 110, "article_event_locations": 19, "scored_articles": 109, ...},
+ "ms": {"feed_articles": 3050.9, "article_event_locations": 32.0, "scored_articles": 3.9,
+        "analytics_events": 0.9, "rec_events": 1.0, "report_snapshots": 5.6,
+        "storage_stats": 10.3}, "totalMs": 3104.6}
+```
+
+| step | cold (14:01) | warm (14:14) | |
+|---|---:|---:|---:|
+| `feed_articles` | 8,394.0 ms | 3,050.9 ms | 2.8× |
+| `article_event_locations` | 906.1 ms | **32.0 ms** | **28.3×** |
+| `scored_articles` | 44.2 ms | 3.9 ms | 11.3× |
+| `storage_stats` | 110.1 ms | 10.3 ms | 10.7× |
+| **total** | **9,469.5 ms** | **3,104.6 ms** | 3.1× |
+
+**D1 stage 1 is confirmed on production: 11,366 ms → 3,104.6 ms, a 3.66× improvement**, against the
+3.3× this harness predicted. Lock occupancy at a 600 s maintenance window falls from **1.89% to
+0.52%**. Warm, production's CPU-bound step is only **1.33×** this 4-vCPU container — the
+`t3.medium` was not being throttled.
+
+> **And a correction to §2.15 as first written.** I read that 906 ms as evidence the harness had
+> under-measured the orphan reaper's *cost*. The warm sample says otherwise: **32.0 ms**, against
+> this harness's 20.6 ms — 1.55×, which is just the box. The 906 ms was ~97% cold page cache.
+>
+> The harness gap was real and worth fixing — it genuinely measured two populated tables as empty —
+> but it was **not** the explanation for that number, and I asserted it was before the warm sample
+> existed. Two candidate causes, and I named the one I had just been working on.
+
+**What D3 actually bought on production today: about 0.5% of the pass.** `scored_articles` holds
+163,146 rows; unindexed that scan is ~60 ms of an 11,366 ms pass. D3 is correct and its value is at
+the 7.5 M rows the 50k target implies — the 10.1× in §4 D3 was measured at 400 k score-cache rows
+plus 200 k analytics and 200 k rec-events, and production has 17 k and 19 k of those. **Essentially
+all of the production win is D1.** Saying otherwise would credit the wrong change.
 
 ---
 
@@ -1108,7 +1145,7 @@ is visibly distinct from one that is aspirational.
 |---|---|---|---|---|
 | **A1** | **Storage growth** | ≤ **3,300 B/article** all-in, index share ≤ **25%**, both measured over ≥ 100 k rows | 2,473–2,492 B, 18–19% ✅ | — (already met) |
 | **A2** | **Write throughput** | ≥ **250 articles/s** sustained through the real `ingest_entries` at **16** concurrent writers, p95 ≤ **250 ms**, **zero** `database is locked` | 284.8/s, p95 172.1 ms, 0 errors, at 1 M rows ✅ | — (already met) |
-| **A3** | **Retention / cleanup** | a steady-state pass that deletes nothing completes in ≤ **2,000 ms** with an RSS delta ≤ **150 MB**, at the design size | **89,765 ms / +5,582 MB at 1 M rows** ❌; production is estimated at **~8–9 s / ~840 MB per pass right now** (§2.10, unconfirmed on the box) — D1's replacement measures **5.4 ms** on the same data | D1, D2, D3, D4 |
+| **A3** | **Retention / cleanup** | a steady-state pass that deletes nothing completes in ≤ **2,000 ms** with an RSS delta ≤ **150 MB**, at the design size | **production measured at 3,104.6 ms** after D1 stage 1, down from 11,366 ms (§2.15) — at 150 k rows, not the design size, so still ❌ there | D1 stage 2, D4 |
 | **A4** | **Backup / restore** | full backup + integrity + compress ≤ **15 min**, and ≤ **5%** of the 0.40 sustainable vCPU averaged over an hour; verified restore ≤ **30 min**; WAL forced by one backup ≤ **1 GB** | 15.0 s/GB → **4.7 min** at 18.7 GB ✅; **19.5% of vCPU** if hourly ❌; restore 19.9 s/GB → 6.2 min ✅; WAL 478 MB at 2.5 GB ✅, unmeasured at 18.7 GB ⚠ | D5 |
 | **A5** | **Database size** | database ≤ **60%** of the volume, local backups ≤ **25%**, ≥ **15%** free at all times; alert at 70% used | **76% used, 6.3 GB free** ❌ — but the database is 2% and the backups 10%; **8.0 GB of it is reclaimable Docker build cache** (§2.13). One `docker builder prune` → 48% used, PASS | D8, then §5 sizing (150 GB) |
 | **A6** | **Memory / disk** | no single pass exceeds **50%** of box RAM; steady-state ingest RSS ≤ **1 GiB** | the age pass needs **5.58 KB per catalogue row** — 50% of a 4 GiB box at **~366 k rows** ❌ | D1 |
@@ -1141,7 +1178,7 @@ own right, and it is short:
 | 0 ✅ | **a size-bounded `docker builder prune`** (+ **D8**, landed) | frees up to **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today. Note §2.13: the *age*-bounded form freed 458 kB | lowest — build cache only, no images, no volumes |
 | 1 ✅ | **D2** — `_host_match` becomes O(labels), **plus `tier_resolver()`** | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
 | 2 ✅ | **D3 indexes** (+ `RWE_RETENTION_SCORED_DAYS`, an operator decision) | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
-| 3 ✅ | **D1 stage 1** — the narrow projection | measured first: 84% of the pass was loading columns retention never reads. 7,687 → 2,356 ms and 880 → 179 MB, with **no change to any deletion decision** | low — proven by a differential over randomised catalogues, mutation-tested three ways |
+| 3 ✅ | **D1 stage 1** — the narrow projection | measured first: 84% of the pass was loading columns retention never reads. **Production: 11,366 → 3,104.6 ms (3.66×)**, with no change to any deletion decision | low — proven by a differential over randomised catalogues, mutation-tested three ways |
 | 3b | **D1 stage 2** — SQL-shaped retention for Tier B and shadow | what actually clears A3 at the design size; stage 1 does not | medium — a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
 | 4 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |
 | 5 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
