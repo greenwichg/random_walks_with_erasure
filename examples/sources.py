@@ -1795,8 +1795,13 @@ class MultiSourcePoller:
         # adapters that never inherit SourceAdapter, and an opt-in split must default to "no" for
         # anything that has not said otherwise rather than raising at them.
         collected = None
+        # BOTH halves use getattr, and the second one is not decoration. The registry accepts
+        # duck-typed adapters, and one that opts in without inheriting SourceAdapter has no
+        # `poll_once` attribute at all — `type(adapter).poll_once` then raises AttributeError on
+        # EVERY poll, which the pool catches and logs, so the symptom is "this source never
+        # ingests" with no other clue. Found by stress_50k.py on its first working run.
         if (getattr(adapter, "FETCH_IS_STORE_FREE", False)
-                and type(adapter).poll_once is SourceAdapter.poll_once):
+                and getattr(type(adapter), "poll_once", None) is SourceAdapter.poll_once):
             collected = adapter.collect()                   # network + parse, no lock, no store
         t_fetch = time.perf_counter()
         with self._lock:                                    # write-safe: one adapter ingests at a time

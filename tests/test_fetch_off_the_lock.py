@@ -284,3 +284,27 @@ def test_the_only_adapter_opted_in_today_is_the_one_that_has_to_scale(poller):
                if isinstance(c, type) and issubclass(c, sources.SourceAdapter)
                and c.__dict__.get("FETCH_IS_STORE_FREE") is True]
     assert optedin == [], f"no sources.py adapter has been opted in yet, got {optedin}"
+
+
+def test_a_duck_typed_adapter_that_opts_in_does_not_CRASH_the_poll(poller, monkeypatch):
+    """Found by `stress_50k.py` on its first working run, and it cost an hour of misreading.
+
+    The M6.2 gate used `getattr(adapter, "FETCH_IS_STORE_FREE", False)` — defensive, because the
+    registry accepts duck-typed adapters — beside `type(adapter).poll_once`, which is not. An
+    adapter that opts in WITHOUT inheriting SourceAdapter has no `poll_once` attribute at all, so
+    the gate raised AttributeError on every poll. The pool catches adapter exceptions by design, so
+    the symptom was "0 polls, every source starved" — which reads as a scheduler failure rather
+    than a one-word inconsistency in a condition."""
+    monkeypatch.setattr(sources.rss_ingest, "ingest_entries", lambda *a, **k: {})
+
+    class _DuckTyped:                            # no SourceAdapter base, and opts in anyway
+        FETCH_IS_STORE_FREE = True
+        provider, source_type = "duck", "probe"
+        health_key = "probe://duck"
+
+        def poll_once(self, store_, scorer, *, on_feed=None):
+            return {"provider": self.provider, "sourceType": self.source_type,
+                    "new": 1, "duplicates": 0, "failed": 0}
+
+    agg = poller.poll_adapter_once(_DuckTyped())   # must not raise
+    assert agg["new"] == 1 and agg["failed"] == 0
