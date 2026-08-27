@@ -2048,8 +2048,51 @@ argument: at 87.8% the lock is not a future problem to be handled during fan-out
 prerequisite. Throttling catalog-wide maintenance to once per polling *window* rather than once per
 adapter cycle is the cheap version and would cut the dominant cost by roughly the adapter count.
 
-Not changed here. It is the ingest hot path, it is outside M7's scope, and it is a deliberate
-decision rather than a tidy-up to fold into a crawler commit.
+### The fix, built: coalesce the catalog-wide steps to one pass per window
+
+Authorised as its own change rather than folded into a crawler commit.
+
+**Scheduling only.** Nothing moves off the lock, no thread is added, no step is removed. Retention
+and the hot refresh are coalesced to at most one pass per `RWE_POST_CYCLE_MAINTENANCE_INTERVAL`
+(default 600 s, matching `RWE_POLL_INTERVAL`) — which is what *"one incremental pass per cycle"*
+meant before the poller grew from one loop to eleven adapter threads. **Narrowing the lock itself is
+still M6**; this is the prerequisite that buys the headroom to do it.
+
+`warm` / breaking-detection / push stay on **every** ingesting cycle, deliberately. They are the
+latency-sensitive half — a breaking story people should be told about now — and the cheapest at
+11–17%, of which `request_warm` is already non-blocking. Coalescing them would trade a real product
+property for almost no time.
+
+Expected effect: the two dominant segments drop from ~11 passes per window to 1. On the measured
+numbers that is the difference between 87.8% occupancy and roughly a tenth of it, with the residue
+being the un-coalesced warm step.
+
+**Three properties the tests pin, each a failure this codebase has already had:**
+
+* **A deferred pass is never lost.** `_maintenance_pending` outlives the skip and a due pass runs
+  even on a cycle that ingested nothing. Without it, ingestion going quiet right after a skip would
+  strand the last window's rows — exactly the *"a quiet feed stalls that article's graph entry
+  indefinitely"* failure `dirty_check` exists to prevent.
+* **A dirty nudge bypasses the throttle.** D6's latency bound stays a promise rather than a
+  probability. Nudges come from reads, not from the eleven pollers, so they cannot reintroduce the
+  cost.
+* **`=0` restores the old behaviour exactly** — an off switch that is not a rollback, declared in
+  **both** service blocks so it can actually reach the container. A lever that cannot be pulled is
+  worse than none, because it is believed.
+
+**The one behaviour change with a product cost, stated rather than implied:** new articles now reach
+the recommendation corpus up to one window later. An existing test — `test_post_cycle_gate_respects_
+dirty_check` — failed on precisely this and was the right thing to fail; it owns the *trigger
+condition* and now pins that with the throttle disabled, while `tests/test_post_cycle_coalescing.py`
+owns *how often* an eligible pass may run.
+
+**A note on where the cost went last time.** The comment at `sources.py:1547` records the previous
+investigation landing on `story_cache_warm` — *"~93% of the most expensive loop in the process was
+inside a step nobody had timed"* — and its fix worked: warm is now the smallest segment at 11–17%.
+The cost did not disappear, it moved to cleanup and refresh. That is worth expecting again here.
+The way to know is the same as last time: `postCycleMs` and the three-way split are still logged,
+and `post_cycle` now also carries `maintenance` and `coalesced` so a cheap cycle and an expensive
+one differ by more than their durations.
 
 ## What M7 does NOT do
 

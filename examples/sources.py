@@ -87,6 +87,20 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _maintenance_interval() -> float:
+    """Minimum seconds between catalog-wide post-cycle passes (retention + hot refresh).
+
+    600 s matches ``RWE_POLL_INTERVAL``, which is what "one pass per polling window" means: with
+    ~11 adapters the old per-cycle behaviour ran that pass ~11 times per window, each superseding
+    the last, at a cost set by catalog size rather than by what any adapter brought.
+
+    **0 restores the previous behaviour exactly** — every ingesting cycle runs its own pass — so
+    the change has an off switch that does not require a rollback. Read per call rather than
+    cached at construction, so an operator can retune it on a running process.
+    """
+    return _float_env("RWE_POST_CYCLE_MAINTENANCE_INTERVAL", 600.0)
+
+
 def _int_or_none(name: str) -> Optional[int]:
     v = os.environ.get(name)
     return int(v) if v and v.lstrip("-").isdigit() else None
@@ -1419,6 +1433,11 @@ class MultiSourcePoller:
         self._threads: list = []
         # Serialize DB writes + the post-cycle hook across adapters so concurrent polls stay SQLite-safe.
         self._lock = threading.Lock()
+        # Coalescing state for the catalog-wide post-cycle steps (see `_post_cycle`). None rather
+        # than 0.0 so "never run" is distinguishable from "ran at process start" and the first pass
+        # is never throttled.
+        self._last_maintenance: Optional[float] = None
+        self._maintenance_pending = False
         # health_key -> consecutive failures, for adaptive polling (see _effective_interval).
         self._consecutive: dict = {}
 
@@ -1474,16 +1493,51 @@ class MultiSourcePoller:
     # quiet feed stalls that article's graph entry indefinitely). Trigger condition only — ingestion,
     # retention, and the refresh machinery are untouched. --
     def _post_cycle(self, agg: dict) -> None:
-        if agg.get("new", 0) <= 0 and not (self._dirty_check is not None and self._dirty_check()):
+        grew = agg.get("new", 0) > 0
+        dirty = self._dirty_check is not None and self._dirty_check()
+        if grew or dirty:
+            self._maintenance_pending = True
+        # ── COALESCING THE CATALOG-WIDE STEPS ──────────────────────────────────────────────────
+        # Retention and the hot refresh both cost a function of CATALOG SIZE, not of what this
+        # adapter brought, and both run while holding `self._lock`. "One incremental pass per
+        # cycle" was written for a single poller loop; there are now ~11 adapter threads, so the
+        # catalog paid for a full pass every time ANY of them found a single article.
+        #
+        # Measured on production, 6 h window against 12 h uptime, 150,000 rows:
+        #   post-cycle 18,176.9 s + poll 797.6 s / 21,600 s = 87.8% LOCK OCCUPANCY
+        #   per post-cycle: cleanup 38-50%, refresh 36-50%, warm 11-17%
+        # kait8 paid 216 s of it for 2 new articles; GNews paid 90 s for 10. Every rebuild but the
+        # last in a window is superseded before a reader can use it — the same waste the inline
+        # `story_cache_warm` had, one step over.
+        #
+        # This is SCHEDULING ONLY. Nothing moves off the lock and no new thread appears: the two
+        # expensive steps are coalesced to at most one pass per window, which is what "per cycle"
+        # meant before the poller grew from one loop to eleven. Narrowing the lock itself is M6.
+        #
+        # THREE properties this must not break, each one a bug that already happened here:
+        #  * A pending pass is never LOST. `_maintenance_pending` outlives the skip, and a due pass
+        #    runs even on a cycle that ingested nothing — otherwise ingestion going quiet right
+        #    after a skip would strand the last window's rows indefinitely, which is precisely the
+        #    "a quiet feed stalls that article's graph entry" failure `dirty_check` exists for.
+        #  * A dirty nudge BYPASSES the throttle. It is the request path explicitly asking, and
+        #    D6's latency bound is a promise rather than a probability (corpus_refresh:327). Nudges
+        #    come from reads, not from the eleven pollers, so they cannot reintroduce the cost.
+        #  * The FIRST pass after start is never delayed: `_last_maintenance` starts at None.
+        due = self._maintenance_pending and (
+            dirty or self._last_maintenance is None
+            or (time.monotonic() - self._last_maintenance) >= _maintenance_interval())
+        if not (grew or dirty or due):
             return
         # Storage lifecycle: catalog retention PLUS the bounded prunes for derived/operational
         # tables (orphaned event locations, score cache, analytics, rec-events, snapshots). One
-        # incremental pass per cycle — never user data, never a long write lock.
+        # incremental pass per WINDOW — never user data, never a long write lock.
         t0 = time.perf_counter()
-        try:
-            storage_lifecycle.run_cleanup(self.store, log=self._log)
-        except Exception as e:                              # cleanup must never break polling
-            self._log(logging.WARNING, "storage_cleanup_failed", error=f"{type(e).__name__}: {e}")
+        if due:
+            try:
+                storage_lifecycle.run_cleanup(self.store, log=self._log)
+            except Exception as e:                          # cleanup must never break polling
+                self._log(logging.WARNING, "storage_cleanup_failed",
+                          error=f"{type(e).__name__}: {e}")
         t_cleanup = time.perf_counter()
         # REQUEST a story rebuild rather than performing one here. The catalog has settled (this
         # runs after retention, so the fingerprint is final) and this ingest has just invalidated
@@ -1505,24 +1559,33 @@ class MultiSourcePoller:
         #
         # Fail-soft, like the cleanup above: a warm that cannot be built is a slow next request,
         # never a broken poll loop.
-        try:
-            def _warm_log(event, **fields):
-                self._log(logging.WARNING if event.endswith("_failed") else logging.INFO,
-                          event, **fields)
-            story_service.request_warm(self.store, log=_warm_log)
-        except Exception as e:
-            self._log(logging.WARNING, "story_cache_warm_failed", error=f"{type(e).__name__}: {e}")
+        def _warm_log(event, **fields):
+            self._log(logging.WARNING if event.endswith("_failed") else logging.INFO,
+                      event, **fields)
+        # These three stay on EVERY cycle that brought content, deliberately un-coalesced. They are
+        # the latency-sensitive half (a breaking story people should be told about now) and the
+        # cheapest — 11-17% of a post-cycle, of which `request_warm` is non-blocking and
+        # `request_delivery` starts a thread. Guarded on `grew or dirty` rather than run
+        # unconditionally, because a due-but-quiet pass has nothing new to warm or detect on: its
+        # rows were already warmed by the cycle that ingested them.
+        if grew or dirty:
+            try:
+                story_service.request_warm(self.store, log=_warm_log)
+            except Exception as e:
+                self._log(logging.WARNING, "story_cache_warm_failed",
+                          error=f"{type(e).__name__}: {e}")
 
         # Breaking-story detection (OFF unless RWE_BREAKING_NOTIFICATIONS is set) — the same seam as
         # FeedPoller's copy in feed_service.py, and it must exist in BOTH: either chassis may be the
         # one polling, and a producer wired to only one of them would simply never fire in whichever
         # deployment ran the other. Idempotent and stateless; the event row's UNIQUE constraint is
         # what makes running it every cycle correct rather than merely harmless.
-        try:
-            import story_events                  # lazy: keeps story_intelligence out of this import graph
-            story_events.detect_breaking_stories(self.store, log=_warm_log)
-        except Exception as e:
-            self._log(logging.WARNING, "breaking_detect_failed", error=f"{type(e).__name__}: {e}")
+            try:
+                import story_events              # lazy: keeps story_intelligence out of this import graph
+                story_events.detect_breaking_stories(self.store, log=_warm_log)
+            except Exception as e:
+                self._log(logging.WARNING, "breaking_detect_failed",
+                          error=f"{type(e).__name__}: {e}")
 
         # Push delivery (OFF unless RWE_PUSH_DELIVERY is set). Hangs off the same post-cycle seam as
         # breaking-story detection, immediately after it, so an event recorded above can be delivered
@@ -1532,25 +1595,36 @@ class MultiSourcePoller:
         # party, and blocking ingestion on it would trade a delayed notification for a stale corpus.
         # One run at a time — a request during a run is dropped, not queued, so a slow push service
         # cannot turn every cycle into another overlapping fan-out.
-        try:
-            import push_delivery                 # lazy: keeps the push stack out of this import graph
-            push_delivery.request_delivery(self.store, log=lambda lvl, ev, **f: self._log(lvl, ev, **f))
-        except Exception as e:
-            self._log(logging.WARNING, "push_delivery_request_failed", error=f"{type(e).__name__}: {e}")
+            try:
+                import push_delivery             # lazy: keeps the push stack out of this import graph
+                push_delivery.request_delivery(
+                    self.store, log=lambda lvl, ev, **f: self._log(lvl, ev, **f))
+            except Exception as e:
+                self._log(logging.WARNING, "push_delivery_request_failed",
+                          error=f"{type(e).__name__}: {e}")
         t_warm = time.perf_counter()
-        if self._on_cycle is not None:
+        if due and self._on_cycle is not None:
             try:
                 self._on_cycle(agg)
             except Exception as e:                          # a downstream hook must never break polling
                 self._log(logging.ERROR, "multi_source_on_cycle_error", error=repr(e))
         t_hook = time.perf_counter()
+        if due:
+            # Only after BOTH steps have actually run. Stamping the clock earlier would let a
+            # cleanup that raised, or a refresh that never happened, reset the window anyway.
+            self._last_maintenance = time.monotonic()
+            self._maintenance_pending = False
         # Production measured postCycleMs at 83-122 s per cycle against a 5.7 s warm, so ~93% of the
         # most expensive loop in the process was inside a step nobody had timed. These three numbers
         # are what turn "the post-cycle is slow" into a named owner.
         self._log(logging.INFO, "post_cycle",
                   cleanupMs=round((t_cleanup - t0) * 1000.0, 1),
                   warmMs=round((t_warm - t_cleanup) * 1000.0, 1),
-                  refreshMs=round((t_hook - t_warm) * 1000.0, 1))
+                  refreshMs=round((t_hook - t_warm) * 1000.0, 1),
+                  # Which of the two shapes this was. Without it a coalesced cycle and an expensive
+                  # one differ only by their durations, and "why is cleanupMs 0" has no answer in
+                  # the log — the same complaint that produced the three timings above.
+                  maintenance=bool(due), coalesced=bool(self._maintenance_pending))
 
     def poll_adapter_once(self, adapter: SourceAdapter) -> dict:
         with self._lock:                                    # write-safe: one adapter ingests at a time

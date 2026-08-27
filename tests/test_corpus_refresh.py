@@ -344,7 +344,16 @@ def test_candidate_read_demand_exemption(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_post_cycle_gate_respects_dirty_check(monkeypatch):
     """The poller's on_cycle seam runs on feed growth OR when the request path flagged the catalog
-    dirty (extension read) — a quiet feed must not stall an extension article's graph entry."""
+    dirty (extension read) — a quiet feed must not stall an extension article's graph entry.
+
+    This test owns the **trigger condition**: what makes a pass eligible. Since the post-cycle work
+    was coalesced to one pass per polling window (87.8% lock occupancy — see
+    `tests/test_post_cycle_coalescing.py`), *how often* an eligible pass may actually run is a
+    separate question, owned by that file. `RWE_POST_CYCLE_MAINTENANCE_INTERVAL=0` disables the
+    throttle so the three assertions below keep testing the gate rather than the clock; without it
+    the third one fails, because the dirty-triggered pass on the line above has just consumed the
+    window — which is the coalescing working, not the gate breaking."""
+    monkeypatch.setenv("RWE_POST_CYCLE_MAINTENANCE_INTERVAL", "0")
     import sources
     st = store_mod.Store("sqlite://")
     calls = []

@@ -80,6 +80,13 @@ services:
       #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
       RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
       RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
+      # Minimum seconds between catalog-wide post-cycle passes (retention + the hot refresh).
+      # Default 600, matching RWE_POLL_INTERVAL. Production measured 87.8% lock occupancy because
+      # each of ~11 adapter threads ran its own full pass whenever it found a single article, at a
+      # cost set by catalog size rather than by yield. Set to 0 to restore the per-cycle behaviour
+      # exactly — an off switch that is not a rollback, which only works if the variable can
+      # actually reach the container.
+      RWE_POST_CYCLE_MAINTENANCE_INTERVAL: ${RWE_POST_CYCLE_MAINTENANCE_INTERVAL:-}
       # Cheap corpus change-detection (P1-1) — ON. When the catalog fingerprint is unchanged since
       # the last candidate build, the refresh check skips its full-catalog load (measured 4,495 ms
       # at 47k rows, 2026-08-01 — a cost that otherwise grows with catalog age forever, since
@@ -754,6 +761,13 @@ services:
       #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
       RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
       RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
+      # Minimum seconds between catalog-wide post-cycle passes (retention + the hot refresh).
+      # Default 600, matching RWE_POLL_INTERVAL. Production measured 87.8% lock occupancy because
+      # each of ~11 adapter threads ran its own full pass whenever it found a single article, at a
+      # cost set by catalog size rather than by yield. Set to 0 to restore the per-cycle behaviour
+      # exactly — an off switch that is not a rollback, which only works if the variable can
+      # actually reach the container.
+      RWE_POST_CYCLE_MAINTENANCE_INTERVAL: ${RWE_POST_CYCLE_MAINTENANCE_INTERVAL:-}
       # The tier assignment the switch above DEPENDS ON, and the reason it must be listed here: the
       # crawl flag shipped to this service without it, so `RWE_CRAWL_ENABLED=1` was visible here and
       # `RWE_CORPUS_SHADOW` was not. That failed CLOSED — every adapter refused, because an outlet
