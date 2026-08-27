@@ -255,6 +255,9 @@ def _fill(path: str, start: int, count: int, sources: int, rng: random.Random,
     sql = (f"INSERT OR IGNORE INTO feed_articles ({','.join(_FEED_COLUMNS)}) "
            f"VALUES ({','.join('?' * len(_FEED_COLUMNS))})")
     scored_sql = "INSERT OR IGNORE INTO scored_articles (url, scored, created_at) VALUES (?,?,?)"
+    loc_sql = ("INSERT INTO article_event_locations (canonical_url, country, region, city, source) "
+               "VALUES (?,?,?,?,?)")
+    ent_sql = "INSERT INTO article_entities (canonical_url, kind, name, source) VALUES (?,?,?,?)"
     before = con.execute("SELECT COUNT(*) FROM feed_articles").fetchone()[0]
     t0 = time.perf_counter()
     try:
@@ -267,6 +270,17 @@ def _fill(path: str, start: int, count: int, sources: int, rng: random.Random,
             # that table is part of the database the backups copy. Omitting it would understate
             # growth by exactly the amount the 30-day cache costs.
             con.executemany(scored_sql, [(r[0], r[9], "2026-08-20 12:00:00.000000") for r in batch])
+            # The two side tables keyed by canonical URL. Both are real per-article storage AND real
+            # per-pass cost, and leaving them empty is why this harness reported the orphan reaper at
+            # 19 ms while production measured 906 ms on 32,067 rows — the second most expensive step
+            # in the whole cleanup pass, invisible here because the table did not exist.
+            #
+            # Rates are production's, measured 2026-08-27 against 150,076 catalogue articles:
+            # 32,067 event locations (0.214/article) and 134,088 entity rows (0.893/article).
+            con.executemany(loc_sql, [(r[0], "US", "Region", "City", "gdelt-gkg")
+                                      for r in batch[::5]])
+            con.executemany(ent_sql, [(r[0], "person", f"Name {i % 997}", "gdelt-gkg")
+                                      for i, r in enumerate(batch) if i % 10 != 0])
             con.commit()
             done += n
         seconds = time.perf_counter() - t0

@@ -304,7 +304,7 @@ predicate, because `host.endswith("." + h)` is true exactly when `h` is one of t
 
 | prune | filter column | plan |
 |---|---|---|
-| `prune_orphan_event_locations` | `canonical_url` | `SEARCH … USING COVERING INDEX` ✅ |
+| `prune_orphan_event_locations` | `canonical_url` | `SEARCH … USING COVERING INDEX` ✅ — but see §2.15: index-backed and still **906 ms** on production, because it probes once per side-table row |
 | `prune_scored_cache` | `scored_articles.created_at` | **`SCAN scored_articles`** |
 | `prune_analytics_events` | `analytics_events.created_at` | **`SCAN analytics_events`** |
 | `prune_rec_events` | `rec_events.shown_at` | **`SCAN rec_events`** |
@@ -323,7 +323,7 @@ Measured per step, at 400 k catalogue rows with catalogue retention **off** and 
 | step | ms | what it is |
 |---|---:|---|
 | `feed_articles` | 0.0 | disabled — no catalogue policy |
-| `article_event_locations` | 19.3 | the orphan reaper, correctly index-backed |
+| `article_event_locations` | 19.3 | the orphan reaper — **understated: the harness left this table empty.** §2.15 |
 | **`scored_articles`** | **117.6** | **full scan of the 400 k-row score cache, finding nothing** |
 | `analytics_events` | 1.9 | a scan, but of an empty table here — see the caveat |
 | `rec_events` | 1.5 | same |
@@ -617,6 +617,50 @@ and refuses. The debris is inert for recovery; it is waste and noise, not a reco
 **D9** is three small pieces: remove `tmp` in `backup_database`'s failure path; widen
 `prune-backups.sh` to sweep `*.tmp` / `*-journal` older than a day; and add `--exclude '*.tmp*'` to
 the S3 sync so a partial copy can never be shipped in the first place.
+
+---
+
+### 2.15 The first production pass on the new code — and a gap in this harness
+
+`storage_cleanup`, 2026-08-27T14:01:33, six minutes after the deploy of D1/D2/D3 (`dc logs` only
+retains the current container, so this is unambiguously the new code):
+
+```json
+{"total": 165, "deleted": {"feed_articles": 91, "scored_articles": 74, ...},
+ "ms": {"feed_articles": 8394.0, "article_event_locations": 906.1, "scored_articles": 44.2,
+        "analytics_events": 4.5, "rec_events": 4.0, "report_snapshots": 6.6,
+        "storage_stats": 110.1}, "totalMs": 9469.5, "dbBytes": 591454528}
+```
+
+**D3 is confirmed live.** `EXPLAIN QUERY PLAN` on the production database now reports
+`SEARCH scored_articles USING INDEX ix_scored_created_at`, `storage_diagnostics().indexErrors` is
+empty, and the prune that scanned 163,146 rows costs **44.2 ms**.
+
+**And `article_event_locations` at 906.1 ms exposed a hole in this harness.** `_fill` populated
+`feed_articles` and `scored_articles` and nothing else, so the orphan reaper and the entity table —
+both real per-article storage AND real per-pass cost — were measured against empty tables. §2.8
+reported that step at 19.3 ms and called it "correctly index-backed"; it *is* index-backed, and on
+production it is the **second most expensive step in the pass**. `_fill` now writes both side tables
+at production's measured ratios (0.214 event locations and 0.893 entity rows per article).
+
+With the side tables present, at the same 150,000 rows:
+
+| step | this harness (4 vCPU, warm) | production (2 vCPU, cold) | ratio |
+|---|---:|---:|---:|
+| `feed_articles` | 2,289.4 ms | 8,394.0 ms | 3.7× |
+| `article_event_locations` | 20.6 ms | 906.1 ms | **44×** |
+| `scored_articles` | 0.7 ms | 44.2 ms | **63×** |
+| `storage_stats` | 6.2 ms | 110.1 ms | **18×** |
+| **total** | **2,316.4 ms** | **9,469.5 ms** | 4.1× |
+
+The CPU-bound step is 3.7×, which is roughly what a `t3.medium` at 0.40 sustainable vCPU costs
+against a 4-vCPU container. The *small* steps at 18–63× are not CPU — they are a **cold page cache**
+six minutes after a container restart, reading index pages off EBS.
+
+**So D1's effect on production is NOT yet established, in either direction.** The totals are
+11,144–20,890 ms before and 9,469.5 ms after, but the "after" is a cold-start pass and there is no
+per-step breakdown from before. A warm sample settles it; one cold sample does not, and the
+temptation to read 9,469 < 11,144 as a win is exactly the reasoning §9b is about.
 
 ---
 
