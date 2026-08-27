@@ -1056,6 +1056,7 @@ class Store:
         self._ensure_delivery_retry_columns()
         self._ensure_feed_schedule_columns()
         self._ensure_search_indexes()
+        self._ensure_retention_indexes()
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -1939,19 +1940,63 @@ class Store:
                       # SEARCH. It matters more later than now: RWE_RETENTION_MAX_COUNT allows
                       # 150,000 rows, six times the current catalog, and a scan grows with all of it.
                       "CREATE INDEX IF NOT EXISTS ix_feed_publisher_lower ON feed_articles(lower(publisher))"]
-        # ONE TRANSACTION PER STATEMENT, and a failure is RECORDED rather than swallowed.
-        #
-        # The old shape wrapped the whole loop in a single session and a single bare `except: pass`,
-        # which has two faults that only showed up when an index was added. A failure on any one
-        # statement aborted every statement after it AND rolled back the ones before it in the same
-        # transaction — so adding a new index at the end of the list could leave a fresh database
-        # with NO indexes at all. And the failure was invisible: production reported
-        # `SCAN feed_articles` with an index that was supposed to exist, and nothing anywhere said
-        # why. "Never blocks startup" was the right intent; "never tells anyone" was not part of it.
-        #
-        # `index_errors` is diagnostic state, not control flow — nothing reads it to decide
-        # anything, so a database that refuses every index still serves, exactly as before.
+        # See `_create_indexes` for the one-transaction-per-statement rule and why it exists.
         self.index_errors: "list[tuple[str, str]]" = []
+        self._create_indexes(stmts)
+
+    def _ensure_retention_indexes(self) -> None:
+        """Additive, idempotent indexes on the columns the bounded prunes FILTER by (M3 / D3).
+
+        Three of the five prunes in ``storage_lifecycle.run_cleanup`` had no index on the column
+        their ``WHERE`` tests, so each one full-scanned its table on every pass — including the
+        overwhelming majority of passes that delete nothing, because proving there is nothing to
+        delete is exactly what the scan is for. ``EXPLAIN QUERY PLAN`` reported ``SCAN`` for all
+        three, and measured at 400,000 rows with catalogue retention off:
+
+            scored_articles   117.6 ms   of a 235.8 ms pass   <- the one that matters
+            analytics_events    1.9 ms   (an empty table here; a scan of nothing)
+            rec_events          1.5 ms   (likewise)
+
+        ``scored_articles`` is the one to care about: it holds a row per article for
+        ``RWE_RETENTION_SCORED_DAYS`` (default 30), so at the 50,000-source target it is a 7.5 M-row
+        table scanned on every cleanup pass — extrapolating to ~2.2 s of held ingest lock, to find
+        rows an index answers in microseconds. ``analytics_events`` already has four indexes and
+        none is on ``created_at`` (``ix_analytics_events_server_ts`` is a different column);
+        ``rec_events`` is indexed on ``user_id`` only.
+
+        Separate from :meth:`_ensure_search_indexes` because these are not search indexes and
+        naming them so would be the wrong signpost for whoever reads this next — but it shares
+        :meth:`_create_indexes`, so it inherits the one-transaction-per-statement rule and the
+        recorded failures. Purely additive: an index changes speed, never results.
+        """
+        self._create_indexes([
+            "CREATE INDEX IF NOT EXISTS ix_scored_created_at ON scored_articles(created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_analytics_created_at ON analytics_events(created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_rec_events_shown_at ON rec_events(shown_at)",
+        ])
+
+    def _create_indexes(self, stmts) -> None:
+        """Run ``CREATE INDEX IF NOT EXISTS`` statements, appending any failure to
+        :attr:`index_errors`.
+
+        ONE TRANSACTION PER STATEMENT, and a failure is RECORDED rather than swallowed.
+
+        The old shape wrapped the whole loop in a single session and a single bare ``except: pass``,
+        which has two faults that only showed up when an index was added. A failure on any one
+        statement aborted every statement after it AND rolled back the ones before it in the same
+        transaction — so adding a new index at the end of the list could leave a fresh database with
+        NO indexes at all. And the failure was invisible: production reported ``SCAN feed_articles``
+        with an index that was supposed to exist, and nothing anywhere said why. "Never blocks
+        startup" was the right intent; "never tells anyone" was not part of it.
+
+        ``index_errors`` is diagnostic state, not control flow — nothing reads it to decide
+        anything, so a database that refuses every index still serves, exactly as before. It is
+        surfaced by :meth:`storage_diagnostics` as ``indexErrors``, which is what makes it a
+        diagnostic rather than a variable: it was written and read by nobody until M3 added a second
+        writer to it.
+        """
+        if not hasattr(self, "index_errors"):
+            self.index_errors = []
         for stmt in stmts:
             try:
                 with self.session() as s:
@@ -4089,6 +4134,14 @@ class Store:
         call on a live database."""
         info: dict = {"url": _redact_url(self.url), "backend": self.engine.dialect.name,
                       "ephemeral": is_ephemeral_url(self.url)}
+        # Indexes that failed to create at startup. `index_errors` was written by
+        # `_ensure_search_indexes` and read by NOBODY — the shape this repository keeps finding, and
+        # the reason it exists at all was a production `SCAN feed_articles` with an index that was
+        # supposed to be there and nothing anywhere saying why. Reporting it here is what turns it
+        # from a variable into a diagnostic; a missing index degrades silently by definition, so the
+        # ONLY signal it can ever give is this one. Empty list = every index is present.
+        info["indexErrors"] = [{"index": name, "error": err}
+                               for name, err in getattr(self, "index_errors", [])]
         if self.url.startswith("sqlite"):
             with self.engine.connect() as c:
                 info["journalMode"] = c.exec_driver_sql("PRAGMA journal_mode").scalar()

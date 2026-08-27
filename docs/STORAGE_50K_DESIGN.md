@@ -731,14 +731,39 @@ that the function never *iterates* the host set) and `tests/test_retention_tier_
 (the settings are read once per pass, however many articles it resolves). Both guards were verified
 by reverting the product and watching them fail.
 
-### D3 — Three indexes, and a shorter score-cache window
+### D3 — Three indexes, and a shorter score-cache window  ✅ **indexes LANDED**
 
-**The indexes:** `scored_articles.created_at`, `analytics_events.created_at`, `rec_events.shown_at`.
-Additive, reversible, no data migration — and they turn three per-pass full scans into indexed range
-lookups. `scored_articles` is the one that matters: 117.6 ms of a 235.8 ms pass at 400 k rows, and
-~2.2 s per pass at the 7.5 M rows a 30-day cache implies at 50 k sources.
+**The indexes — landed.** `ix_scored_created_at`, `ix_analytics_created_at`, `ix_rec_events_shown_at`,
+created by `Store._ensure_retention_indexes` beside the existing `_ensure_search_indexes`, sharing
+its one-transaction-per-statement rule. Additive, reversible, no data migration — and, importantly,
+they upgrade a **pre-existing** database in place, which is the only thing that reaches production.
 
-**The window:** the score cache is **30.6% of the database** (§2.1) and is *pure cache* —
+Measured A/B in one process, alternating index-present and index-absent passes to control for page
+cache, at 400 k catalogue rows / 400 k score-cache rows / 200 k analytics / 200 k rec-events:
+
+| step | without | with |
+|---|---:|---:|
+| `scored_articles` | 102.8 ms | **0.7 ms** |
+| `analytics_events` | 21.3 ms | **0.5 ms** |
+| `rec_events` | 15.2 ms | **0.5 ms** |
+| `storage_stats` | 72.3 ms | **17.3 ms** |
+| **pass total** | **216.1 ms** | **21.4 ms** |
+
+**10.1× on the whole pass**, and the `storage_stats` line is a genuine side effect rather than noise:
+`COUNT(*)` can walk a narrow index b-tree instead of the table, so the eleven counts get cheaper too.
+
+**The write cost, checked rather than assumed** — an index is paid for on every insert. Ingest
+through the real `ingest_entries` at 4 concurrent writers, three runs each: **260–287 articles/s
+without, 276–291 with**. The ranges overlap; there is **no measurable regression**, and the small
+apparent gain is noise, not a speedup.
+
+Tests: `tests/test_retention_prune_indexes.py` asserts the **query plan** (`SEARCH`, never `SCAN`)
+rather than a time — a timing test would be flaky and would also pass against any table small enough
+that a scan is fast, which is every test database and precisely why this went unnoticed. It also
+pins the in-place upgrade of an existing database, and that a failing index neither blocks its
+neighbours nor disappears silently.
+
+**The window — NOT changed, deliberately.** `RWE_RETENTION_SCORED_DAYS` already exists, already reaches the container, and its value is a product decision about how much re-scoring CPU to trade for disk. The measurement below prices it; choosing is not mine to do. The score cache is **30.6% of the database** in the harness and 25.5% in production (§2.1) and is *pure cache* —
 `ingest.score_with_cache` re-derives an entry deterministically from the same scorer, so a cache miss
 costs CPU and loses nothing. `RWE_RETENTION_SCORED_DAYS` already exists and already defaults to 30.
 Its only consumer is a re-poll or a re-read of the same canonical URL, and both are overwhelmingly
@@ -1027,7 +1052,7 @@ own right, and it is short:
 |---|---|---|---|
 | 0 ✅ | **a size-bounded `docker builder prune`** (+ **D8**, landed) | frees up to **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today. Note §2.13: the *age*-bounded form freed 458 kB | lowest — build cache only, no images, no volumes |
 | 1 ✅ | **D2** — `_host_match` becomes O(labels), **plus `tier_resolver()`** | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
-| 2 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
+| 2 ✅ | **D3 indexes** (+ `RWE_RETENTION_SCORED_DAYS`, an operator decision) | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
 | 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
 | 4 | **D4** — `storage_stats` off the cleanup path | trivially safe once D1 lands, and 94.7 ms of a 235.8 ms pass | lowest |
 | 5 | **D5 + D5b** — gzip level 3, backup interval, `journal_size_limit` | operational, no code beyond a level knob; do it before the volume grows, not after | low |
