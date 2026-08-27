@@ -244,9 +244,18 @@ def main(argv=None) -> int:
 
     admitted = [r for r in results if r["verdict"] == "ADMIT"]
     print(f"\n=== what to do with the {len(admitted)} ADMIT verdicts ===")
-    print("  Nothing automatic. M7 emits a worklist, not an ingestion. Admitting a source means")
-    print("  wiring its discovery document and putting the outlet in RWE_CORPUS_SHADOW, where M8")
-    print("  measures it for 14 days and M9 decides — and M9 emits config for a human, not applies.")
+    print("  Nothing automatic. M7 emits a worklist, not an ingestion. Admitting a source wires its")
+    print("  discovery document and puts the outlet in the shadow lane, where M8 measures it for 14")
+    print("  days and M9 decides — and M9 emits config for a human, not applies.")
+    print()
+    print("  *** THIS RUNNER IS THE READ-ONLY ONE. It writes nothing, so nothing here is resumable:")
+    print("      re-running it re-asks every publisher it already asked. Since M11, the durable path")
+    print("      is source_campaign.py — same gates, same robots policy, same rate limiter, but the")
+    print("      verdicts land in `source_admission` and a completed host is never probed twice:")
+    print("        python examples/source_campaign.py seed  --db ...")
+    print("        python examples/source_campaign.py probe --db ... --limit 5")
+    print("        python examples/source_campaign.py admit --db ... --hosts <host>")
+    print("      Keep using THIS one to look at the candidate pool without touching anything.")
     if any(r["discoveredVia"] == "news sitemap" for r in admitted):
         print()
         print("  *** A NEWS SITEMAP IS NOT AN RSS FEED. Putting one in RWE_RSS_FEEDS ingests")

@@ -61,6 +61,7 @@ import feed_source            # optional: source the recommender catalog from th
 import feed_service           # optional: background RSS polling that keeps the FeedArticle catalog fresh
 import sources                # pluggable multi-source ingestion (RSS + NewsAPI + GDELT) via adapters
 import rss_ingest             # FeedEntry + ingest_entries — the one producer path (Commit 18: + extension)
+import corpus                 # the clustering-corpus tier boundary (M1) + M11 admission wiring
 import corpus_validation      # corpus-eligibility gate (validation only; no activation / no hot swap)
 import corpus_refresh         # atomic hot activation of a validated corpus (background Backend swap)
 import discover               # Discover: product-layer exploration over the FeedArticle catalog
@@ -312,7 +313,13 @@ async def lifespan(app: FastAPI):
     # one enabled adapter (RSS defaults to the existing RWE_FEED_POLL). Each adapter polls on its own
     # interval, isolated; retention/health/validation/hot-refresh are unchanged and owned by earlier
     # commits — this only consumes their outputs. FeedPoller is untouched (standalone CLI still uses it).
-    registry = sources.default_registry()
+    # M11: the admission table is a second source of shadow tier assignments and of crawl configs.
+    # Wired here, explicitly and once, rather than from `Store.__init__` — see
+    # `corpus.wire_admissions`. It must come BEFORE the registry is built: `crawler.admitted_configs`
+    # filters its rows through `corpus.is_shadow`, so an unwired corpus would report every admitted
+    # host as Tier A and the crawl set would come back empty.
+    corpus.wire_admissions(st.admitted_shadow_hosts)
+    registry = sources.default_registry(store_=st)
     for _w in sources.config_warnings(registry):     # e.g. RWE_NEWSAPI_ENABLED set but no API key
         _log(logging.WARNING, "source_misconfigured", detail=_w)
     if registry.enabled() and not feed_source.enabled():

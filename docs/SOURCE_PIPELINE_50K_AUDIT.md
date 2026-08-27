@@ -1,8 +1,13 @@
 # What limits the real source pipeline — and the next milestone
 
-**Audit only. No code changed.** The question: with M6, M7, M8, M9 built and M3's highest-value
-fixes deployed, what actually stops the crawl cohort growing from 2 real sources to 100, 1,000,
-10,000 and 50,000?
+**Audit first, then the milestones it named.** The question: with M6, M7, M8, M9 built and M3's
+highest-value fixes deployed, what actually stops the crawl cohort growing from 2 real sources to
+100, 1,000, 10,000 and 50,000?
+
+§§0–5 are the audit as written, unedited except where a production measurement corrected it. **§6 is
+M10, built and verified; §7 is M11, audited and built.** With L0, L1 and L2 closed, the first open
+engineering limit is L3 (polling interval vs. N, binding at 1,000–10,000) and the first open limit of
+any kind is **L6, the ToS review**, which binds at any size and is not an engineering item.
 
 ---
 
@@ -46,19 +51,24 @@ articles inside six days, so it stays below the floor forever no matter how long
 
 | stage | module | persists? |
 |---|---|---|
-| 1 · discover | `source_discovery.py` — *"Pure: no store, no network, no environment, no writes"* | **no** — stdout |
-| 2 · validate | `source_validation.py` — *"no store, no environment, no writes"*, 8 gates | **no** — stdout + optional `--out` |
-| **⟂ admit** | **a human edits `examples/data/crawler_publishers.json`** | **requires a git commit + deploy** |
-| **⟂ admit** | **a human edits `RWE_CORPUS_SHADOW`** | **requires a container restart** |
+| 1 · discover | `source_discovery.py` — *"Pure: no store, no network, no environment, no writes"* | ~~**no** — stdout~~ → `source_campaign.py seed` writes `candidate` rows (M11) |
+| 2 · validate | `source_validation.py` — *"no store, no environment, no writes"*, 8 gates | ~~**no** — stdout + optional `--out`~~ → `source_campaign.py probe` writes the verdict (M11) |
+| ⟂ admit | ~~a human edits `examples/data/crawler_publishers.json`~~ → `source_campaign.py admit` | ~~requires a git commit + deploy~~ → a row; the JSON still wins for the 8 hand-verified publishers |
+| ⟂ admit | ~~a human edits `RWE_CORPUS_SHADOW`~~ → the same command writes `tier='shadow'` | ~~requires a container restart~~ → live within `corpus`'s 60 s snapshot; a **restart is still needed for the crawl adapters**, which the registry builds once at startup |
 | 3 · shadow ingest | `crawler.CrawlAdapter`, gated on `RWE_CRAWL_ENABLED` **and** `in_shadow()` | articles ✔ |
 | 4 · evaluate | `source_evaluation.py` — pure | via M9 ✔ |
 | 5/6 · promote | `source_lifecycle.py` — *"emits the configuration; it never mutates serving state"* | `SourceLifecycle` + append-only ledger ✔ |
 | **⟂ apply** | **a human edits `RWE_CORPUS_TIER_B`** | **requires a container restart** |
 
-The right-hand column is the finding. **Persistence begins at stage 3** — `SourceLifecycle.STATES`
-is `("shadow", "B", "A", "dormant", "retired")` and there is **no `candidate` and no `validated`
-state**, so the ledger only starts tracking an outlet once it is already ingesting. Everything
-before that is a batch job whose output a person retypes.
+The right-hand column was the finding. **Persistence began at stage 3** — `SourceLifecycle.STATES`
+is `("shadow", "B", "A", "dormant", "retired")` and there was **no `candidate` and no `validated`
+state**, so the ledger only started tracking an outlet once it was already ingesting. Everything
+before that was a batch job whose output a person retyped.
+
+**M11 built the missing half** as a separate table (`store.SourceAdmission`) rather than by widening
+`SourceLifecycle`: the two are keyed differently — a **host** before admission, an **outlet identity**
+after — and their states answer different questions. They join at exactly one arrow, in
+`store.admit_source`. See §7.
 
 `SourceLifecycleEvent` even carries an `applied: bool` column — the schema already knows that
 emitting a transition and applying it are different events, and that the second one is manual.
@@ -102,11 +112,11 @@ the one category where "just run it again" is not an acceptable answer.
 | # | limit | binds at | has a mechanism? |
 |---|---|---|---|
 | **L0** | **Discovery supply** — Stage 1 reads the 6-day clustering window, so it yields **177 candidates**; a host publishing twice a week never reaches the 10-article floor | **~180** | **none** |
-| **L1** | **Admission requires a code deploy** — crawl config is baked into the image | **100 – 1,000** | **none** |
-| **L2** | **Validation is not resumable** — verdicts persist nowhere | **any rung; matters at 1,000+** | **none** |
+| ~~L1~~ | ~~**Admission requires a code deploy** — crawl config is baked into the image~~ | ~~100 – 1,000~~ | **closed by M11 — §7** |
+| ~~L2~~ | ~~**Validation is not resumable** — verdicts persist nowhere~~ | ~~any rung; matters at 1,000+~~ | **closed by M11 — §7** |
 | L3 | Polling interval must scale with N (roadmap B1) | 1,000 – 10,000 | designed in M6 (interval ceiling + dormancy), not built |
 | L4 | Thread-per-adapter — 1,013 threads at 1,000 sources | ~1,000 | **built** — M6.3's pool, `RWE_POLL_WORKERS`, currently 0 |
-| L5 | Tier lists in environment variables | ~30,000 | designed as M3/D6, not built |
+| L5 | Tier lists in environment variables | ~30,000 | **shadow half closed by M11** (`store.SourceAdmission.tier`, unioned with the env — §7.2); Tier B still env-only |
 | L6 | ToS / robots review | **any real expansion** | **not an engineering item** |
 | ~~L7~~ | ~~Tier-A clustering grows with the cohort~~ | — | **cleared — structurally impossible; see §4** |
 
@@ -116,7 +126,9 @@ the ceiling from 177 to 177; removing L0 raises it into the thousands. That orde
 when the production numbers arrived.
 
 L1 and L2 remain real, they are the *next* milestone after L0, and they are the same change as each
-other.
+other. **Both were closed by M11 — see §7.** With L0, L1 and L2 gone, the first open limit is L3
+(polling interval vs. N), which binds at 1,000–10,000, and L6 (the ToS review), which binds at any
+size and is not an engineering item.
 
 ---
 
@@ -194,7 +206,7 @@ discharge the ToS review**, which gates any real expansion at any size.
 
 | after M10 | milestone | binds at |
 |---|---|---|
-| M11 | Source admission becomes data — one table replacing `crawler_publishers.json` and the tier env vars; `candidate`/`validated` states so a campaign is resumable. Subsumes M3's D6 | 100 – 1,000 |
+| ~~M11~~ | ~~Source admission becomes data~~ — **built, §7.** `store.SourceAdmission` + `source_campaign.py`; seven states, per-host claims, resumable campaigns. Subsumes M3's D6 for the shadow lane | ~~100 – 1,000~~ |
 | M12 | Polling interval scales with N — M6's interval ceiling + dormancy | 1,000 – 10,000 |
 | — | `RWE_POLL_WORKERS` off 0 — a setting, M6.3 already built the pool | ~1,000 |
 
@@ -283,3 +295,137 @@ about: **3,519 requests** (up to 5,865 if every host needs a sitemap descent), ~
 the configured 2 s politeness. That is a scheduled campaign against real publishers, and it is
 exactly the point at which L2 — *validation is not resumable* — stops being a nuisance and starts
 being the reason to build M11 before running it.
+
+---
+
+## 7 · M11 — Source admission becomes durable, resumable data  ✅ **BUILT**
+
+M10 removed L0. That promoted **L1** (*admission requires a code deploy*) and **L2** (*validation is
+not resumable*) to the front, and — as §3 said — they are the same change. This section is the audit
+that preceded the build, then what was built.
+
+### 7.1 · The audit: every place admission state lived
+
+Read in full before any code: `store.SourceLifecycle` / `SourceLifecycleEvent` and their four store
+methods, `source_lifecycle.py`'s state machine, `source_validation.validate` and its eight gates,
+`audit_source_discovery.py`'s `--probe` loop, `crawler.load_config` / `PublisherCrawlConfig`,
+`crawler.CrawlAdapter.enabled` / `in_shadow`, `sources.default_registry` / `_crawl_adapters`, and
+`corpus.tier_index` / `tier_resolver` / `sql_exclusions` / `shadow_exclusions`.
+
+| # | finding | evidence |
+|---|---|---|
+| A1 | **A probe verdict is written nowhere.** `--probe` prints, and `--json` writes a file **nothing reads back** | `audit_source_discovery.py:225–243` — the only consumer of that file is a human |
+| A2 | **`--limit N` is a stable prefix, not a cursor.** It takes the top N by article count, so running it twice probes the same N twice. There is no "next N" | `targets = work[:args.limit]`, `work` sorted by `-articles` |
+| A3 | **`--hosts` is the only way to advance**, and it requires the operator to keep the done-list outside the system | `audit_source_discovery.py:183–189` |
+| A4 | **A rejection is not remembered.** Nothing stops the next run re-asking a publisher whose robots.txt refused us | no persistence at all in the Stage-2 path |
+| A5 | **`crawler.RateLimiter` is per process.** Two campaigns each believe they are polite; the publisher sees double | `RateLimiter` is constructed per run, in `main()` |
+| A6 | **`SourceLifecycle` starts at `shadow`.** `STATES = ("shadow", "B", "A", "dormant", "retired")` and `initial_state="shadow"` — there is no state for "found, not yet probed" or "probed, failed a gate", so the ledger only begins once a source is already ingesting | `source_lifecycle.py:68`, `store.record_source_evaluation` |
+| A7 | **The crawl config is baked into the image.** `_CONFIG_PATH` is `examples/data/crawler_publishers.json`, 8 publishers, no compose mount — adding one is a git commit and a deploy | `crawler.py:85` |
+| A8 | **Tier lists are environment strings**, and `corpus.tier_resolver`'s own docstring measures the cost: **~500 µs per `tier_of` call** against a 50,000-host list, of which ~380 µs is hashing the setting to find its memo. `ARG_MAX` was *the second* problem with storing them there | `corpus.py` |
+
+And what was already right, and had to survive unchanged:
+
+* `source_validation.validate` has **no default fetcher** — an offline run structurally cannot look
+  like a validated one;
+* `crawler.RobotsPolicy` is fail-**closed** (absent or unparseable robots.txt is a refusal);
+* `CrawlAdapter.enabled()` requires `RWE_CRAWL_ENABLED` **and** `config.enabled` **and**
+  `in_shadow()`;
+* `corpus.DEFAULT_TIER == "A"`, which is why `in_shadow()` is a hard precondition rather than a
+  preference — crawling an unshadowed outlet is *promotion by omission*;
+* `_tier_with` tests shadow before B, "so an outlet named in both lands in the more restrictive one".
+
+### 7.2 · The one design decision worth arguing
+
+**The table is unioned with the environment lists, never substituted for them.**
+
+`DEFAULT_TIER` is `"A"`. If the table were the source of truth and a read came back empty — a
+migration not yet applied, a store not wired, a query that raised — **every outlet in the corpus
+would silently become Tier A**, and it would present as "clustering suddenly has more sources"
+rather than as an error. Unioned, an empty read degrades to exactly today's shipped behaviour, and
+an operator can pin an outlet in the environment that no table write can un-pin. This is the same
+asymmetry `_tier_with` already applies one level down.
+
+The corollary is that `corpus.enabled()` had to learn about the table: it gates the whole tier
+filter, so an admission that did not reach it would be a shadow row `tier_of` never consults.
+
+Two more that follow from `DEFAULT_TIER == "A"`:
+
+* **`withdrawn` keeps its shadow assignment.** Clearing the tier on withdrawal would take every
+  article already ingested from that host and put it into the clustering corpus — an operator
+  *reducing* a source's reach would be promoting it. Withdrawal stops the crawl; where those rows go
+  next is M9's decision, on M9's evidence.
+* **`crawler.admitted_configs` re-checks every row against `corpus.is_shadow`.** The crawl set is
+  then always a subset of the shadow set as corpus currently sees it, so the 60-second admission
+  snapshot can only ever *remove* a source from the crawl, never add an unshadowed one.
+
+### 7.3 · Why the milestone's four states became seven
+
+The brief named `candidate → validated → rejected / admitted`. That is the shape of the *decision*.
+`probing` and `incomplete` are the shape of the *failure*, and leaving them out makes both failures
+indistinguishable from success:
+
+* without **`probing`**, a process killed between "request sent" and "verdict written" leaves the
+  host looking untouched — the next run cannot tell an interrupted host from a fresh one, and two
+  concurrent runs cannot tell that a host is in flight;
+* without **`incomplete`**, `validate`'s third verdict has nowhere to go. Folding it into `rejected`
+  records a publisher as having refused us when our own network failed, and makes that permanent,
+  because a rejection is never retried. `source_validation` was built around *a gate that cannot fire
+  reading as a gate that passed*; this is its mirror — a gate that could not be **asked** must not
+  read as a gate that **failed**.
+
+`withdrawn` is the seventh, and it exists because admission is the first thing in this pipeline that
+mutates serving state, and everything in this repository that mutates serving state is reversible.
+
+### 7.4 · What was built
+
+| piece | what it is |
+|---|---|
+| `examples/source_admission.py` | the state machine as **policy** — no store, no network, no env, mirroring `source_lifecycle.py`. `may_probe` is the single definition of resumable/idempotent/never-re-probed, so the runner cannot grow a second one |
+| `store.SourceAdmission` | keyed on **host** (discovery has no outlet identity to key on). `state` and `tier` are separate columns; `probe_count` / `requests_spent` accumulate and are never reset |
+| 12 store methods | seed, claim, record, admit, withdraw, reopen, census, and the two serving reads |
+| `examples/source_campaign.py` | the runner: `seed` / `status` / `probe` / `admit` / `withdraw` / `reopen` / `emit-config`. A new file because `audit_source_discovery.py`'s first docstring line is *"Read-only: no writes, no ingestion, no curation"* — the sentence a ToS reviewer reads, and adding writes would have falsified it |
+| `corpus.wire_admissions` | explicit, never implicit. Wiring from `Store.__init__` would have every test's store hijack a module global |
+| `crawler.load_config(store_=)` | admitted rows appended; the hand-verified JSON wins on a duplicate publisher |
+
+**Resume is a set difference over per-host state, not an offset.** That is not a stylistic choice:
+the candidate ordering is by article count over a catalogue that keeps growing, so position *k* is a
+different host on every run and "skip the first k" would silently skip the wrong hosts.
+
+### 7.5 · What it does not do
+
+It does not promote to Tier A, and no flag makes it. `source_admission.check_admission_tier` refuses
+any tier but `shadow` at the policy, and `store.admit_source` refuses it again at the write. It does
+not relax `RWE_CRAWL_ENABLED` (still off by default), the robots gate, the rate limiter, or the
+offline discovery gates — the table changes **which** hosts are asked, never **how**. And it does not
+discharge the ToS review, which still gates the 1,173-candidate campaign it makes runnable.
+
+### 7.6 · Verification
+
+49 tests in `tests/test_source_admission.py`, and the two that carry the requirement are
+`test_a_second_full_campaign_makes_no_requests` and
+`test_an_interrupted_campaign_resumes_where_it_stopped`. Both assert *how many times `validate` was
+called* and *the per-host `probe_count`*, not that the output got shorter — the latter would pass for
+any change that printed less.
+
+Every guard was checked by breaking the product and confirming a test fails. **13 mutations, 13
+caught:**
+
+```
+COMPLETED guard removed                          the probing claim is a no-op
+re-seed downgrades the state                     record refuses nothing
+check_admission_tier never raises                withdrawal clears the tier
+corpus.enabled ignores admissions                the table REPLACES the env shadow list
+crawl configs skip the is_shadow re-check        the runner swallows a real interruption
+INCOMPLETE is recorded as a rejection            an incomplete probe gets no cooloff
+_lifecycle_identity drifts from M8's
+```
+
+The last one is worth naming, because it is a defect I introduced and the mutation pass found rather
+than the design: `admit_source` first wrote the lifecycle row under the raw publisher string, while
+M8 keys its cohort through `audit_shadow_cohort._identity` (registry canonical, else lower-cased).
+For any unregistered outlet stored under a mixed-case name those are **different keys**, so the
+source would have looked un-evaluated forever while two rows described it. It is pinned
+differentially — the test compares against the real function rather than restating the rule, because
+a restatement would be the third copy and a third copy cannot detect drift in the other two.
+
+Full suite: **3,953 passed, 9 skipped**.

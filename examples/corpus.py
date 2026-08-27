@@ -46,16 +46,28 @@ migration, no backfill and no possibility of two articles from one outlet disagr
 demotion (A→B when an outlet turns out to be a syndicator) takes effect on the next build over the
 outlet's whole history, which is what a demotion should mean.
 
-The source of truth is an env list today, matching ``RWE_CATALOG_BLOCKED_OUTLETS``. That is the
-right home for M1 and the wrong home for 50,000 outlets; :func:`tier_of` is the seam, so moving the
-declaration to a registry column or its own table later changes no caller.
+The source of truth was an env list, matching ``RWE_CATALOG_BLOCKED_OUTLETS``. That was the right
+home for M1 and the wrong home for 50,000 outlets, and :func:`tier_of` was named as the seam for
+moving it. **M11 is that move, for the shadow half**: `store.SourceAdmission` carries a ``tier``
+column, and :func:`admitted_shadow_hosts` unions it into the shadow set.
+
+Unioned, not replaced, and that is a safety property rather than a migration convenience. See
+:func:`admitted_shadow_hosts` — with ``DEFAULT_TIER == "A"``, a table read that came back empty for
+any reason would put the entire corpus into the clustering tier, and it would look like an
+improvement rather than an error.
 
 ## Off is byte-identical, structurally
 
-With neither tier list set, :func:`select` performs **no registry resolution and no per-row work**,
-and returns the list it was handed. Not "returns an equal list" — the same object. The budget
-report still runs, because that half is the defect fix and it must not be switchable off by
-accident. Same discipline as ``RWE_FEED_SCHEDULER``: the feature is off, the instrument is not.
+With neither tier list set **and nothing admitted**, :func:`select` performs **no registry
+resolution and no per-row work**, and returns the list it was handed. Not "returns an equal list" —
+the same object. The budget report still runs, because that half is the defect fix and it must not
+be switchable off by accident. Same discipline as ``RWE_FEED_SCHEDULER``: the feature is off, the
+instrument is not.
+
+The admission half is off in the same structural way: :func:`wire_admissions` is never called
+implicitly, so a process that has not wired a store — every test that does not ask for one, and
+every deployment before the first admission — evaluates :func:`admitted_shadow_hosts` to an empty
+frozenset with no query and no import.
 """
 
 from __future__ import annotations
@@ -64,6 +76,7 @@ import functools
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -124,8 +137,82 @@ def enabled() -> bool:
     """Whether any outlet has been assigned away from :data:`DEFAULT_TIER`.
 
     False is the shipped state and means :func:`select` short-circuits the tier filter entirely.
-    The budget report runs either way."""
-    return bool(_setting(_TIER_B_ENV) or _setting(_SHADOW_ENV))
+    The budget report runs either way.
+
+    **M11 added a third source of assignments** — the admission table — so this is no longer purely
+    a question about the environment. It has to be, or admitting a source would write a shadow row
+    that :func:`tier_of` never consults, and the source would be crawled straight into Tier A."""
+    return bool(_setting(_TIER_B_ENV) or _setting(_SHADOW_ENV) or admitted_shadow_hosts())
+
+
+# --------------------------------------------------------------------------- #
+# The admission table (M11) — a second source of shadow assignments, UNIONED with the environment.
+# --------------------------------------------------------------------------- #
+#: Seconds an admitted-host snapshot is reused before the provider is asked again. Admission is a
+#: human-paced operation — a handful of hosts a week — and :func:`tier_of` is called per article, so
+#: a query per call is not affordable and a minute of staleness costs nothing.
+#:
+#: The staleness is safe in the direction that matters. A cache that has not yet seen a new admission
+#: reports a SMALLER shadow set, which would be the wrong direction — except that nothing crawls a
+#: host until its `crawler.CrawlAdapter` exists, and `crawler.load_config` filters its own rows
+#: through :func:`is_shadow`. So a host that this cache has not caught up with is a host that is not
+#: being crawled either, and there are no articles from it to mis-tier.
+_ADMISSION_TTL_SECONDS = 60.0
+
+_admission_provider = None
+_admission_cache: tuple = (0.0, frozenset())
+
+
+def wire_admissions(provider) -> None:
+    """Register a ``() -> frozenset[str]`` of shadow-assigned hosts — normally
+    ``store.Store.admitted_shadow_hosts``. ``None`` unregisters.
+
+    **Explicit rather than automatic.** Wiring this from ``Store.__init__`` would mean every store
+    the test suite constructs hijacks a module-level global, and a leaked provider pointing at a
+    deleted tmp database is the kind of cross-test coupling that takes a day to find. The two places
+    that actually serve — the API's startup and `source_campaign.py` — call it in one line."""
+    global _admission_provider, _admission_cache
+    _admission_provider = provider
+    _admission_cache = (0.0, frozenset())
+
+
+def admitted_shadow_hosts(*, refresh: bool = False) -> "frozenset[str]":
+    """Hosts the admission table assigns to the shadow lane, snapshot-cached.
+
+    Empty — and free — when nothing is wired, which is every test that does not ask for this and
+    every deployment before M11's first admission. A provider that raises is treated as empty and
+    logged once per refresh: **the tier filter must not be able to take the API down**, and the
+    failure direction of an empty admission set is the same as today's shipped state rather than a
+    novel one.
+
+    ## Why this is unioned with ``RWE_CORPUS_SHADOW`` rather than replacing it
+
+    `DEFAULT_TIER` is ``"A"``. If the table were the source of truth and a read returned nothing —
+    a migration not yet applied, a store not wired, a query that raised — **every outlet in the
+    corpus would silently become Tier A**. That is the single worst failure this module can have,
+    and it would present as "clustering got better" rather than as an error.
+
+    Unioned, the failure mode is instead "the table's assignments are missing", which leaves the
+    environment lists exactly as they are today. An operator can also pin an outlet in the
+    environment and no table write can un-pin it. `_tier_with` already tests shadow before B "so an
+    outlet named in both lands in the more restrictive one"; this is the same principle one level up.
+    """
+    global _admission_cache
+    if _admission_provider is None:
+        return frozenset()
+    now = time.monotonic()
+    at, cached = _admission_cache
+    if not refresh and at and (now - at) < _ADMISSION_TTL_SECONDS:
+        return cached
+    try:
+        hosts = frozenset(h.strip().lower() for h in (_admission_provider() or ()) if h and h.strip())
+    except Exception as exc:                    # pragma: no cover - defensive, logged not raised
+        _logger.warning(json.dumps({"event": "corpus_admission_read_failed",
+                                    "error": f"{type(exc).__name__}: {exc}",
+                                    "detail": "falling back to the environment tier lists alone"}))
+        hosts = cached
+    _admission_cache = (now, hosts)
+    return hosts
 
 
 @functools.lru_cache(maxsize=8)
@@ -160,8 +247,16 @@ def tier_index() -> dict:
 
     Exposed for the same reason ``ingest.blocked_catalog_index`` is: a misspelling, or an
     unregistered outlet named rather than domained, silently matches nothing — and a tier list that
-    quietly does nothing is the worst way to find that out."""
-    return {"B": _index(_setting(_TIER_B_ENV)), "shadow": _index(_setting(_SHADOW_ENV))}
+    quietly does nothing is the worst way to find that out.
+
+    The shadow half is the environment list **unioned** with the admission table's hosts (M11) — see
+    :func:`admitted_shadow_hosts` for why that composition and not a replacement. Admitted hosts land
+    in the *host* set rather than the canonical-name set because that is what they are: a discovered
+    host usually has no registry row at all, which is the population discovery works over."""
+    b = _index(_setting(_TIER_B_ENV))
+    canonicals, hosts = _index(_setting(_SHADOW_ENV))
+    admitted = admitted_shadow_hosts()
+    return {"B": b, "shadow": (canonicals, hosts | admitted) if admitted else (canonicals, hosts)}
 
 
 def _host_match(hosts: frozenset, text: "str | None") -> bool:
@@ -347,10 +442,16 @@ def shadow_exclusions() -> "frozenset[str]":
 
     Kept separate from :func:`sql_exclusions` because the clustering corpus excludes both while the
     reader surfaces exclude only this one. Merging them would make Tier B invisible, which is the
-    opposite of what Tier B is for and would delete the whole point of the tier split."""
-    if not _setting(_SHADOW_ENV):
+    opposite of what Tier B is for and would delete the whole point of the tier split.
+
+    Reads :func:`tier_index`'s shadow half rather than the environment directly, so an M11-admitted
+    source is hidden from readers by the same act that put it in the shadow lane. Reading the
+    environment here — as this did before M11 — would have left every admitted source *searchable*
+    while the clustering corpus correctly excluded it: stored, not clustered, and surfaced anyway.
+    That is precisely the state `shadow` exists to prevent."""
+    canonicals, hosts = tier_index()["shadow"]
+    if not (canonicals or hosts):
         return frozenset()
-    canonicals, hosts = _index(_setting(_SHADOW_ENV))
     return frozenset({c.lower() for c in canonicals} | {h.lower() for h in hosts})
 
 

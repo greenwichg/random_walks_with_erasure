@@ -1494,11 +1494,15 @@ class SourceRegistry:
         return [a for a in self._adapters if a.enabled()]
 
 
-def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
+def default_registry(feeds_spec: Optional[str] = None, *, store_=None) -> SourceRegistry:
     """The standard registry (RSS + NewsAPI + Guardian + NewsData + GNews + MediaStack + Currents +
     Google News RSS + GDELT articles, + the GKG event-geography and publisher-metadata enrichers).
     Future adapters (Reuters,
-    AP, Reddit, Hacker News, …) register here without touching the poller."""
+    AP, Reddit, Hacker News, …) register here without touching the poller.
+
+    ``store_`` reaches exactly one adapter family: the crawl adapters, which since M11 come from the
+    admission table as well as from `examples/data/crawler_publishers.json`. Optional, so every
+    existing caller and every test keeps the JSON-only behaviour."""
     reg = SourceRegistry()
     reg.register(RSSAdapter(feeds_spec=feeds_spec))
     reg.register(NewsAPIAdapter())
@@ -1509,14 +1513,14 @@ def default_registry(feeds_spec: Optional[str] = None) -> SourceRegistry:
     reg.register(CurrentsAdapter())
     reg.register(GoogleNewsAdapter())
     reg.register(GDELTAdapter())
-    for adapter in _crawl_adapters():
+    for adapter in _crawl_adapters(store_):
         reg.register(adapter)
     reg.register(GDELTGKGEnricher())   # enrichment last: it annotates articles the others ingested
     reg.register(PublisherMetadataEnricher())   # …and this annotates the publishers behind them
     return reg
 
 
-def _crawl_adapters() -> list:
+def _crawl_adapters(store_=None) -> list:
     """One :class:`crawler.CrawlAdapter` per configured publisher, or none.
 
     **Imported lazily on purpose**: ``crawler`` imports this module, so a top-level import here is a
@@ -1531,7 +1535,7 @@ def _crawl_adapters() -> list:
         return []
     try:
         import crawler
-        return [crawler.CrawlAdapter(c) for c in crawler.load_config()]
+        return [crawler.CrawlAdapter(c) for c in crawler.load_config(store_=store_)]
     except Exception:
         return []
 

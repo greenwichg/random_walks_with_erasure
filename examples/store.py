@@ -392,6 +392,79 @@ class SourceLifecycleEvent(Base):
     evidence: Mapped[str] = mapped_column(Text, default="{}")
 
 
+class SourceAdmission(Base):
+    """One discovered host's admission state — M11, `docs/SCALE_ROADMAP.md`.
+
+    **This is the table `SourceLifecycle` is not.** The two describe adjacent halves of the pipeline
+    and are deliberately separate:
+
+    * ``SourceAdmission`` is keyed on a **host**, because a host is what discovery finds and what a
+      probe sends a request to. Before admission there is no outlet identity to key on — that is the
+      whole point of the population it works over.
+    * ``SourceLifecycle`` is keyed on an **outlet identity** and its states are *serving tiers*
+      (shadow / B / A / dormant / retired). Its question is "where should this source sit"; this
+      table's question is "have we asked this host yet, and what did it say".
+
+    Folding them together would mean `source_lifecycle.plan` receiving states it has no rule for, and
+    `audit_source_lifecycle` reporting un-probed hosts as if they were serving decisions. They join
+    at exactly one point, and it is an arrow rather than a merge: :meth:`Store.admit_source` moves a
+    host to ``admitted`` **and** records the shadow lifecycle transition, in one transaction.
+
+    ## Why the verdict is overwritten and there is no second ledger
+
+    ``SourceLifecycleEvent`` is append-only because a tier change alters what the product shows and
+    has to be re-readable years later against the numbers it was made on. A probe verdict is not that:
+    it is a fact about a publisher's robots.txt and feed at one moment, it changes serving state only
+    by way of an admission (which IS ledgered, through `apply_source_transition`), and a re-probe
+    only happens when a human forces one. What must survive is the *accounting* — how many times we
+    have knocked on this door and what it cost — so ``probe_count`` and ``requests_spent`` accumulate
+    and are never reset. A second append-only table for a row that changes on human command would be
+    a ledger nothing reads, which is a defect this repository keeps finding in its own instruments.
+
+    ## ``tier`` is not ``state``
+
+    ``state`` is where the host sits in the admission pipeline. ``tier`` is the serving assignment,
+    and it is only ever ``'shadow'`` or ``NULL``. They are separate columns because withdrawal has to
+    move one without the other: `corpus.DEFAULT_TIER` is ``"A"``, so a withdrawal that cleared the
+    tier would push every article we already ingested from that host straight into the clustering
+    corpus — promotion by omission, arrived at by an operator trying to *reduce* a source's reach.
+    """
+
+    __tablename__ = "source_admission"
+
+    host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16), index=True)
+    since: Mapped[str] = mapped_column(String(64))              # ISO — entered `state`
+    #: Pinned on first discovery and only ever moved EARLIER, for the same reason
+    #: ``SourceLifecycle.first_observed`` is: retention erodes `MIN(created_at)`, so an observation
+    #: window derived from the catalogue shrinks on its own.
+    first_seen: Mapped[str] = mapped_column(String(64))
+
+    # -- discovery evidence, refreshed by every seeding pass ------------------------------
+    articles: Mapped[int] = mapped_column(default=0)
+    language: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    publisher: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+
+    # -- probe accounting: what makes "never re-probed unnecessarily" PROVABLE rather than claimed
+    probe_count: Mapped[int] = mapped_column(default=0)
+    requests_spent: Mapped[int] = mapped_column(default=0)
+    claimed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    last_probed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    retry_after: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+
+    # -- the verdict ---------------------------------------------------------------------
+    verdict: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    feed_url: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    discovered_via: Mapped[Optional[str]] = mapped_column(String(24), default=None)
+    gates: Mapped[str] = mapped_column(Text, default="[]")      # JSON — every gate, not the failures
+    samples: Mapped[str] = mapped_column(Text, default="[]")    # JSON — sample article URLs
+
+    # -- admission -----------------------------------------------------------------------
+    tier: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    article_pattern: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
+
+
 class ApiToken(Base):
     """A per-user API token for non-browser clients (the browser extension; RSS later).
 
@@ -2681,6 +2754,336 @@ class Store:
                      "automatic": bool(e.automatic), "applied": bool(e.applied),
                      "reason": e.reason, "evidence": json.loads(e.evidence or "{}")}
                     for e in s.execute(q).scalars()]
+
+    # -- source admission (M11, docs/SCALE_ROADMAP.md) --------------------------------
+    @staticmethod
+    def _admission_row(r: "SourceAdmission") -> dict:
+        return {"host": r.host, "state": r.state, "since": r.since, "firstSeen": r.first_seen,
+                "articles": int(r.articles or 0), "language": r.language,
+                "publisher": r.publisher, "probeCount": int(r.probe_count or 0),
+                "requestsSpent": int(r.requests_spent or 0), "claimedAt": r.claimed_at,
+                "lastProbedAt": r.last_probed_at, "retryAfter": r.retry_after,
+                "verdict": r.verdict, "feedUrl": r.feed_url, "discoveredVia": r.discovered_via,
+                "gates": json.loads(r.gates or "[]"), "samples": json.loads(r.samples or "[]"),
+                "tier": r.tier, "articlePattern": r.article_pattern, "reason": r.reason}
+
+    def admission_row(self, host: str) -> "dict | None":
+        with self.session() as s:
+            row = s.get(SourceAdmission, (host or "").strip().lower())
+            return self._admission_row(row) if row else None
+
+    def admission_rows(self, *, states=None, hosts=None, limit: int = 0) -> list:
+        """Admission rows, richest evidence first.
+
+        Ordered by ``articles DESC, host`` — **deterministic**, which resume depends on. The
+        candidate ordering out of `source_discovery.candidates` is by article count too, but it is
+        recomputed from a catalogue that keeps growing, so it is not stable between runs. Resume
+        therefore keys on per-host STATE, never on a position in a list, and this ordering exists so
+        a campaign works through the richest evidence first rather than to be counted against."""
+        q = select(SourceAdmission)
+        if states:
+            q = q.where(SourceAdmission.state.in_(sorted(states)))
+        if hosts:
+            q = q.where(SourceAdmission.host.in_(sorted({(h or "").strip().lower()
+                                                         for h in hosts if (h or "").strip()})))
+        q = q.order_by(SourceAdmission.articles.desc(), SourceAdmission.host)
+        if limit and limit > 0:
+            q = q.limit(int(limit))
+        with self.session() as s:
+            return [self._admission_row(r) for r in s.execute(q).scalars()]
+
+    def admission_census(self) -> dict:
+        """``{state: count}`` plus ``total``, ``probes`` and ``requests``.
+
+        The last two are the ones that answer "how much of a publisher's bandwidth has this pipeline
+        spent" — the question the ToS review is actually about — from the record rather than from an
+        estimate."""
+        with self.session() as s:
+            out = {st: int(n) for st, n in s.execute(
+                select(SourceAdmission.state, func.count()).group_by(SourceAdmission.state)).all()}
+            out["total"] = sum(out.values())
+            out["probes"] = int(s.scalar(select(func.sum(SourceAdmission.probe_count))) or 0)
+            out["requests"] = int(s.scalar(select(func.sum(SourceAdmission.requests_spent))) or 0)
+            return out
+
+    def record_admission_candidates(self, candidates, *, at: "str | None" = None) -> dict:
+        """Seed or refresh ``candidate`` rows from a discovery pass. **Idempotent.**
+
+        Takes `source_discovery.candidates` dicts. Only *eligible* ones are seeded: a host the
+        offline gates rejected is not a candidate, and storing it as one would put a row in the
+        probe queue that the gates already decided against.
+
+        Two rules make re-running discovery over an ever-growing catalogue a no-op for hosts already
+        known, which is the whole of duplicate-run idempotence at the seeding end:
+
+        1. **A state is never downgraded.** A host that is ``rejected`` or ``admitted`` stays there;
+           discovery re-offering it does not put it back in the probe queue. Without this, every
+           seeding pass would undo every verdict, and the second run of a campaign would re-probe
+           all 1,173 hosts.
+        2. **Probe accounting is never reset.** ``probe_count``, ``requests_spent``,
+           ``last_probed_at`` and ``retry_after`` are the record of what we have already spent on
+           this publisher; a seeding pass has no business touching them.
+
+        The *evidence* is refreshed, because it is what discovery is for: ``articles`` grows,
+        ``language`` fills in as `rss_ingest.parse_feed` backfills it. ``first_seen`` moves earlier
+        only, never later.
+
+        Returns ``{"inserted", "refreshed", "unchanged", "skipped"}``."""
+        now = at or _utcnow().isoformat()
+        counts = {"inserted": 0, "refreshed": 0, "unchanged": 0, "skipped": 0}
+        with self.session() as s:
+            for cand in candidates:
+                host = (cand.get("host") or "").strip().lower()
+                if not host:
+                    counts["skipped"] += 1
+                    continue
+                if not cand.get("eligible"):
+                    counts["skipped"] += 1
+                    continue
+                arts = int(cand.get("articles") or 0)
+                lang = (cand.get("language") or "").strip() or None
+                pubs = cand.get("publishers") or []
+                pub = (pubs[0] if pubs else "").strip() or None
+                row = s.get(SourceAdmission, host)
+                if row is None:
+                    s.add(SourceAdmission(host=host, state="candidate", since=now, first_seen=now,
+                                          articles=arts, language=lang, publisher=pub))
+                    counts["inserted"] += 1
+                    continue
+                changed = False
+                if arts != int(row.articles or 0):
+                    row.articles, changed = arts, True
+                if lang and lang != row.language:
+                    row.language, changed = lang, True
+                if pub and pub != row.publisher:
+                    row.publisher, changed = pub, True
+                counts["refreshed" if changed else "unchanged"] += 1
+            s.flush()
+        return counts
+
+    def claim_admission_probe(self, host: str, *, at: "str | None" = None, force: bool = False,
+                              stale_minutes: "float | None" = None) -> "dict | None":
+        """Move ``host`` into ``probing`` and return its row, or ``None`` if it must not be probed.
+
+        **The claim is the lock.** `crawler.RateLimiter` bounds requests inside one process and can
+        see nothing outside it, so two campaigns running at once would each believe they were being
+        polite while the publisher saw double. Writing ``probing`` before the first request, in its
+        own transaction, is the only shared record of what is in flight — and it doubles as the crash
+        marker that makes an interrupted campaign resumable.
+
+        The policy is entirely `source_admission.may_probe`; this method is the write. Returning
+        ``None`` rather than raising is deliberate: skipping is the *normal* outcome on a resumed
+        campaign, and the caller reports counts, not exceptions."""
+        import source_admission as _sa
+        now_iso = at or _utcnow().isoformat()
+        now = _sa.parse_iso(now_iso) or datetime.now(timezone.utc)
+        stale = _sa.STALE_PROBE_MINUTES if stale_minutes is None else float(stale_minutes)
+        key = (host or "").strip().lower()
+        with self.session() as s:
+            row = s.get(SourceAdmission, key)
+            decision = _sa.may_probe(self._admission_row(row) if row else None,
+                                     now=now, force=force, stale_minutes=stale)
+            if not decision.allowed or row is None:
+                return None
+            row.state = "probing"
+            row.since = now_iso
+            row.claimed_at = now_iso
+            s.flush()
+            return dict(self._admission_row(row), claimReason=decision.reason)
+
+    def admission_skip_reason(self, host: str, *, at: "str | None" = None, force: bool = False,
+                              stale_minutes: "float | None" = None) -> str:
+        """Why :meth:`claim_admission_probe` would decline, or ``""`` when it would not.
+
+        Empty means "this host would be probed". `source_admission.may_probe` carries a reason on
+        the allowed branch too — "never probed", "resuming an interrupted probe" — which is useful
+        at the claim and actively misleading here, where callers test the string for truthiness to
+        find the held-back rows."""
+        import source_admission as _sa
+        now = _sa.parse_iso(at or _utcnow().isoformat()) or datetime.now(timezone.utc)
+        stale = _sa.STALE_PROBE_MINUTES if stale_minutes is None else float(stale_minutes)
+        decision = _sa.may_probe(self.admission_row(host), now=now, force=force,
+                                 stale_minutes=stale)
+        return "" if decision.allowed else decision.reason
+
+    def record_admission_probe(self, host: str, *, verdict: str, gates=None,
+                               feed_url: str = "", discovered_via: str = "", samples=None,
+                               requests: int = 0, at: "str | None" = None) -> dict:
+        """Write one probe's verdict. ``probing`` -> ``validated`` / ``rejected`` / ``incomplete``.
+
+        **Refuses a host that is not currently ``probing``.** Claim and record are a strict pair, so
+        a verdict can only be written for a request that was actually authorised — which is what
+        keeps ``probe_count`` an honest count of requests made rather than of times this method was
+        called. It also makes double-recording a loud failure instead of a silently doubled counter.
+
+        ``requests`` is what `source_validation.validate` reports it spent, and it accumulates
+        forever: the total across the table is what a publisher-facing cost report is made of."""
+        import source_admission as _sa
+        now = at or _utcnow().isoformat()
+        state = _sa.state_for_verdict(verdict)
+        key = (host or "").strip().lower()
+        with self.session() as s:
+            row = s.get(SourceAdmission, key)
+            if row is None:
+                raise ValueError(f"no admission row for {key!r} — claim the probe first")
+            if row.state != "probing":
+                raise ValueError(
+                    f"{key!r} is {row.state!r}, not 'probing' — a verdict may only be recorded for a "
+                    f"claimed probe, so that probe_count counts requests made rather than calls")
+            row.state = state
+            row.since = now
+            row.verdict = verdict
+            row.claimed_at = None
+            row.last_probed_at = now
+            row.probe_count = int(row.probe_count or 0) + 1
+            row.requests_spent = int(row.requests_spent or 0) + max(0, int(requests or 0))
+            row.retry_after = _sa.retry_after(state, _sa.parse_iso(now) or _utcnow())
+            row.feed_url = (feed_url or "").strip() or None
+            row.discovered_via = (discovered_via or "").strip() or None
+            row.gates = json.dumps(list(gates or []), default=str)
+            row.samples = json.dumps(list(samples or []), default=str)
+            s.flush()
+            return self._admission_row(row)
+
+    @staticmethod
+    def _lifecycle_identity(publisher: str) -> str:
+        """The key ``SourceLifecycle`` rows are stored under, for a publisher string.
+
+        **This expression must agree with `audit_shadow_cohort._identity`**, which is what M8 uses
+        to key the cohort it evaluates. If they disagree, an admission writes a lifecycle row under
+        one key and M8 writes its evidence under another, and the source looks un-evaluated forever
+        while two rows describe it. `tests/test_source_admission.py` pins the agreement
+        differentially rather than by restating the rule, because restating it is how the two copies
+        that already exist (`audit_source_cohort`, `audit_shadow_cohort`) would become three."""
+        import outlet_registry as _reg
+        pub = (publisher or "").strip()
+        outlet = _reg.default_registry().resolve(pub) if pub else None
+        return outlet.canonical if outlet else pub.lower()
+
+    def admit_source(self, host: str, *, tier: str = "shadow", publisher: "str | None" = None,
+                     article_pattern: "str | None" = None, reason: str = "",
+                     at: "str | None" = None, force: bool = False) -> dict:
+        """``validated`` -> ``admitted``, and record the shadow lifecycle transition.
+
+        This is the **only** method in the codebase that puts a discovered source into serving
+        configuration, and it does three things in one transaction so none of them can happen
+        without the others:
+
+        1. sets ``state='admitted'`` and ``tier='shadow'`` — which is what
+           :meth:`admitted_shadow_hosts` and :meth:`admitted_crawl_rows` read, so the crawl config
+           and the tier assignment come from **one row** and cannot skew apart;
+        2. records a ``SourceLifecycle`` transition into ``shadow``, so M8/M9 pick the source up
+           where they already look for it and the admission appears in the append-only ledger;
+        3. refuses any tier but ``shadow`` (`source_admission.check_admission_tier`), at the write
+           rather than only at the CLI.
+
+        ``force`` admits a host that is not ``validated``. It exists for the hand-verified publishers
+        already in ``crawler_publishers.json`` — they were admitted by a human before this table
+        existed and have no probe record — and it is the *only* way past the ``validated`` gate."""
+        import source_admission as _sa
+        _sa.check_admission_tier(tier)
+        now = at or _utcnow().isoformat()
+        key = (host or "").strip().lower()
+        with self.session() as s:
+            row = s.get(SourceAdmission, key)
+            if row is None:
+                raise ValueError(f"no admission row for {key!r} — seed it from discovery first")
+            if row.state != "validated" and not force:
+                raise ValueError(
+                    f"{key!r} is {row.state!r}, not 'validated' — a source is admitted on a probe "
+                    f"that passed every gate. Pass force=True only for a host verified by hand.")
+            row.state = "admitted"
+            row.since = now
+            row.tier = tier
+            if publisher and publisher.strip():
+                row.publisher = publisher.strip()
+            if article_pattern is not None:
+                row.article_pattern = article_pattern.strip() or None
+            row.reason = reason or f"admitted to the {tier} lane"
+            s.flush()
+            admitted = self._admission_row(row)
+        # Outside the transaction above only in the sense of being a separate method; both write to
+        # the same SQLite file under one busy_timeout, and the lifecycle row is what M8 reads.
+        self.apply_source_transition(
+            self._lifecycle_identity(admitted["publisher"] or key), to=tier,
+            automatic=False, applied=True,
+            reason=(reason or f"M11 admission: probe passed every gate, admitted to the {tier} lane"),
+            evidence={"host": key, "feed": admitted["feedUrl"],
+                      "discoveredVia": admitted["discoveredVia"],
+                      "requestsSpent": admitted["requestsSpent"]}, at=now)
+        return admitted
+
+    def withdraw_source(self, host: str, *, reason: str = "", at: "str | None" = None) -> dict:
+        """``admitted`` -> ``withdrawn``: stop crawling this source, and **keep it shadowed**.
+
+        `corpus.DEFAULT_TIER` is ``"A"``. Clearing the tier here would take every article already
+        ingested from this host and put it into the clustering corpus — an operator reducing a
+        source's reach would be promoting it. So withdrawal moves ``state`` and leaves ``tier``
+        alone: the crawl adapter disappears (``admitted_crawl_rows`` no longer lists it, and
+        `crawler.CrawlAdapter.in_shadow` still holds for what remains), and the catalogue rows stay
+        out of the story builder. Moving them anywhere else is M9's decision, on M8's evidence."""
+        now = at or _utcnow().isoformat()
+        key = (host or "").strip().lower()
+        with self.session() as s:
+            row = s.get(SourceAdmission, key)
+            if row is None:
+                raise ValueError(f"no admission row for {key!r}")
+            if row.state != "admitted":
+                raise ValueError(f"{key!r} is {row.state!r}, not 'admitted' — nothing to withdraw")
+            row.state = "withdrawn"
+            row.since = now
+            row.reason = reason or "withdrawn; the shadow assignment is KEPT so its articles do not " \
+                                   "fall back to the Tier A default"
+            s.flush()
+            return self._admission_row(row)
+
+    def reopen_admission(self, host: str, *, reason: str = "", at: "str | None" = None) -> dict:
+        """Put a completed host back in the probe queue. The deliberate act named in
+        `source_admission.REJECTED_RETRY_DAYS`.
+
+        A ``rejected`` host is never retried on a timer — re-asking a publisher who refused us is
+        how a discovery pipeline becomes a nuisance — but a publisher can add a feed or change
+        robots.txt, so there has to be a way back. It has a name and a reason field rather than a
+        cooloff, so the record says a human decided rather than that a clock expired. The probe
+        accounting is **not** reset: ``probe_count`` keeps counting how many times we have knocked."""
+        now = at or _utcnow().isoformat()
+        key = (host or "").strip().lower()
+        with self.session() as s:
+            row = s.get(SourceAdmission, key)
+            if row is None:
+                raise ValueError(f"no admission row for {key!r}")
+            if row.state == "admitted":
+                raise ValueError(f"{key!r} is admitted and serving — withdraw it before reopening")
+            row.state = "candidate"
+            row.since = now
+            row.claimed_at = None
+            row.retry_after = None
+            row.reason = reason or "reopened by hand"
+            s.flush()
+            return self._admission_row(row)
+
+    def admitted_shadow_hosts(self) -> "frozenset[str]":
+        """Hosts the admission table assigns to the shadow lane.
+
+        Read by ``corpus`` and **unioned** with ``RWE_CORPUS_SHADOW`` rather than replacing it — see
+        `corpus.admitted_shadow_hosts`. Keyed on ``tier``, not ``state``, so a withdrawn source stays
+        shadowed."""
+        with self.session() as s:
+            return frozenset(h for (h,) in s.execute(
+                select(SourceAdmission.host)
+                .where(SourceAdmission.tier == "shadow")).all() if h)
+
+    def admitted_crawl_rows(self) -> list:
+        """Admitted rows that carry a discovery document, for `crawler.load_config`.
+
+        ``state == 'admitted'`` here, not ``tier``: withdrawal must stop the crawl while leaving the
+        tier in place, and this is the half that stops."""
+        with self.session() as s:
+            return [self._admission_row(r) for r in s.execute(
+                select(SourceAdmission)
+                .where(SourceAdmission.state == "admitted")
+                .where(SourceAdmission.feed_url.is_not(None))
+                .order_by(SourceAdmission.host)).scalars()]
 
     # -- content lifecycle (Commit 18: extension-created articles) --------------------
     def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:

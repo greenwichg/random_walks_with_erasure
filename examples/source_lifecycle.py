@@ -7,9 +7,16 @@ returns the transition that follows — or none.
 ## What M9 automates, and what it deliberately does not
 
 M8 stops at evidence on purpose. M9 is the part that acts, and the first design question is *what
-"act" can safely mean here.* Tier membership is not database state: it is `RWE_CORPUS_TIER_B` and
+"act" can safely mean here.* Tier membership was not database state: it was `RWE_CORPUS_TIER_B` and
 `RWE_CORPUS_SHADOW`, read from the environment by `corpus.tier_index`. That was M1's decision — tier
 is a property of the outlet, derived at selection time, no article column and no migration.
+
+**M11 moved half of that, and the correction matters for this module.** `store.SourceAdmission` now
+carries a `tier` column, unioned into `corpus.tier_index`'s shadow set, so *shadow* membership **is**
+database state. Tier B and Tier A are not: they are still environment lists, and this module still
+emits configuration for them rather than writing it. The split is not an accident of sequencing — it
+is :func:`crosses_tier_a` again. Admission moves an outlet into the lane where nothing is surfaced,
+which cannot change the story partition; every move this module proposes can.
 
 So M9 **automates the decision and emits the configuration; it never mutates serving state.** The
 state machine, the hysteresis and the ledger are automatic and durable; applying a transition is a

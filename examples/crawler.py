@@ -137,10 +137,22 @@ class PublisherCrawlConfig:
         return re.compile(self.article_pattern) if self.article_pattern else None
 
 
-def load_config(path: "str | None" = None) -> "list[PublisherCrawlConfig]":
-    """Publisher configs from JSON. Unknown keys are rejected loudly rather than ignored — a typo'd
-    ``max_url`` silently taking the default is exactly the kind of quiet misconfiguration that makes
-    a crawler look like it is working while it crawls the wrong thing."""
+def load_config(path: "str | None" = None, *, store_=None) -> "list[PublisherCrawlConfig]":
+    """Publisher configs from JSON, plus the M11 admission table when a store is supplied.
+
+    Unknown JSON keys are rejected loudly rather than ignored — a typo'd ``max_url`` silently taking
+    the default is exactly the kind of quiet misconfiguration that makes a crawler look like it is
+    working while it crawls the wrong thing.
+
+    ``store_`` is the M11 seam. `examples/data/crawler_publishers.json` is baked into the image, so
+    before M11 admitting a source was a code change and a deploy — which does not scale past the
+    eight hand-verified publishers in it, let alone to 1,173 candidates. Admitted rows are
+    **appended**, and the JSON wins on a duplicate publisher: those eight were verified against the
+    live sites by hand, and a table row must not silently override a checked ``article_pattern`` with
+    an empty one.
+
+    Without a store this is byte-identical to what it was, which is what every existing caller
+    (`verify_crawler_config.py`, the CLI, the tests) gets."""
     p = path or _CONFIG_PATH
     with open(p, encoding="utf-8") as f:
         raw = json.load(f)
@@ -153,7 +165,41 @@ def load_config(path: "str | None" = None) -> "list[PublisherCrawlConfig]":
         srcs = tuple(DiscoverySource(kind=s["kind"], url=s["url"]) for s in row.get("sources", []))
         out.append(PublisherCrawlConfig(**{k: v for k, v in row.items() if k != "sources"},
                                         sources=srcs))
+    if store_ is not None:
+        out.extend(admitted_configs(store_, exclude={c.publisher for c in out}))
     return out
+
+
+def admitted_configs(store_, *, exclude=frozenset()) -> "list[PublisherCrawlConfig]":
+    """M11-admitted sources as crawl configs. **Every one is re-checked against the shadow lane.**
+
+    That re-check is the point, not a formality. `CrawlAdapter.in_shadow` already refuses to run an
+    unshadowed publisher, but it reads `corpus`, which caches its admitted-host snapshot for a
+    minute. Filtering the config list through the same predicate means the crawl set is always a
+    subset of the shadow set *as corpus currently sees it* — so cache skew can only ever remove a
+    source from the crawl, never add one that is not shadowed. Any disagreement resolves to "do not
+    crawl", which is the fail-safe direction and the one `corpus.DEFAULT_TIER == "A"` demands.
+
+    Failures return what was built so far rather than raising: `sources._crawl_adapters` already
+    treats a broken crawl config as "no crawling" rather than as "no ingestion", and a store that is
+    mid-migration must not take the RSS poller down."""
+    import corpus
+    import source_admission
+    configs = []
+    try:
+        rows = store_.admitted_crawl_rows()
+    except Exception:
+        return configs
+    for row in rows:
+        host = row["host"]
+        if not corpus.is_shadow(row.get("publisher") or host, f"https://{host}/"):
+            continue
+        fields = source_admission.crawl_config_fields(row)
+        if fields["publisher"] in exclude:
+            continue
+        srcs = tuple(DiscoverySource(kind=s["kind"], url=s["url"]) for s in fields.pop("sources"))
+        configs.append(PublisherCrawlConfig(sources=srcs, **fields))
+    return configs
 
 
 def lint_config(configs) -> "list[dict]":
