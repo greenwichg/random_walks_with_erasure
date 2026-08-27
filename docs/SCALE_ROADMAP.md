@@ -2336,6 +2336,36 @@ write of a handful of rows rather than a 2.4 s round trip. If the per-source loc
 — at which point the binding constraint becomes thread-per-adapter, and *that* is when leases and a
 bounded pool become the next milestone.
 
+### Verified live: the crawl path's lock cost fell 16x, and the ceiling moved into the thousands
+
+Measured over 60 minutes, same box, same catalog:
+
+```
+crawl pollMs  : 0.9 s over 6 cycles  = 0.15 s each     (was ~2.4 s)
+crawl fetchMs : 14.1 s over 6 cycles = 2.35 s each     (what moved off the lock)
+OCCUPANCY     : 460.5 s / 3,600 s    = 12.8%           (was 16.0%, 24.9%, 87.8%)
+```
+
+`fetchMs` at 2.35 s lands within 4% of the pre-change `pollMs` (2335.8 / 2547.6 ms), which is the
+confirmation that the whole network round trip moved and nothing else changed. `pollMs` at 0.15 s is
+the ingest alone — a write of a handful of rows, which is what the lock is for.
+
+**Per-source lock cost: 9.6 -> 0.6 s/hour.** On the same basis as the pre-change estimate:
+
+```
+saturation  (3600 - 458) / 0.6  ~  5,200 sources    (was 327)
+50% comfort (1800 - 458) / 0.6  ~  2,200 sources    (was 140)
+```
+
+Total occupancy moved only 16.0% -> 12.8%, exactly as predicted: **only `CrawlAdapter` opted in.**
+RSS, the keyed providers and GDELT still hold the lock across their own fetches and are the bulk of
+the remaining poll time. That is deliberate — they are a fixed set of ~9 adapters, not the thing
+scaling to 50k. Opting any of them in is a separate change with its own store-freedom check.
+
+*(One reading note: two greps a minute apart reported 19.4 s over 47 cycles and 14.1 s over 6 crawl
+cycles. The 60-minute windows caught different crawl cycles — 5.3 s is about two of them. The
+per-cycle figure, 2.43 s against 2.35 s, is stable across both and is the number that matters.)*
+
 **A note on what is deliberately not done.** `MultiSourcePoller.start` still creates one thread per
 adapter. That is the next wall, and it is correctly the *next* one: until this change, the lock
 masked it entirely.
