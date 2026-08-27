@@ -387,7 +387,9 @@ M1  corpus boundary ──┬── M2  bound Tier A + fix the count caps ──
 | M7 | Discovery + network validation | M5, **plus an explicit go-ahead and a ToS review** | first thing that touches a publisher |
 | M8 | Evaluation harness on shadow data | M5, M7, M4 | assignment hit rate is one of its inputs |
 | M9 | Promotion / retirement automation | M8 | the gates are only as good as the metrics |
-| **M10** | **Source admission becomes data, not deployment** — one `sources` table replacing `crawler_publishers.json` (baked into the image) and the tier environment variables; `candidate`/`validated` lifecycle states so a validation campaign is resumable | M7, M8, M9 (nothing to admit before they existed) | **`docs/SOURCE_PIPELINE_50K_AUDIT.md`.** The only step in `discover→validate→crawl→shadow→evaluate→promote` with no mechanism at all. Binds at 100–1,000 sources; subsumes M3's D6 |
+| **M10** | **Discovery reads the catalogue, not the clustering window** — Stage 1 calls `story_service._fetch`, whose window is the 6-day clustering span, so it yields **177 candidates** from a 150,076-row catalogue; plus a host-observation table so evidence outlives article retention | M7 | **`docs/SOURCE_PIPELINE_50K_AUDIT.md`.** Supply is the first wall: past ~180 sources there is nothing left to admit. Measured on production 2026-08-27 |
+| M11 | Source admission becomes data, not deployment — one `sources` table replacing `crawler_publishers.json` (baked into the image) and the tier environment variables; `candidate`/`validated` states so a campaign is resumable | M10 (nothing to admit at scale before it), M8, M9 | the only *join* in the chain with no mechanism; binds at 100–1,000. Subsumes M3's D6 |
+| M12 | Polling interval scales with N — M6's interval ceiling + dormancy | M11 | 9,000 polls/hour is the lock budget; 10,000 sources at 900 s is 444% of it |
 | M10 | Incremental clustering | M2 | **only if Tier A must exceed its budget** |
 
 ## Why incremental clustering is last, and why it may never be needed

@@ -8,18 +8,37 @@ fixes deployed, what actually stops the crawl cohort growing from 2 real sources
 
 ## 0 · The answer in one paragraph
 
-**Every stage of the pipeline is built. The joins between them are not.** `discover → validate →
-crawl → shadow ingest → evaluate → promote` is five pure modules — each one explicitly *"no store,
-no network, no environment, no writes"* — connected by a human editing two files. One of those files
-is `examples/data/crawler_publishers.json`, which ships **inside the image**, so admitting a source
-is a code deploy. The other is `RWE_CORPUS_SHADOW` in `deploy/.env`, which is a container restart.
-Nothing persists a discovery candidate or a validation verdict, so a 50,000-host validation campaign
-**re-probes every publisher on every run**. Supply is not the problem — Stage 1 already found
-**3,729 unrated outlets sitting in the catalogue**, for free, with no crawling at all.
+> ### ⚠ Corrected after the production run
+>
+> The first version of this audit said *"supply is not the problem — Stage 1 already found 3,729
+> unrated outlets in the catalogue"* and named admission as the next milestone. **The production run
+> says 177 candidates, not 3,729.** I took "unrated outlet identities" from `source_discovery.py`'s
+> docstring and used it as the candidate count; those are different numbers separated by a volume
+> floor and two gates. Reaching for a figure that supported the conclusion I was already forming is
+> the §9b pattern in `STORAGE_50K_DESIGN.md`, one document over.
+>
+> With the real number, **supply is the bottleneck, and admission is the one after it.**
 
-**The next milestone is M10: source admission becomes data rather than deployment.** It is the only
-step in the chain with no mechanism at all, it binds between 100 and 1,000 sources, and it happens
-to be the same change M3's audit independently identified as D6/S8.
+```
+window        : 28,217 articles          hosts seen : 4,238
+  already tracked by the registry : 546
+  aggregator / proxy hosts        :  28
+  below the 10-article floor      : 3,487
+  CANDIDATES                      :  177
+```
+
+**Every stage of the pipeline is built. The joins between them are not, and the first stage is
+looking through the wrong window.** `discover → validate → crawl → shadow ingest → evaluate →
+promote` is five pure modules — each explicitly *"no store, no network, no environment, no
+writes"* — connected by a human editing two files, one of which ships **inside the image**.
+
+But the binding limit is upstream of all of that. **Discovery calls `story_service._fetch(st)`** —
+the *clustering* fetch — so its evidence window is `scan_days()`, which defaults to the **6-day
+clustering window**, capped at 60,000 rows, with Tier B and shadow already excluded. It sees
+**28,217 articles of a 150,076-row catalogue**. A host publishing twice a week never accumulates ten
+articles inside six days, so it stays below the floor forever no matter how long we carry it.
+
+**The next milestone is M10: discovery reads the catalogue, not the clustering window.**
 
 ---
 
@@ -82,6 +101,7 @@ the one category where "just run it again" is not an acceptable answer.
 
 | # | limit | binds at | has a mechanism? |
 |---|---|---|---|
+| **L0** | **Discovery supply** — Stage 1 reads the 6-day clustering window, so it yields **177 candidates**; a host publishing twice a week never reaches the 10-article floor | **~180** | **none** |
 | **L1** | **Admission requires a code deploy** — crawl config is baked into the image | **100 – 1,000** | **none** |
 | **L2** | **Validation is not resumable** — verdicts persist nowhere | **any rung; matters at 1,000+** | **none** |
 | L3 | Polling interval must scale with N (roadmap B1) | 1,000 – 10,000 | designed in M6 (interval ceiling + dormancy), not built |
@@ -90,8 +110,13 @@ the one category where "just run it again" is not an acceptable answer.
 | L6 | ToS / robots review | **any real expansion** | **not an engineering item** |
 | ~~L7~~ | ~~Tier-A clustering grows with the cohort~~ | — | **cleared — structurally impossible; see §4** |
 
-L1 and L2 are the only two with no mechanism at all, they are the two earliest, and **they are the
-same change**.
+**L0 binds first and hardest.** L1 is painful but has a working path — 177 sources is one or two
+batched deploys. L0 has no path at all: past ~180 there is nothing left to admit. Removing L1 raises
+the ceiling from 177 to 177; removing L0 raises it into the thousands. That ordering is what changed
+when the production numbers arrived.
+
+L1 and L2 remain real, they are the *next* milestone after L0, and they are the same change as each
+other.
 
 ---
 
@@ -120,54 +145,85 @@ already enforced.**
 
 ## 5 · The next milestone
 
-### M10 — Source admission becomes data, not deployment
+### M10 — Discovery reads the catalogue, not the clustering window
 
-One table, and the three readers that currently read a file or the environment read it instead.
+**The defect, in one line.** `audit_source_discovery.py:74` is
 
-**What it holds:** identity, hosts, lifecycle state (extended with `candidate` and `validated`),
-tier, discovery URLs, the validation verdict and when it was reached, enabled flag.
+```python
+rows = story_service._fetch(st)
+```
 
-**What changes:**
+`_fetch` is the *clustering* candidate fetch. Its window is `scan_days()`, which defaults to
+`clustering.DEFAULT_WINDOW_DAYS` — **six days** — and its `max_scan` caps at 60,000 rows. So Stage 1
+looks at **28,217 of 150,076 catalogue articles** and asks "which hosts have ten articles here?"
 
-1. `crawler.load_config()` reads rows rather than `examples/data/crawler_publishers.json`.
-2. `corpus.tier_index()` reads rows, with the existing env vars kept as an override so nothing breaks
-   on day one. `corpus.tier_resolver()` — landed in M3/D2 — is already the seam for this.
-3. `source_validation` writes its verdict, making a campaign resumable and idempotent per host.
-4. M9's transitions become applyable rows; `SourceLifecycleEvent.applied` finally means something.
+A host publishing twice a week has **~1.7 articles in six days and ~9 in the catalogue's span**. It
+is invisible to discovery permanently, however long we carry it — and the long tail of local and
+regional publishers that 50,000 sources is *made of* publishes exactly at that rate. The 3,487 hosts
+below the floor have a median of one article **in six days**, which is not the same statement as a
+median of one article ever.
 
-**Why it is the bottleneck now, and not before:** until M7/M8/M9 existed there was nothing to admit
-and nothing to promote. They exist, they are validated, and Stage 1 has already found **3,729
-candidates in the catalogue at zero network cost**. The pipeline is starved at exactly one step —
-the one that needs a deploy.
+Reusing the clustering fetch also inherits its exclusions, and those are right for discovery —
+shadow and Tier B are already-known outlets and re-discovering them would be noise. **The window is
+the part that is wrong**, and `_fetch` already accepts `date_from` and `max_scan`, with a documented
+promise that "a caller-supplied `date_from` still wins".
 
-**What it enables, concretely:**
+**What M10 is:**
 
-* **100 → 1,000 sources without a deploy per cohort.** Admission becomes a row, so validated sources
-  can be admitted continuously as a campaign completes rather than in image-sized batches.
-* **A resumable validation campaign** — the property that makes 10,000+ hosts defensible to probe at
-  all, because a restart no longer re-asks publishers who already answered.
-* **The shadow↔B half of M9 can actually close its loop.** Those transitions are already
-  `automatic=True` and already proven safe (neither side clusters); today they still stop at a
-  config diff a human types.
-* **It removes L5 for free** — a 22 MB config file and a 1 MB environment variable both disappear
-  from the 50,000-source path, which is M3's D6 arriving as a side effect rather than as its own
-  milestone.
+1. Stage 1 reads the full retained catalogue with the same tier exclusions, not the 6-day window.
+2. Host observations accumulate in their **own table**, so evidence is no longer bounded by
+   article retention either. This is the durable half: once the catalogue is age-capped, the
+   6-day problem becomes a 30-day problem rather than disappearing, and a host seen five times a
+   month for six months should be a candidate on the strength of thirty observations.
+3. The floor stays at 10. It is a cost bound and it is correct; what changes is the window it counts
+   over.
 
-**What it explicitly does not do:** it does not touch Tier A (§4), it does not fix L3 (interval
-scaling — that is the milestone *after* it, binding at ~1,000–10,000), and **it does not discharge
-the ToS review**, which still gates any real expansion at any size.
+**Why it is the bottleneck now:** every other stage is built and validated, Tier A is structurally
+protected (§4), and the pipeline's very first step is the one throttling it. 177 candidates is not
+enough to reach 1,000 sources by any route.
 
-### The one thing to do before M10 is scoped
+**What it enables:** the 1,000-source rung becomes reachable at all. It is also the cheapest
+milestone on this list by a wide margin — the window is two arguments; the observations table is the
+part worth designing.
 
-L1 and L2 are structural and measured from the code. The candidate pool is not: **3,729 unrated
-outlets** comes from `source_discovery.py`'s docstring, measured when M7 was built. M10 should be
-sized against today's number, and Stage 1 costs nothing to re-run because it touches no publisher:
+**What it does not do:** it does not remove L1 (admission still needs a deploy — that is the next
+milestone, and it is what makes the candidates *usable*), it does not touch Tier A, and **it does not
+discharge the ToS review**, which gates any real expansion at any size.
+
+### Then, in order
+
+| after M10 | milestone | binds at |
+|---|---|---|
+| M11 | Source admission becomes data — one table replacing `crawler_publishers.json` and the tier env vars; `candidate`/`validated` states so a campaign is resumable. Subsumes M3's D6 | 100 – 1,000 |
+| M12 | Polling interval scales with N — M6's interval ceiling + dormancy | 1,000 – 10,000 |
+| — | `RWE_POLL_WORKERS` off 0 — a setting, M6.3 already built the pool | ~1,000 |
+
+---
+
+## 6 · Sizing M10 before building it
+
+The gain is arithmetic, not a guess, and it is measurable read-only. This counts hosts by URL host —
+the same key `source_discovery.candidates` groups on — over the **whole** catalogue instead of the
+six-day window:
 
 ```bash
 cd /opt/ih && source deploy/ops/_compose.sh
-dc exec -T api python examples/audit_source_discovery.py 2>&1 | head -40
+dc exec -T api python -c "
+import sqlite3, collections
+from urllib.parse import urlparse
+c = sqlite3.connect('/app/data/ih_beta.db')
+n = collections.Counter()
+for (u,) in c.execute('select canonical_url from feed_articles'):
+    h = urlparse(u).netloc.lower()
+    h = h[4:] if h.startswith('www.') else h
+    if h: n[h] += 1
+print('distinct hosts in the catalogue:', len(n))
+for f in (10, 5, 3):
+    print(f'  hosts with >= {f:2} articles:', sum(1 for v in n.values() if v >= f))
+"
 ```
 
-No `--probe`, so no network, no writes, no ingestion — it is a `GROUP BY` over rows already paid
-for. It reports how many candidate hosts exist today and what the eight gates say about them
-offline, which is what turns "100 → 1,000" from a target into a worklist.
+Against the windowed run's `hosts seen: 4,238` and `CANDIDATES: 177`, the `>= 10` line is the
+ceiling M10 raises the supply to, before subtracting the ~546 already tracked and ~28 proxies. If it
+comes back near 177, M10 is worth much less than this audit argues and the ranking should move back
+to L1 — which is exactly the check I did not do before writing the first version.
