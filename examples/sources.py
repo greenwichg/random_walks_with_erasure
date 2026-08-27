@@ -101,6 +101,23 @@ def _float_env(name: str, default: float) -> float:
 _BREAKING_LOCK_TIMEOUT_S = 600.0
 
 
+def _poll_workers() -> int:
+    """Size of the bounded poll pool. **0 = one thread per adapter**, the pre-M6.3 model.
+
+    Zero by default so deploying M6.3 changes nothing: at ~11 adapters a pool buys literally
+    nothing, because thread-per-adapter and an 11-worker pool schedule identically. It starts
+    mattering in the hundreds, which is exactly when an operator sets it — and until then the safest
+    behaviour for a scheduler change on the ingest path is the behaviour that already runs.
+
+    The cap it imposes is on CONCURRENT FETCHES, not on sources. That distinction is the whole
+    milestone: source count and thread count were the same number until now, and 2,200 sources (the
+    ceiling M6.2 measured) means 2,200 threads and 2,200 simultaneous outbound connections under the
+    old model. Neither is a thing a 2-vCPU box should attempt, and the second is a politeness
+    problem as much as a resource one.
+    """
+    return max(0, _int_env("RWE_POLL_WORKERS", 0))
+
+
 def _maintenance_interval() -> float:
     """Minimum seconds between catalog-wide post-cycle passes (retention + hot refresh).
 
@@ -387,6 +404,20 @@ class SourceAdapter:
         subclass override and test sees exactly the contract it saw before M6.2.
         """
         return self.persist(self.collect(), store_, scorer, on_feed=on_feed)
+
+
+@dataclass
+class _Lease:
+    """One source's slot in the due-time table (M6.3).
+
+    ``leased`` is the mutual exclusion that replaces "one thread owns this adapter": exactly one
+    worker may hold a source at a time, so a slow fetch can never overlap its own next cycle. Under
+    thread-per-adapter that was free — the adapter's thread was the lease. With a shared pool it has
+    to be stated.
+    """
+    adapter: "SourceAdapter"
+    due: float                       # monotonic; when this source is next allowed to poll
+    leased: bool = False
 
 
 @dataclass
@@ -1504,6 +1535,10 @@ class MultiSourcePoller:
         # is never throttled.
         self._last_maintenance: Optional[float] = None
         self._maintenance_pending = False
+        # M6.3 scheduler state. `_sched` guards the due-time table ONLY and is never held across a
+        # poll — see the pool section below for why that ordering is the whole point.
+        self._sched = threading.Condition()
+        self._leases: "list[_Lease]" = []
         # health_key -> consecutive failures, for adaptive polling (see _effective_interval).
         self._consecutive: dict = {}
 
@@ -1805,6 +1840,82 @@ class MultiSourcePoller:
                   offLockWarmMs=round(warm_ms, 1))
         return agg
 
+    # ── M6.3: the bounded worker pool ──────────────────────────────────────────────────────────
+    #
+    # Thread-per-adapter tied thread count to SOURCE count. That was invisible while the ingest lock
+    # serialised everything — N threads all queued on it, so N did not matter. M6.2 removed the lock
+    # from the fetch and moved the measured ceiling from ~327 crawl sources to ~2,200, at which point
+    # the old model would mean 2,200 threads and 2,200 simultaneous outbound connections.
+    #
+    # A pool decouples the two: sources live in a due-time table, a fixed number of workers lease
+    # them, and concurrency is capped by the pool rather than by how many publishers exist.
+    #
+    # TWO LOCKS, NEVER NESTED THE WRONG WAY. `self._lock` is the ingest write lock; `self._sched` is
+    # the due-time table. A worker holds `_sched` only to claim or release a lease and never while
+    # polling, so the ordering is always sched-then-release-then-ingest. Holding the scheduler lock
+    # across a poll would recreate exactly the global serialisation this milestone exists to remove.
+
+    def _claim(self) -> "Optional[_Lease]":
+        """Block until a source is due, then lease it. ``None`` means the poller is stopping.
+
+        **Earliest-due-first**, which is what makes starvation impossible: a source that has been
+        waiting longest is always taken before one that just came due, so no source can be
+        indefinitely overtaken by a busier neighbour.
+        """
+        with self._sched:
+            while not self._stop.is_set():
+                now = time.monotonic()
+                ready = [l for l in self._leases if not l.leased and l.due <= now]
+                if ready:
+                    lease = min(ready, key=lambda l: l.due)
+                    lease.leased = True
+                    return lease
+                pending = [l.due for l in self._leases if not l.leased]
+                # Sleep exactly until the next source is due — not a fixed tick. A poll interval is
+                # minutes; a busy-wait here would burn a core to save nothing.
+                timeout = max(0.05, min(pending) - now) if pending else 1.0
+                self._sched.wait(timeout)
+            return None
+
+    def _release(self, lease: "_Lease") -> None:
+        """Schedule this source's next poll and hand the slot back.
+
+        `_effective_interval` is REUSED verbatim rather than reimplemented: the adaptive backoff it
+        encodes — including the sustained-failure rule that GDELT's ~40% load shedding forced — is
+        per-source scheduling policy, and a pool that re-derived it would drift from the
+        thread-per-adapter path it has to stay equivalent to.
+        """
+        wait = self._effective_interval(lease.adapter)
+        if wait > lease.adapter.interval():
+            self._log(logging.WARNING, "source_poll_backoff", provider=lease.adapter.provider,
+                      consecutiveFailures=self._consecutive.get(lease.adapter.health_key, 0),
+                      intervalSec=round(wait), baseIntervalSec=round(lease.adapter.interval()))
+        with self._sched:
+            lease.due = time.monotonic() + max(1.0, wait)
+            lease.leased = False
+            self._sched.notify()
+
+    def _worker(self, index: int) -> None:
+        """One pool worker: claim a due source, poll it, release it, repeat.
+
+        Isolation is per LEASE, not per worker. An adapter that raises must not take the worker down
+        with it — under thread-per-adapter that cost one source its polling; in a pool it would cost
+        every source that worker would have served next.
+        """
+        while not self._stop.is_set():
+            lease = self._claim()
+            if lease is None:
+                break
+            try:
+                self.poll_adapter_once(lease.adapter)
+            except Exception as e:                          # isolation: one source never stops another
+                self._log(logging.ERROR, "source_poll_cycle_failed",
+                          provider=lease.adapter.provider, error=repr(e))
+            finally:
+                self._release(lease)                        # even on failure — a raised source must
+                                                            # be rescheduled, not dropped forever
+        self._log(logging.INFO, "source_worker_stopped", worker=index)
+
     def _run_adapter(self, adapter: SourceAdapter) -> None:
         self._log(logging.INFO, "source_poll_start", provider=adapter.provider, interval=adapter.interval())
         while not self._stop.is_set():
@@ -1847,14 +1958,38 @@ class MultiSourcePoller:
             return
         self._stop.clear()
         self._threads = []
-        for a in adapters:
-            t = threading.Thread(target=self._run_adapter, args=(a,), name=f"src-{a.source_type}", daemon=True)
-            t.start()
-            self._threads.append(t)
-        self._log(logging.INFO, "multi_source_start", adapters=[a.provider for a in adapters])
+        workers = min(_poll_workers(), len(adapters)) if _poll_workers() else 0
+        if workers > 0:
+            # Every source starts due NOW, matching thread-per-adapter's "polls immediately, then
+            # every its own interval". The pool then meters them; it does not delay the first pass.
+            now = time.monotonic()
+            with self._sched:
+                self._leases = [_Lease(adapter=a, due=now) for a in adapters]
+            for a in adapters:                              # parity with _run_adapter's own line, so
+                self._log(logging.INFO, "source_poll_start",   # an operator still sees each source
+                          provider=a.provider, interval=a.interval())
+            for i in range(workers):
+                t = threading.Thread(target=self._worker, args=(i,), name=f"src-worker-{i}",
+                                     daemon=True)
+                t.start()
+                self._threads.append(t)
+        else:
+            for a in adapters:
+                t = threading.Thread(target=self._run_adapter, args=(a,), name=f"src-{a.source_type}", daemon=True)
+                t.start()
+                self._threads.append(t)
+        self._log(logging.INFO, "multi_source_start", adapters=[a.provider for a in adapters],
+                  # Which scheduler is running, and its concurrency cap. Without this the two models
+                  # are indistinguishable in the log, and "why are only 4 sources polling at once"
+                  # would have no answer anywhere.
+                  mode=("pool" if workers else "thread-per-adapter"), workers=workers)
 
     def stop(self, join_timeout: float = 10.0) -> None:
         self._stop.set()
+        # Wake every worker parked in `_claim`. Without this a pool with nothing due sleeps until
+        # the next due time — minutes — and `stop()` would look like a hang rather than a shutdown.
+        with self._sched:
+            self._sched.notify_all()
         for t in self._threads:
             if t.is_alive():
                 t.join(timeout=join_timeout)

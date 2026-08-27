@@ -2366,9 +2366,58 @@ scaling to 50k. Opting any of them in is a separate change with its own store-fr
 cycles. The 60-minute windows caught different crawl cycles — 5.3 s is about two of them. The
 per-cycle figure, 2.43 s against 2.35 s, is stable across both and is the number that matters.)*
 
-**A note on what is deliberately not done.** `MultiSourcePoller.start` still creates one thread per
-adapter. That is the next wall, and it is correctly the *next* one: until this change, the lock
-masked it entirely.
+## M6.3 — a bounded worker pool with per-source leases
+
+The wall M6.2 exposed. `MultiSourcePoller.start` created **one thread per adapter**, tying thread
+count to source count. That was invisible while the ingest lock serialised everything — N threads all
+queued on it, so N did not matter. With the fetch off the lock and the ceiling at ~2,200 crawl
+sources, the old model means 2,200 threads and 2,200 simultaneous outbound connections. The second is
+a politeness problem as much as a resource one.
+
+Sources now live in a **due-time table**; a fixed number of workers **lease** them; concurrency is
+capped by the pool rather than by how many publishers exist.
+
+**Two locks, never nested the wrong way.** `self._lock` is the ingest write lock; `self._sched` is
+the due-time table. A worker holds `_sched` only to claim or release, never while polling — holding
+the scheduler lock across a poll would recreate exactly the global serialisation M6.1 and M6.2
+removed.
+
+**What is reused rather than reinvented.** `_release` calls `_effective_interval` verbatim, so the
+adaptive backoff — including the sustained-failure rule GDELT's ~40% load shedding forced — is
+identical between the two schedulers. A pool with its own backoff would drift from the path it has
+to stay equivalent to. The `max(1.0, wait)` floor is inherited for the same reason.
+
+**Off by default.** `RWE_POLL_WORKERS=0` is one thread per adapter, exactly as before, so deploying
+M6.3 changes nothing: at ~11 adapters a pool and thread-per-adapter schedule identically, and the
+safe default for a scheduler rewrite on the ingest path is the model already running. It is set when
+source count reaches the hundreds, and it is an off switch that is not a rollback.
+
+### ⚠ Two of my own tests were unfalsifiable, and the cap was why
+
+The lease test — the single most important invariant here, since `leased` is what replaces "this
+adapter owns a thread" — **passed twice with the lease disabled.**
+
+* **First draft:** raced six workers against a 50 ms poll and hoped for an overlap. Timing-dependent,
+  so it proved nothing. Rewritten to pin the first poll open with an `Event`.
+* **Second draft:** still passed, and the cause was *my own bound*. `workers = min(requested,
+  len(adapters))` means a one-source fixture starts **one worker**, and a lease test with one worker
+  cannot observe a double claim at all. Fixed by adding three filler sources that buy real workers,
+  poll instantly, and then sit 600 s in the future — so the only thing a freed worker can see is the
+  blocked source.
+
+Both were caught by running the mutation, not by reading the test. A guard nobody tries to break is a
+guard nobody has tested, and this one needed three attempts to become real.
+
+### What is deliberately still not done
+
+Per-host politeness is enforced per publisher by the crawler's limiter, but the pool's cap is the
+only **global** concurrency bound, and it is a resource limit rather than a stated politeness policy.
+Deciding the right global ceiling — and whether it should be per-host, per-ASN or per-publisher — is
+a policy question that wants numbers from a real fan-out, not a guess now.
+
+**A note on what was deliberately not done here.** `MultiSourcePoller.start` still created one thread
+per adapter. That was the next wall, and correctly the *next* one: until this change, the lock masked
+it entirely. It is addressed in M6.3 below.
 
 **A note on where the cost went last time.** The comment at `sources.py:1547` records the previous
 investigation landing on `story_cache_warm` — *"~93% of the most expensive loop in the process was
