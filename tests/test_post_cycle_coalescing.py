@@ -10,7 +10,7 @@ Production, 6 h window against 12 h uptime, 150,000-row catalog:
 `poll_adapter_once` holds `self._lock` across BOTH `poll_once` and `_post_cycle`, and both timings
 are taken inside it, so that is lock-HELD time rather than queueing. Retention and the hot refresh
 each cost a function of catalog size, not of what the adapter brought — kait8 paid 216 s of it for
-**2 new articles** while GNews paid 90 s for 10 — and with ~11 adapter threads the catalog paid for
+**2 new articles** while GNews paid 90 s for 10 — and with 13 adapter threads the catalog paid for
 a full pass every time any one of them found a single article.
 
 ## What this changes, and what it deliberately does not

@@ -223,7 +223,7 @@ def test_zero_workers_is_EXACTLY_the_old_thread_per_adapter_model(poller, monkey
 
 
 def test_the_default_is_off_so_the_deploy_is_a_no_op(monkeypatch):
-    """At ~11 adapters a pool and thread-per-adapter schedule identically, so the safe default for a
+    """At the 13 adapters production runs today a pool and thread-per-adapter schedule identically, so the safe default for a
     scheduler rewrite is the model already running in production."""
     monkeypatch.delenv("RWE_POLL_WORKERS", raising=False)
     assert sources._poll_workers() == 0

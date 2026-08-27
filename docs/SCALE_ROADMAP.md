@@ -2031,7 +2031,7 @@ was inside a step nobody had timed"* — and the fix (make the warm non-blocking
 simply moved: cleanup and refresh are now the owners, and neither has been through that treatment.
 
 **The structural problem is the word "cycle".** `_post_cycle`'s own comment describes *"one
-incremental pass per cycle"*, which was true of a single poller loop. There are now ~11 adapter
+incremental pass per cycle"*, which was true of a single poller loop. There are now 13 adapter
 threads, each triggering a full catalog-wide retention pass and a full hot refresh whenever it finds
 even one article. Both costs scale with **catalog size**, not with what the adapter brought — which
 is why kait8 paid **216 s of post-cycle for 2 new articles** while GNews paid 90 s for 10.
@@ -2055,7 +2055,7 @@ Authorised as its own change rather than folded into a crawler commit.
 **Scheduling only.** Nothing moves off the lock, no thread is added, no step is removed. Retention
 and the hot refresh are coalesced to at most one pass per `RWE_POST_CYCLE_MAINTENANCE_INTERVAL`
 (default 600 s, matching `RWE_POLL_INTERVAL`) — which is what *"one incremental pass per cycle"*
-meant before the poller grew from one loop to eleven adapter threads. **Narrowing the lock itself is
+meant before the poller grew from one loop to thirteen adapter threads. **Narrowing the lock itself is
 still M6**; this is the prerequisite that buys the headroom to do it.
 
 `warm` / breaking-detection / push stay on **every** ingesting cycle, deliberately. They are the
@@ -2063,7 +2063,7 @@ latency-sensitive half — a breaking story people should be told about now — 
 11–17%, of which `request_warm` is already non-blocking. Coalescing them would trade a real product
 property for almost no time.
 
-Expected effect: the two dominant segments drop from ~11 passes per window to 1. On the measured
+Expected effect: the two dominant segments drop from up to 13 passes per window to 1. On the measured
 numbers that is the difference between 87.8% occupancy and roughly a tenth of it, with the residue
 being the un-coalesced warm step.
 
@@ -2366,6 +2366,24 @@ scaling to 50k. Opting any of them in is a separate change with its own store-fr
 cycles. The 60-minute windows caught different crawl cycles — 5.3 s is about two of them. The
 per-cycle figure, 2.43 s against 2.35 s, is stable across both and is the number that matters.)*
 
+### M6.3 deployed and confirmed a no-op (2026-08-26)
+
+```
+multi_source_start  adapters: [RSS, NewsAPI, Guardian, NewsData, GNews, MediaStack, Currents,
+                               GoogleNews, GDELT, kait8.com, kwch.com, GDELT-GKG, Wikipedia]
+                    mode: "thread-per-adapter"   workers: 0
+api RWE_POLL_WORKERS = ''
+```
+
+The pool ships present and unreached, which is what `RWE_POLL_WORKERS=0` is for. `''` rather than
+`None` is the confirmation that the compose declaration landed — the switch can reach the container,
+which on the fourth occurrence of that omission is not a detail worth assuming.
+
+**A count corrected by that output.** This document and several code comments said *"~11 adapters"*.
+The real number is **13**. No conclusion moves — the saturation arithmetic is
+`(3600 − post_cycle) / per_source_cost`, and both terms were measured directly rather than derived
+from adapter count — but a stated fact about production should be the fact.
+
 ## M6.3 — a bounded worker pool with per-source leases
 
 The wall M6.2 exposed. `MultiSourcePoller.start` created **one thread per adapter**, tying thread
@@ -2388,7 +2406,7 @@ identical between the two schedulers. A pool with its own backoff would drift fr
 to stay equivalent to. The `max(1.0, wait)` floor is inherited for the same reason.
 
 **Off by default.** `RWE_POLL_WORKERS=0` is one thread per adapter, exactly as before, so deploying
-M6.3 changes nothing: at ~11 adapters a pool and thread-per-adapter schedule identically, and the
+M6.3 changes nothing: at the 13 adapters production runs today a pool and thread-per-adapter schedule identically, and the
 safe default for a scheduler rewrite on the ingest path is the model already running. It is set when
 source count reaches the hundreds, and it is an off switch that is not a rollback.
 

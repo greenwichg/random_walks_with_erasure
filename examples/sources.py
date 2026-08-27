@@ -104,7 +104,7 @@ _BREAKING_LOCK_TIMEOUT_S = 600.0
 def _poll_workers() -> int:
     """Size of the bounded poll pool. **0 = one thread per adapter**, the pre-M6.3 model.
 
-    Zero by default so deploying M6.3 changes nothing: at ~11 adapters a pool buys literally
+    Zero by default so deploying M6.3 changes nothing: at the 13 adapters production runs today a pool buys literally
     nothing, because thread-per-adapter and an 11-worker pool schedule identically. It starts
     mattering in the hundreds, which is exactly when an operator sets it — and until then the safest
     behaviour for a scheduler change on the ingest path is the behaviour that already runs.
@@ -122,7 +122,7 @@ def _maintenance_interval() -> float:
     """Minimum seconds between catalog-wide post-cycle passes (retention + hot refresh).
 
     600 s matches ``RWE_POLL_INTERVAL``, which is what "one pass per polling window" means: with
-    ~11 adapters the old per-cycle behaviour ran that pass ~11 times per window, each superseding
+    13 adapters the old per-cycle behaviour ran that pass up to 13 times per window, each superseding
     the last, at a cost set by catalog size rather than by what any adapter brought.
 
     **0 restores the previous behaviour exactly** — every ingesting cycle runs its own pass — so
@@ -1601,7 +1601,7 @@ class MultiSourcePoller:
         # ── COALESCING THE CATALOG-WIDE STEPS ──────────────────────────────────────────────────
         # Retention and the hot refresh both cost a function of CATALOG SIZE, not of what this
         # adapter brought, and both run while holding `self._lock`. "One incremental pass per
-        # cycle" was written for a single poller loop; there are now ~11 adapter threads, so the
+        # cycle" was written for a single poller loop; there are now 13 adapter threads, so the
         # catalog paid for a full pass every time ANY of them found a single article.
         #
         # Measured on production, 6 h window against 12 h uptime, 150,000 rows:
