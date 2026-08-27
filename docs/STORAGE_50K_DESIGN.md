@@ -43,6 +43,12 @@ and none requires a substrate migration.
 > **A second correction, this one against me.** I also predicted `article_entities` was leaking
 > orphans on every prune. Production measured **97 orphans of 134,088 rows — 0.072%**. The missing
 > reaper is real; the leak I sized it against is not. §2.12.
+>
+> **And the thing actually filling the disk is not storage at all.** The volume is at 76% with
+> 6.3 GB free, and **8.0 GB of that is Docker build cache** — 100% reclaimable, accumulating at
+> ~500 MB per manual deploy, because the prune that would remove it lives in `cd-deploy.sh` and the
+> documented manual deploy runs `update.sh` directly. §2.13. One command frees it; D8 stops it
+> coming back.
 
 ---
 
@@ -466,6 +472,47 @@ beside `prune_orphan_event_locations`, in the same step of the same pass.
 covering-index search that makes the event-location reaper cheap — and the measurement above is what
 that reaper would delete on its first run.
 
+### 2.13 The disk pressure is 8 GB of Docker build cache, and the fix already exists in the wrong file
+
+`docker system df` on the box:
+
+| type | total | active | size | **reclaimable** |
+|---|---:|---:|---:|---:|
+| Images | 6 | 5 | 2.772 GB | 12.37 kB (0%) |
+| Containers | 5 | 4 | 10.04 MB | 1.495 MB (14%) |
+| Local Volumes | 3 | 2 | 5.372 MB | 5.359 MB (99%) |
+| **Build Cache** | **77** | **0** | **8.037 GB** | **8.037 GB (100%)** |
+
+**Eight gigabytes of build cache, none of it active, all of it reclaimable — more than the database
+(0.587 GB) and every local backup (3.0 GB) put together.** The accounting closes: 10.82 GB of Docker
+plus 3.6 GB of `/opt/ih/data` is 14.4 GB of the 22 GB used.
+
+```
+today                          22.0 / 29 GB  =  76%   (6.3 GB free)   A5 FAIL
+after `docker builder prune`   14.0 / 29 GB  =  48%   (15.0 GB free)  A5 PASS with margin
+```
+
+**And the fix is already written — in a file this deployment does not run.** `cd-deploy.sh:149`
+carries exactly the right thing, with a comment that diagnosed exactly this failure ("*It filled the
+disk at roughly 500 MB per deploy, so the failure mode was 'PREFLIGHT starts refusing to deploy'
+some 25 deploys out*"):
+
+```bash
+PRUNE_WINDOW="${CD_BUILD_CACHE_KEEP_HOURS:-168}h"
+docker builder prune -f --filter "until=${PRUNE_WINDOW}"
+```
+
+`cd-deploy.sh` **calls** `update.sh` and then prunes. But the documented manual deploy is
+`sudo bash deploy/ops/update.sh <ref>` — run directly, not through `cd-deploy` — and `update.sh`
+never prunes. Its only mention of the subject is line 133, a remediation *message* printed when a
+deploy has already failed. So every manual deploy builds, adds ~500 MB of cache, and nothing on that
+path ever removes it. 8 GB is roughly sixteen deploys' worth.
+
+**This is the session's recurring defect class in a new dress.** Not "a gate that cannot fire" and
+not "a switch that cannot reach the container", but the same shape: **a cleanup that lives one level
+above the path anyone actually takes.** Somebody already found this problem, measured it, wrote the
+fix and documented the reasoning — and put it where this deployment never reaches.
+
 ---
 
 ## 3 · Ranked bottlenecks
@@ -479,6 +526,7 @@ that reaper would delete on its first run.
 | **S5** | Three prune columns unindexed (`scored_articles` worst) | ~1 M rows in the score cache | full scan per pass — **117.6 ms of a 235.8 ms pass at 400 k** | schema — three indexes |
 | **S5b** | The score cache is **25.5%** of the database (production), for regenerable data on a 30-day default | now | linear | ops — one env var |
 | **S12** | `article_entities` has **no orphan reaper** | not yet — **measured at 97 orphans of 134,088 (0.072%)**; the class is real, the size is not | unbounded in principle, negligible today | code — one bounded prune beside the event-location reaper |
+| **S13** | **8.0 GB of Docker build cache, 100% reclaimable** — `update.sh` never prunes it; the prune lives in `cd-deploy.sh`, which this deployment does not run | **now** — it is why the volume is at 76% | ~500 MB per manual deploy, unbounded | ops — one command; code — D8 |
 | **S6** | Volume capacity | depends entirely on the retention horizon | linear | ops — size the volume |
 | **S7** | `storage_stats()` — 11 full COUNTs on every cleanup pass | ~5 M rows | linear | code — sample, don't count |
 | **S8** | Tier lists live in environment variables | ~30 k sources (1 MB of a 2 MB `ARG_MAX`) | linear | code — move to a table |
@@ -496,7 +544,7 @@ a problem that does not exist.
 
 ## 4 · The smallest architecture that clears them
 
-**Stay on SQLite.** Nothing measured here is a substrate problem. The design is five code changes,
+**Stay on SQLite.** Nothing measured here is a substrate problem. The design is six code changes,
 one schema change, and a handful of settings — no migration, no second database, no new service on
 the critical path.
 
@@ -670,6 +718,22 @@ Two properties to keep from the original: it must be **harmless when retention i
 articles means no orphans, and the query returns nothing), and it must run **after** the catalogue
 prune, which is the thing that creates the orphans.
 
+### D8 — `update.sh` prunes the build cache, because it is the deploy that actually runs
+
+§2.13: `cd-deploy.sh` prunes cold build cache after a successful deploy; `update.sh` does not, and
+`update.sh` is what a manual deploy invokes. Move (or duplicate) the existing block into
+`update.sh`'s success path, keeping every property the original was written with:
+
+* **the same policy** — `--filter until=${CD_BUILD_CACHE_KEEP_HOURS:-168}h`, so the last week of
+  cache survives and the rollback window is unaffected;
+* **non-fatal by construction** — a housekeeping failure must never turn a green deploy red, which
+  is why the original swallows the exit status and reports the result;
+* **idempotent** — if `cd-deploy` is the caller, the second prune is a no-op, so nothing needs to
+  change on the CD path.
+
+Immediate relief needs no code at all — the same command, run once by hand — but the code change is
+what stops it coming back at ~500 MB per deploy.
+
 ### D6 — Tier assignment moves out of the environment
 
 `RWE_CORPUS_TIER_B` and `RWE_CORPUS_SHADOW` are comma-separated strings. 50,000 hosts is **999,999
@@ -775,7 +839,7 @@ is visibly distinct from one that is aspirational.
 | **A2** | **Write throughput** | ≥ **250 articles/s** sustained through the real `ingest_entries` at **16** concurrent writers, p95 ≤ **250 ms**, **zero** `database is locked` | 284.8/s, p95 172.1 ms, 0 errors, at 1 M rows ✅ | — (already met) |
 | **A3** | **Retention / cleanup** | a steady-state pass that deletes nothing completes in ≤ **2,000 ms** with an RSS delta ≤ **150 MB**, at the design size | **89,765 ms / +5,582 MB at 1 M rows** ❌; production is estimated at **~8–9 s / ~840 MB per pass right now** (§2.10, unconfirmed on the box) — D1's replacement measures **5.4 ms** on the same data | D1, D2, D3, D4 |
 | **A4** | **Backup / restore** | full backup + integrity + compress ≤ **15 min**, and ≤ **5%** of the 0.40 sustainable vCPU averaged over an hour; verified restore ≤ **30 min**; WAL forced by one backup ≤ **1 GB** | 15.0 s/GB → **4.7 min** at 18.7 GB ✅; **19.5% of vCPU** if hourly ❌; restore 19.9 s/GB → 6.2 min ✅; WAL 478 MB at 2.5 GB ✅, unmeasured at 18.7 GB ⚠ | D5 |
-| **A5** | **Database size** | database ≤ **60%** of the volume, local backups ≤ **25%**, ≥ **15%** free at all times; alert at 70% used | **78% used, 6.3 GB free** on the 29 GB volume ❌ — already past the alert line | §5 sizing (150 GB) |
+| **A5** | **Database size** | database ≤ **60%** of the volume, local backups ≤ **25%**, ≥ **15%** free at all times; alert at 70% used | **76% used, 6.3 GB free** ❌ — but the database is 2% and the backups 10%; **8.0 GB of it is reclaimable Docker build cache** (§2.13). One `docker builder prune` → 48% used, PASS | D8, then §5 sizing (150 GB) |
 | **A6** | **Memory / disk** | no single pass exceeds **50%** of box RAM; steady-state ingest RSS ≤ **1 GiB** | the age pass needs **5.58 KB per catalogue row** — 50% of a 4 GiB box at **~366 k rows** ❌ | D1 |
 | **A7** | **Concurrent ingestion** | **16** pool workers with zero lock errors, and post-cycle lock occupancy ≤ **25%** of wall time | 0 lock errors at every rung ✅; occupancy 12.8% at 13 adapters ✅ — but **never measured with retention on**, and retention is what holds the lock ⚠ | D1 |
 
@@ -803,6 +867,7 @@ own right, and it is short:
 
 | step | change | why here | risk |
 |---|---|---|---|
+| 0 | **D8** + one `docker builder prune` | frees **8.0 GB** and takes the volume from 76% to 48%; nothing else on this list matters if the disk fills first, and it is the only step with an effect today | lowest — removes cold build cache only, no images, no volumes |
 | 1 | **D2** — `_host_match` becomes O(labels) | D1's per-tier arm is worthless behind a 4.1 ms/article tier decision, and this is a pure-function change with a provable equivalence and a test that can be written to fail before it | lowest — one function, no schema, no config |
 | 2 | **D3 indexes** + `RWE_RETENTION_SCORED_DAYS` | additive, reversible, and it removes 117.6 ms of the 235.8 ms pass *before* the pass is rewritten, so the rewrite is measured against a clean baseline | low |
 | 3 | **D1** — SQL-shaped retention for Tier B and shadow | the headline: 35 s → 5.4 ms steady state, and the only change that lets an age policy be switched on at all | medium — it is a deletion path, so it needs the guard-flips discipline: mutate the predicate, prove the test fails |
@@ -846,8 +911,31 @@ print('orphans ', c.execute('select count(*) from article_entities e where not e
 
 Read-only, and index-backed on both sides. A large orphan count is the direct evidence for §2.12.
 
-**3 — What is in the backups directory?** *Answered: it is healthy, and the missing `du` line was
-the permissions trap `db_backup.py` already documents.*
+**3 — What is in the backups directory?** *Answered: healthy, and the tiered retention is working.*
+
+```
+prune-backups: policy hourly=12 daily=7 weekly=4 monthly=0
+prune-backups: 26 backup(s) -> kept 26, deleted 0, freed 0 MB
+```
+
+**26 `.db.gz`, zero uncompressed leftovers**, and the KEEP list reads exactly as the policy
+intends — 1 newest + 12 hourly + 8 daily + 5 weekly. (Daily and weekly carry one slot more than
+their `N` because an inclusive "last N days / weeks" window includes the current partial period.
+Expected, not drift.) The `:23` off-host sync is shipping to S3 in the same log. **Nothing to fix
+here** — and my earlier "92 entries could mean neither mechanism is running" was the right caution
+and the wrong worry.
+
+*One loose end, not worth a conclusion:* 92 directory entries − 26 databases = 66 non-database
+files, where 26 backups × 2 sidecars would be 52. `prune-backups.sh` **does** delete sidecars with
+their database (lines 85–93), so the 14 extra are unexplained rather than orphaned. One line says
+what they are, and I would rather ask than guess a third time:
+
+```bash
+sudo sh -c "ls -1 /opt/ih/data/backups | sed 's/^ih_beta-[0-9TZ]*\\.//' | sort | uniq -c"
+```
+
+*Superseded detail, kept because it was the reason for the check:* the missing `du` line was the
+root-owned-`0600` permissions trap `db_backup.py` documents.
 
 ```
 4.0K  allowlist.txt        44K  score_reference.json     16M  feed_corpus.csv
@@ -871,22 +959,14 @@ sudo sh -c 'ls -1 /opt/ih/data/backups/*.db 2>/dev/null | wc -l'   # uncompresse
 sudo tail -30 /var/log/ih-backup.log                          # is the :33 prune cron running?
 ```
 
-**4 — Where is the other 18.4 GB?** `/opt/ih/data` is 3.6 GB of a 22 GB used volume, so OS + Docker
-is the rest, and repeated `update.sh` builds accumulate layers and build cache:
-
-```bash
-docker system df
-```
-
-This matters because A5 currently FAILS at 78% used, and the two candidates for reclaiming
-space — over-retained backups and stale Docker layers — are both cheap to check and neither is the
-database.
+**4 — Where is the other 18.4 GB?** *Answered, and it is the most actionable result in this
+document — see §2.13.*
 
 ---
 
 ## 10 · What this milestone does not settle
 
-* **Nothing is implemented.** This is the audit and the design. D1–D7 are proposals with measured
+* **Nothing is implemented.** This is the audit and the design. D1–D8 are proposals with measured
   justifications, not landed changes.
 * **The box.** Every fix here keeps a 50k-source catalogue inside SQLite; none of them makes a
   `t3.medium` a 50k-source machine. `SCALE_ROADMAP.md` already says the hardware is not priced, and
