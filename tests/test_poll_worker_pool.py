@@ -282,3 +282,60 @@ def test_the_pool_switch_can_actually_REACH_the_container():
     carriers = [n for n, s in doc["services"].items()
                 if "RWE_POLL_WORKERS" in (s.get("environment") or {})]
     assert set(carriers) == {"api", "ingest"}, f"both pollers must carry it, got {carriers}"
+
+
+# --------------------------------------------------------------------------- B6: the cold start
+
+def test_the_first_pass_is_STAGGERED_not_a_stampede(monkeypatch):
+    """B6. Every source used to start due at t=0 — free at 13 adapters, a 50,000-poll burst on
+    every restart at 50k. `stress_50k.py` measured it dominating every cohort window.
+
+    Tested through `initial_leases`, the pure function, NOT through a running pool: workers claim
+    and reschedule within milliseconds of `start()`, so reading `_leases` afterwards races them and
+    sees the second due time. The first draft did that and reported 0 sources due immediately for a
+    table that had four."""
+    monkeypatch.delenv("RWE_POLL_STAGGER", raising=False)
+    adapters = [_Probe(f"s{i}", interval=100.0) for i in range(20)]
+    leases = sources.initial_leases(adapters, workers=4, now=0.0)
+    due = sorted(l.due for l in leases)
+    assert sum(1 for d in due if d == 0.0) == 4, "exactly the pool width starts due"
+    assert max(due) > 50.0, "the rest spread across the interval"
+    assert max(due) <= 100.0, "and never beyond one interval"
+    assert due == sorted(due), "an even spread, deterministic and reproducible"
+
+
+def test_the_stagger_can_be_turned_OFF(monkeypatch):
+    """An off switch that is not a rollback: `RWE_POLL_STAGGER=0` is the pre-B6 simultaneous cold
+    start, which is also exactly what thread-per-adapter does."""
+    monkeypatch.setenv("RWE_POLL_STAGGER", "0")
+    adapters = [_Probe(f"s{i}", interval=100.0) for i in range(20)]
+    leases = sources.initial_leases(adapters, workers=4, now=0.0)
+    assert all(l.due == 0.0 for l in leases), "every source due at once, as before B6"
+
+
+def test_staggering_never_delays_a_deployment_that_fits_the_pool(monkeypatch):
+    """The small-deployment case, which is production today. With sources <= workers every source
+    is in the immediate set, so a deploy loses no cycle — the stampede fix must not become a
+    first-ingest delay for the 13 adapters that actually run."""
+    monkeypatch.delenv("RWE_POLL_STAGGER", raising=False)
+    adapters = [_Probe(f"s{i}", interval=600.0) for i in range(13)]
+    leases = sources.initial_leases(adapters, workers=16, now=0.0)
+    assert all(l.due == 0.0 for l in leases), \
+        "13 adapters into a 16-worker pool must all start immediately"
+
+
+def test_the_stagger_is_actually_WIRED_into_start(poller, monkeypatch):
+    """Guard on the guard. The three tests above exercise the pure function; this one proves
+    `start()` uses it, so the stagger cannot be correct and unreachable at the same time."""
+    monkeypatch.setenv("RWE_POLL_WORKERS", "2")
+    seen = {}
+    real = sources.initial_leases
+    monkeypatch.setattr(sources, "initial_leases",
+                        lambda a, workers, now: seen.setdefault("called", (len(a), workers))
+                        or real(a, workers, now))
+    for i in range(6):
+        poller.registry.register(_Probe(f"s{i}", interval=600.0))
+    monkeypatch.setattr(poller, "poll_adapter_once", lambda a: None)
+    poller.start()
+    poller.stop(join_timeout=2.0)
+    assert seen.get("called") == (6, 2)

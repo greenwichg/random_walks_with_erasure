@@ -101,6 +101,39 @@ def _float_env(name: str, default: float) -> float:
 _BREAKING_LOCK_TIMEOUT_S = 600.0
 
 
+def initial_leases(adapters, workers: int, now: float) -> "list[_Lease]":
+    """The pool's starting due-time table. **Pure** — the stagger's whole logic, with no scheduler.
+
+    Extracted rather than inlined because it cannot be tested through a running pool: workers claim
+    and reschedule leases within milliseconds of `start()`, so a test that reads `_leases` afterwards
+    is racing them and sees the SECOND due time, not the first. The first draft of its tests did
+    exactly that and reported "0 sources due immediately" for a table that had all of them.
+    """
+    immediate = workers if _poll_stagger() else len(adapters)
+    spread = max(1, len(adapters) - immediate)
+    out = []
+    for i, a in enumerate(adapters):
+        # `+ 1` so the first STAGGERED source lands after a real gap rather than at 0.0,
+        # where it would silently join the immediate set and make the burst one wider than
+        # the pool. The last lands at exactly one interval — the same moment it would have
+        # come due had it polled at t=0, so nothing is delayed beyond its own cadence.
+        delay = 0.0 if i < immediate else ((i - immediate + 1) / spread) * a.interval()
+        out.append(_Lease(adapter=a, due=now + delay))
+    return out
+
+
+def _poll_stagger() -> bool:
+    """Whether the pool spreads its FIRST pass instead of starting every source due at once.
+
+    On by default. ``RWE_POLL_STAGGER=0`` restores the simultaneous cold start, which is the
+    pre-B6 behaviour and the thread-per-adapter behaviour — an off switch that is not a rollback.
+
+    Inert unless the pool is running: with ``RWE_POLL_WORKERS=0`` there is no lease table to
+    stagger, so production today is unaffected either way.
+    """
+    return os.environ.get("RWE_POLL_STAGGER", "1").strip() not in ("0", "false", "no", "off")
+
+
 def _poll_workers() -> int:
     """Size of the bounded poll pool. **0 = one thread per adapter**, the pre-M6.3 model.
 
@@ -1965,11 +1998,24 @@ class MultiSourcePoller:
         self._threads = []
         workers = min(_poll_workers(), len(adapters)) if _poll_workers() else 0
         if workers > 0:
-            # Every source starts due NOW, matching thread-per-adapter's "polls immediately, then
-            # every its own interval". The pool then meters them; it does not delay the first pass.
+            # ── B6: THE COLD-START STAMPEDE ───────────────────────────────────────────────────
+            # Every source used to start due NOW, matching thread-per-adapter's "poll immediately,
+            # then every its own interval". At 13 adapters that is correct and free. At 50,000 it is
+            # a 50,000-poll burst on every restart, bounded only by the pool — measured by
+            # stress_50k.py, where it dominated every cohort window and made lock occupancy climb
+            # with cohort size even at a constant demanded poll rate.
+            #
+            # The first `workers` sources still start immediately: they are what the pool would pick
+            # up first anyway, so staggering them would delay the first ingest for no benefit. The
+            # REST spread evenly across one interval, which makes the cold start match the steady
+            # state instead of spiking far above it.
+            #
+            # EVEN, not random, despite the name this carries in the roadmap. Randomness would make
+            # every cohort run irreproducible for no gain — the goal is a smooth arrival rate, and
+            # an even spread is exactly that, deterministically.
             now = time.monotonic()
             with self._sched:
-                self._leases = [_Lease(adapter=a, due=now) for a in adapters]
+                self._leases = initial_leases(adapters, workers, now)
             for a in adapters:                              # parity with _run_adapter's own line, so
                 self._log(logging.INFO, "source_poll_start",   # an operator still sees each source
                           provider=a.provider, interval=a.interval())
