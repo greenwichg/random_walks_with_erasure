@@ -450,6 +450,76 @@ test built an `source_admission` row without any `feed_articles` rows behind it 
 candidate is ever in — so the guard could not fire and its absence was invisible. The new tests
 ingest the catalogue rows first.
 
+### 7.5c · The cohort sized on production, and why it should NOT be admitted as one
+
+Measured 2026-08-27 running `415bc7c`, no network request:
+
+```
+1,173 host(s), 1,173 with live rows          <- not one candidate is neutral
+  7,343 of  29,194 in the 6-day window       25.2%   would leave the STORY PARTITION
+ 39,119 of 150,110 in the catalogue          26.1%   would leave SEARCH and DISCOVER
+```
+
+Concentrated, and the concentration matters: **sportskeeda.com alone is 5,089 articles — 13.0% of
+the cohort's mass and 13.2% of its window mass.** The top ten are 17.1%; the remaining 1,163 hosts
+average 27.9 articles each. The cohort's recency profile (18.8% of its articles inside six days) is
+indistinguishable from the catalogue's (19.4%), so these are actively-publishing hosts, not an
+archive.
+
+#### What those 39,119 articles actually do in Tier A today
+
+This is the fact that decides the question, and it is already settled in the code.
+`story_service._votes` / `_distribution` count only members with a `leanBucket`, and **every one of
+these hosts is unrated by construction** — gate 7 is "not already tracked by the registry". So:
+
+| | in Tier A today |
+|---|---|
+| vote in the L/C/R distribution | **no** — "counting it as centre would fabricate a lean (L2.2)" |
+| set or move a blindspot claim | **no**, not directly — a blindspot is computed from the distribution |
+| appear as `coverage` / `publishers` / `totalCoverage` | **yes** — "Both are still real COVERAGE" |
+| help clusters form and grow (`MIN_SUPPORT`, link quorum) | **yes** |
+| count toward `_cluster_trust(total, …)` | **yes** — so removing them changes trust verdicts, and therefore which blindspots are *asserted* |
+
+So the thing that would justify shadowing them wholesale — *they are distorting our lean claims* —
+**is already handled**. What they contribute is coverage and cluster mass, both of which admission
+removes.
+
+#### The reframe: admission exists to start a CRAWL, not to reclassify a backlog
+
+The pipeline is discover → validate → **crawl** → shadow ingest → evaluate → promote. The point of
+admitting a source is to fetch it *properly* — a feed or news sitemap on a schedule — instead of the
+incidental handful that arrive via GDELT and aggregators. The shadow lane exists so that **new**
+crawled volume does not flood Tier A unevaluated.
+
+Moving the *pre-existing* 39,119 articles is a side effect of tier being an outlet-level,
+whole-history property. `corpus.py` chose that deliberately and gives the reason: "a demotion (A→B
+when an outlet turns out to be a syndicator) takes effect on the next build over the outlet's whole
+history, which is what a demotion should mean." Right for a demotion. Unintended for an admission.
+
+#### Recommendation
+
+**Do not admit the cohort.** Admit small tranches where the crawl is actually wanted, and measure
+each with `audit_source_cohort.py` — whose bar is already the right one, *"OTHER articles that LOST
+their story"* (`audit_source_cohort.py:394`), the articles stranded when a host whose links held a
+cluster together is removed.
+
+The sizing inverts the intuitive pick. **sportskeeda.com is the worst possible first admission**, not
+the best: it is the largest existing contributor in the cohort, so admitting it removes 967 in-window
+articles to gain a crawl of a source we already receive 5,089 articles from. `paloaltoonline.com` —
+127 articles, a real local newsroom — is the shape the long tail of a 50,000-source corpus is
+actually made of, and moving it costs 35 in-window articles.
+
+A useful default tranche rule: **rank candidates by (editorial value ÷ existing volume), not by
+volume.** The discovery report ranks by volume because volume is the evidence that a request is
+justified; it is the wrong order for deciding what to admit first.
+
+#### What this does not change
+
+M11 is still the right milestone and still built: without it there is no resumable campaign, no
+memory of a rejection, and no cross-process politeness. What the measurement changes is the *size of
+the first batch* — and that it now has to be a decision rather than a default, which is what
+`--accept-partition-change` makes it.
+
 ### 7.6 · Verification
 
 55 tests in `tests/test_source_admission.py`, and the two that carry the requirement are
