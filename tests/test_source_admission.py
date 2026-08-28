@@ -23,10 +23,11 @@ mutations, twenty-one caught:**
     the cohort share is dropped                     the catalogue is rescanned per host
     cohort impact counts hosts, not articles
 
-The last four are the partition guard, and they exist because the first 49 tests here **could not
-have caught its absence**: every one of them built an admission row with no `feed_articles` rows
-behind it — a state no real candidate is ever in, since discovery mines the crawl exhaust — so the
-guard had nothing to fire on. Vacuity by fixture, in the file whose docstring is about vacuity.
+The last seven are the partition guard and the cohort sizing, and they exist because the first 49
+tests here **could not have caught the guard's absence**: every one of them built an admission row
+with no `feed_articles` rows behind it — a state no real candidate is ever in, since discovery mines
+the crawl exhaust — so the guard had nothing to fire on. Vacuity by fixture, in the file whose
+docstring is about vacuity.
 
 The reproduction script is `mutate.py` in the session scratchpad; each entry is a one-line
 substitution against the anchor named in the left column.
