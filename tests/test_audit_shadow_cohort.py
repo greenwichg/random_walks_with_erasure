@@ -266,3 +266,71 @@ def test_as_if_still_matches_an_outlet_named_by_its_raw_publisher_string(tmp_pat
     m = asc.measure(st, reg, as_if={"coastal herald"})
     assert m["cohort"], "the raw publisher string no longer selects the outlet"
     assert m["unmatched"] == []
+
+
+def test_as_if_select_derives_the_same_cohort_the_selector_would_print(tmp_path):
+    """**The copy-paste step, removed.** Two production runs were spent on a placeholder
+    string that reached the shell verbatim in place of a 254-name list; both times the
+    unmatched-name guard refused to report. A guard firing twice on the same cause is an
+    argument for removing the cause, so the audit can derive the cohort itself.
+
+    Pinned as an EQUIVALENCE: the flag must select exactly what the selector prints, or the
+    two paths answer different questions and the printed command stops being a check on it."""
+    import select_asif_population as sel
+    import store as store_mod
+    import story_service
+
+    reg = outlet_registry.default_registry()
+    st = store_mod.Store(f"sqlite:///{tmp_path}/sel.db")
+    for pub, host, stem in [("Coastal Herald", "coastalherald.example", "Sea wall repairs"),
+                            ("theguardian.com", "theguardian.com", "Ferry service resumes")]:
+        _seed(st, pub, host, [f"{stem} at north quay {k}" for k in range(4)])
+
+    m = asc.measure(st, reg, as_if_share=0.9)
+    printed = sel.cohort_names(story_service._fetch(st), reg, share=0.9)
+
+    assert printed, "fixture must produce a non-empty cohort"
+    assert m["cohort"], "--as-if-select selected nothing the selector would have named"
+    assert m["unmatched"] == []
+    assert {(r.get("publisher") or "").strip().lower() for r in m["cohort"]} == printed
+
+
+def test_as_if_select_reads_the_corpus_once(monkeypatch, tmp_path):
+    """The selector needs the Tier A rows and so does `measure`. Fetching twice would double
+    the cost of the run and, worse, could select against a window that has since moved."""
+    import store as store_mod
+    import story_service
+
+    st = store_mod.Store(f"sqlite:///{tmp_path}/once.db")
+    _seed(st, "Coastal Herald", "coastalherald.example",
+          [f"Sea wall repairs at north quay {k}" for k in range(4)])
+
+    calls = []
+    real = story_service._fetch
+    monkeypatch.setattr(story_service, "_fetch", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    asc.measure(st, outlet_registry.default_registry(), as_if_share=0.9)
+    assert len(calls) == 1, f"the corpus was fetched {len(calls)} times"
+
+
+def test_naming_a_cohort_and_deriving_one_is_refused_rather_than_guessed(tmp_path):
+    """`--as-if` names the cohort and `--as-if-select` derives it. Silently letting one win
+    would mean the run's own header describes a cohort the reader did not ask for."""
+    import store as store_mod
+    st_path = f"sqlite:///{tmp_path}/both.db"
+    _seed(store_mod.Store(st_path), "Coastal Herald", "coastalherald.example",
+          [f"Sea wall repairs at north quay {k}" for k in range(4)])
+    assert asc.main(["--db", st_path, "--as-if", "coastal herald", "--as-if-select"]) == 2
+
+
+def test_the_share_flag_reaches_the_selector(tmp_path):
+    """A `--share` that is read but not applied would report a cap it never enforced."""
+    import store as store_mod
+    reg = outlet_registry.default_registry()
+    st = store_mod.Store(f"sqlite:///{tmp_path}/share.db")
+    _seed(st, "Coastal Herald", "coastalherald.example",
+          [f"Sea wall repairs at north quay {k}" for k in range(4)])
+    _seed(st, "theguardian.com", "theguardian.com",
+          [f"Ferry service resumes after dredging {k}" for k in range(4)])
+
+    assert asc.measure(st, reg, as_if_share=0.9)["cohort"], "a wide cap must admit something"
+    assert asc.measure(st, reg, as_if_share=0.01)["cohort"] == [], "a tiny cap must admit nothing"

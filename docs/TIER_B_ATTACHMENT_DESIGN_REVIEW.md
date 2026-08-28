@@ -299,12 +299,21 @@ lower-cased publisher strings** regardless, which match on a currently deployed 
 rebuilt one — so the experiment does not wait on a deploy.
 
 ```
-# 1. choose the cohort by rule (runs inside the image without being baked into it)
-dc run --rm -T api python - < examples/select_asif_population.py
-
-# 2. run the command it prints
-dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" --as-if "…"
+dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" --as-if-select
 ```
+
+**One command, because two cost two production runs** [F]. The first version printed the
+cohort for a human to paste into a second command, and both times the placeholder text in the
+instructions reached the shell verbatim — `<~20 legitimate low-volume Tier A outlets>`, then
+`<the list it printed>`. The unmatched-name guard caught both and refused to report, which is
+the guard working; a guard firing twice on the same cause is also the argument for removing
+the cause. `--as-if-select` calls the selector's `cohort_names()` on the rows the audit has
+already fetched, so the list never crosses a shell and the corpus is read once. Naming a
+cohort and deriving one are mutually exclusive — passing both is refused rather than resolved
+by precedence, since the run's own header would otherwise describe a cohort nobody asked for.
+
+`select_asif_population.py` remains runnable on its own; it is now the way to *inspect* the
+cohort and the exclusion census, not a step the experiment depends on.
 
 An empty selection refuses to print a command, because `--as-if ""` parses to an empty set and falls
 back to the **default shadow-lane run** — a different question whose output reads like an answer to
@@ -359,7 +368,34 @@ stories`. The un-perturbed baseline is **29,336 → 1,630 stories**. If the rebu
 5% cohort still prints ≈1,600, the perturbation is small and the attach rate is a clean read;
 if it prints materially fewer, the cohort is still too large and `--share` must come down.
 
-### 7.4 · What this cohort cannot tell us [A]
+### 7.4 · The baseline, and why it is a ceiling rather than a target [F]
+
+The run that caught the second placeholder still printed a full, unperturbed build on the
+current window:
+
+```
+Tier A built  : 29,481 articles -> 1,644 stories (6,999 covered)
+```
+
+Two things follow.
+
+**The perturbation control is now exact.** A rebuild minus a 5% cohort should land near 1,644
+stories. Materially fewer means the cohort is still too large and `--share` must come down
+before the attach rate can be read at all.
+
+**Only 23.7% of Tier A articles are in a story** (6,999 of 29,481). Three quarters of what we
+already ingest into Tier A joins nothing — which is worth holding next to §6.2's question
+about whether outlet count is the constraint.
+
+But 23.7% is **not** the number the cohort is trying to match. `would_attach` asks whether an
+article would join an **existing** story; it cannot measure *founding*. Two cohort outlets
+that would have started a story together score zero. That is correct for the Tier B contract —
+Tier B never participates in formation — but it means the Tier A participation rate is an
+**upper bound on what an ordinary outlet would score under this measurement**, not a target.
+A cohort rate materially below 23.7% is therefore not evidence of a worse outlet; only a rate
+near zero carries the falsifying weight, which is why §7 puts the decision there.
+
+### 7.5 · What this cohort cannot tell us [A]
 
 The syndication filter is load-bearing for §4's reason, and it also **suppresses the duplicate-title
 risk by construction**. A cohort selected to be below the ceiling will attach cleanly more often than

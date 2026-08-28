@@ -43,6 +43,13 @@ numbers; a guard is cheaper than a fourth.
     dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL"
     dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" \\
         --as-if "sportskeeda.com,newsbytesapp.com"
+    dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" --as-if-select
+
+``--as-if-select`` chooses the cohort by `select_asif_population.py`'s pre-registered rule
+instead of naming it. Prefer it: naming a large cohort means carrying a list of names between
+two commands, and that step cost two production runs to a placeholder string that reached the
+shell verbatim. The unmatched-name guard caught it both times, which is the guard working and
+also the argument for removing the step.
 """
 
 from __future__ import annotations
@@ -255,7 +262,7 @@ def _read_shadow(st, *, window_start, cap) -> list:
     return [r for r in rows if corpus.is_shadow(r.get("publisher"), r.get("url"))]
 
 
-def measure(st, reg, *, as_if=frozenset()) -> dict:
+def measure(st, reg, *, as_if=frozenset(), as_if_share=None) -> dict:
     """Every M8 measurement, as data rather than as printed output.
 
     Extracted so **M9 evaluates with M8's numbers instead of its own**. A lifecycle runner that
@@ -267,6 +274,20 @@ def measure(st, reg, *, as_if=frozenset()) -> dict:
     ``main`` prints from this dict and decides nothing the dict does not contain."""
     window_start = story_service._window_start()
     tier_a = story_service._fetch(st)
+
+    if as_if_share is not None:
+        # `--as-if-select`: derive the cohort here rather than making a human carry a
+        # 254-name list between two commands. That copy-paste step cost two production runs
+        # — both times a placeholder string reached the shell verbatim, and both times the
+        # unmatched-name guard below refused to report. A guard firing twice on the same
+        # cause is an argument for removing the cause.
+        #
+        # Imported inside the function because `select_asif_population` imports THIS module
+        # for its identity, host and syndication definitions; at module scope the two would
+        # be a cycle. The selector reuses the rows already fetched, so the corpus is read once.
+        import select_asif_population
+        as_if = select_asif_population.cohort_names(tier_a, reg, share=as_if_share)
+
     ents = story_service._entities_for(st, tier_a)
     verdicts_in, _band = story_service._event_inputs(st)
 
@@ -324,13 +345,27 @@ def main(argv=None) -> int:
     ap.add_argument("--as-if", default="",
                     help="comma-separated outlets to evaluate AS IF shadow; the Tier A story set "
                          "is rebuilt without them first")
+    ap.add_argument("--as-if-select", action="store_true",
+                    help="choose the --as-if cohort by select_asif_population's pre-registered "
+                         "rule instead of naming it — no list to copy between commands")
+    ap.add_argument("--share", type=float, default=None,
+                    help="with --as-if-select: cap the cohort at this share of Tier A "
+                         "(default: the selector's own MAX_COHORT_SHARE)")
     ap.add_argument("--show", type=int, default=30, help="outlets to list")
     args = ap.parse_args(argv)
 
     st = store_mod.Store(args.db)
     reg = outlet_registry.default_registry()
     as_if = {p.strip().lower() for p in args.as_if.split(",") if p.strip()}
-    m = measure(st, reg, as_if=as_if)
+    if args.as_if_select and as_if:
+        print("*** --as-if and --as-if-select are mutually exclusive: one names the cohort, "
+              "the other derives it. Refusing to guess which you meant.")
+        return 2
+    share = None
+    if args.as_if_select:
+        import select_asif_population
+        share = args.share if args.share is not None else select_asif_population.MAX_COHORT_SHARE
+    m = measure(st, reg, as_if=as_if, as_if_share=share)
     window_start, cohort, stories = m["windowStart"], m["cohort"], m["stories"]
     keep, unmatched, table = m["built"], m["unmatched"], m["table"]
 

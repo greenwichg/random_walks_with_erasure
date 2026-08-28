@@ -54,7 +54,15 @@ window — not the registry canonical. Two reasons, and the second is the load-b
   canonicals that carry capitals. Emitting raw strings means the command this script
   prints is correct against a **currently deployed** image as well as a rebuilt one.
 
-    dc run --rm -T api python - < examples/select_asif_population.py --db "$RWE_DB_URL"
+    dc run --rm -T api python examples/select_asif_population.py --db "$RWE_DB_URL"
+
+To run the experiment itself, prefer the one-command form — it calls :func:`cohort_names`
+directly, so the list never crosses a shell:
+
+    dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" --as-if-select
+
+This script is then the way to *inspect* the cohort and the exclusion census before or after
+that run, rather than a step the run depends on.
 """
 
 from __future__ import annotations
@@ -199,6 +207,21 @@ def subsample(picked: list, corpus_articles: int, share: float) -> list:
         taken.append(r)
         total += r["articles"]
     return sorted(taken, key=lambda r: r["key"])
+
+
+def cohort_names(tier_a: list, reg, *, share: float = MAX_COHORT_SHARE) -> set:
+    """The cohort as a set of ``--as-if`` names, from rows the caller already fetched.
+
+    **The seam that removes the copy-paste step.** Printing a 254-name list for a human to
+    paste into a second command is a step that can go wrong, and did: two production runs were
+    spent on a placeholder string that reached the shell verbatim. Both times the audit's
+    unmatched-name guard caught it and refused to report — but a guard firing twice on the
+    same cause is an argument for removing the cause. `audit_shadow_cohort --as-if-select`
+    calls this instead, so the names never leave the process.
+
+    Takes ``tier_a`` rather than a store so the corpus is fetched once, by the caller."""
+    return {s for r in subsample(eligible(profile(tier_a, reg)), len(tier_a), share)
+            for s in r["spellings"]}
 
 
 def main(argv=None) -> int:
