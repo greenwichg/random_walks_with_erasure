@@ -505,3 +505,89 @@ def test_compose_ships_the_per_tier_retention_ages_off():
         assert m.group(1).strip() == "0", (
             f"compose defaults {var} to {m.group(1)!r}; the shipped state is 0 (off), and a "
             f"non-zero default would delete catalog rows on the next deploy without anyone asking")
+
+
+#: Clustering flags that must NOT reach the container. Each was measured against the live
+#: catalogue and REJECTED, and survives only as an instrument for `audit_clustering_change.py`.
+#: The value is the measurement, so removing a name from here requires naming the one that
+#: overturned it.
+AUDIT_ONLY_CLUSTER_FLAGS = {
+    "RWE_CLUSTER_HYPHEN_COMPOUNDS":
+        "rejected 2026-08-24: 121 clusters split, 28 merged, 162 articles dropped (2.6% of "
+        "covered), story count FELL 1,516 -> 1,511",
+    "RWE_CLUSTER_DERIVED_BOILERPLATE":
+        "rejected 2026-08-25: the corpus-derived generalisation of the manual lexicons",
+}
+
+
+def test_every_clustering_env_var_the_code_reads_is_passed_into_the_container():
+    """The email guard above, generalised to the flags that decide what a story IS.
+
+    `RWE_CLUSTER_UNICODE_WORDS` shipped with an env reader, a `"fallback"` mode, a measurement
+    flag on `audit_clustering_change.py`, 60 tests -- and no line in docker-compose.yml. The
+    audit ran on the live catalogue and printed ADOPT; setting the variable in deploy/.env
+    would then have changed nothing, and the null result would have read as "the fallback is
+    on and does not help" rather than "the fallback never reached the process". That is worse
+    than the flag not existing: it manufactures a confident wrong answer.
+
+    docker-compose.yml's own comments say this omission has shipped four times. The email
+    version of this test was written for one family of names; clustering flags decide the
+    partition every story is built from, so they earn the same boundary check. Derived from
+    the source, because a hand-maintained list is the same failure one level up."""
+    import ast
+    read: set[str] = set()
+    for mod in ("clustering.py", "story_service.py", "corpus.py"):
+        tree = ast.parse((ROOT / "examples" / mod).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+               and node.func.attr in {"get", "getenv"} and node.args \
+               and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                read.add(node.args[0].value)
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+               and isinstance(node.slice.value, str):
+                read.add(node.slice.value)
+    wanted = {n for n in read if n.startswith(("RWE_CLUSTER_", "RWE_STORY_", "RWE_CORPUS_"))}
+    assert wanted, "found no clustering env vars in the source — the AST walk is broken"
+
+    compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    # Forwarding one of these would make a REJECTED behaviour reachable in production by editing
+    # deploy/.env, which is the opposite of the defect this test guards. Both docstrings say so in
+    # the same words: "the flag survives as the audit's instrument only".
+    #
+    # The asymmetry is deliberate and is what keeps this list from becoming the hand-maintained
+    # list the email version warns about: a NEW flag defaults to "must be forwarded", and
+    # excluding one is an explicit edit that has to name the measurement that rejected it.
+    missing = sorted(n for n in wanted - set(AUDIT_ONLY_CLUSTER_FLAGS)
+                     if f"\n      {n}:" not in compose)
+
+    leaked = sorted(n for n in AUDIT_ONLY_CLUSTER_FLAGS if f"\n      {n}:" in compose)
+    assert not leaked, (
+        f"forwarded into the container despite being rejected instruments: {leaked}\n"
+        "Either remove the compose line, or remove the name from AUDIT_ONLY_CLUSTER_FLAGS with "
+        "the measurement that changed the verdict.")
+    assert not missing, (
+        "read from the environment by the clustering/story modules but never forwarded by "
+        f"deploy/docker-compose.yml: {missing}\n"
+        "Add `NAME: ${NAME:-}` to the api service's environment block. Without it the value sits "
+        "in deploy/.env looking correct, the process never sees it, and the resulting null "
+        "result reads as a measurement.")
+
+
+def test_the_measured_unicode_fallback_is_available_and_defaults_off():
+    """Both halves. The flag must be reachable — `--unicode-fallback` measured ADOPT on the live
+    catalogue (79 structurally-excluded articles reached a story, 0 lost, 0 splits, 0 merges) —
+    and it must stay OFF until someone turns it on deliberately, because the sibling value
+    `1`/`true` is the REPLACE mode that was measured and rejected at 78 rescued for 149 lost."""
+    compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-}" in compose, \
+        "the flag must be forwarded with an EMPTY default — off, but switchable without a deploy"
+
+    import story_service
+    import os
+    for value, expected in (("", False), ("fallback", "fallback"), ("1", True), ("true", True)):
+        os.environ["RWE_CLUSTER_UNICODE_WORDS"] = value
+        try:
+            assert story_service.unicode_words() == expected, f"{value!r} -> {expected!r}"
+        finally:
+            os.environ.pop("RWE_CLUSTER_UNICODE_WORDS", None)
+    assert story_service.unicode_words() is False, "unset must be off"

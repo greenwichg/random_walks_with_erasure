@@ -401,6 +401,26 @@ services:
       RWE_CLUSTER_MIN_SHARED: ${RWE_CLUSTER_MIN_SHARED:-3}
       RWE_CLUSTER_MIN_TOKENS: ${RWE_CLUSTER_MIN_TOKENS:-3}
       RWE_CLUSTER_IDF: ${RWE_CLUSTER_IDF:-0}
+      # Unicode word segmentation for headline tokens. `title_tokens` matches [a-z0-9]+, which
+      # yields ZERO tokens for Korean, Arabic, Chinese, Japanese, Russian, Tamil and Hindi — and
+      # `pair_admits` rejects anything under MIN_TOKENS before any other test, so those articles
+      # cannot join a story under any configuration. Measured on the live catalogue: 2,641 of
+      # 29,511 window articles (9%) are excluded this way, and they held 0 in-story articles.
+      #
+      #   fallback  take the Unicode path ONLY when ASCII yields fewer than MIN_TOKENS. Cannot
+      #             disturb a headline that already tokenizes, and the run confirms it: reachable
+      #             articles moved 0 in and 0 out, while 79 structurally-excluded ones reached a
+      #             story. 0 splits, 0 merges, blindspot 220 -> 220, exhibits unchanged. ADOPT.
+      #   1/true    REPLACE the tokenizer everywhere. MEASURED AND REJECTED — rescued 78 but cost
+      #             149 already-working articles, and took Vietnamese from 32 in-story to 0.
+      #   unset     off, the shipped behaviour.
+      #
+      # Listed here even while defaulting to off, and that is exactly the point: `environment:` is
+      # an explicit allowlist with no `env_file:`, so a variable absent from this block never
+      # reaches the container whatever deploy/.env says. This omission has now shipped FIVE times
+      # in this series; `test_every_clustering_env_var_the_code_reads_is_passed_into_the_container`
+      # is the generalised guard added with this line.
+      RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-}
       # Cluster trust (docs/CLUSTER_TRUST.md). geoCoherence is the one signal independent of the
       # clusterer, so it gates the blindspot claim and demotes suspect clusters out of the default
       # ranking — single-linkage chaining accumulates publishers, which means a false merge's
