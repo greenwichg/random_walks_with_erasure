@@ -1009,9 +1009,11 @@ def _event_identity_closure(arts: list, cap: int, hyphen: bool, verdicts: dict,
 
 
 def unicode_words() -> bool:
-    r"""Candidate tokenizer replacement — **NOT measured against the live catalogue yet. Do not turn
-    this on.** (``RWE_CLUSTER_UNICODE_WORDS``; the audit's instrument, exactly as
-    :func:`hyphen_compounds` is.)
+    r"""Unicode word segmentation for headline tokens (``RWE_CLUSTER_UNICODE_WORDS``).
+
+    **Two modes with opposite verdicts, so read the mode before the name.** ``fallback`` was
+    measured on the live catalogue 2026-08-28, ADOPTED, and is **ON in production**. ``True``
+    (replace) was measured 2026-08-27 and is **REJECTED** — do not turn that one on.
 
     The defect, measured 2026-08-27 and not in dispute: `clustering.title_tokens` matches
     ``[a-z0-9]+``, which yields **zero tokens** for Korean, Arabic, Chinese, Japanese, Russian,
@@ -1043,14 +1045,29 @@ def unicode_words() -> bool:
     not give it a Korean peer to cluster WITH: the binding constraint on international stories is
     corpus density per language, not only the tokenizer.
 
-    ``fallback`` is the variant the measurement indicates: take the Unicode path only when the ASCII
-    tokenizer yields fewer than ``MIN_TITLE_TOKENS``. An article that already clusters keeps its
-    exact token set, so the 149-article cost is **zero by construction**, and the excluded population
-    gets the same tokens it got under replace. Not yet measured against the live catalogue.
+    ``fallback`` takes the Unicode path only when the ASCII tokenizer yields fewer than
+    ``MIN_TITLE_TOKENS``. An article that already clusters keeps its exact token set, so the
+    149-article cost is **zero by construction** — and the live run confirmed it rather than
+    assuming it:
 
-    Off until ``audit_clustering_change.py --unicode-fallback`` has run against the live catalogue.
-    This function decides the story partition for the whole product, and the LAST tokenizer
-    candidate measured worse than the disease — see :func:`hyphen_compounds`."""
+        79 structurally-excluded articles reached a story,  0 lost
+        reachable population 7,019 -> 7,019 covered         (0 in, 0 out)
+        0 clusters split, 0 merged, blindspot 220 -> 220, both in-window exhibits unchanged
+        ar 0 -> 9,  ja 1 -> 13,  ko 0 -> 4,  ru 0 -> 2
+
+    **Live in production since 2026-08-28**, confirmed by re-running the audit afterwards: the
+    baseline arm now reports the excluded population at 79 covered rather than 0, and applying
+    the flag again buys nothing (``THE BENEFIT IS ZERO``, which is what a confirmed adoption
+    looks like from this instrument).
+
+    What it did NOT fix: 79 of 2,653 excluded articles is 3.0% reach. Giving a Korean headline
+    tokens does not give it a Korean peer to cluster WITH, and the other 97% still join nothing.
+    The binding constraint on international stories is corpus density per language; the tokenizer
+    was blocking the mechanism underneath it. M14's density question becomes askable now, not
+    answered.
+
+    This function decides the story partition for the whole product, and a tokenizer candidate has
+    already measured worse than the disease once — see :func:`hyphen_compounds`."""
     v = os.environ.get("RWE_CLUSTER_UNICODE_WORDS", "").strip().lower()
     if v == "fallback":
         return "fallback"

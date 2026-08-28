@@ -525,7 +525,36 @@ rescued against 149 lost). Fallback is the milder variant and may fail the same 
 is the cheapest open question on this path, and unlike Tier B attachment it cannot be answered
 by argument.
 
-### 7.8 · What this cohort cannot tell us [A]
+### 7.8 · The tokenizer fix is live [F]
+
+`--unicode-fallback` ran on the live catalogue and was **ADOPTED**:
+
+```
+  population    articles  covered before    after  dropped   newly
+  reachable       26,870           7,019    7,019        0       0
+  excluded         2,641               0       79        0      79
+```
+
+79 structurally-excluded articles reached a story against **0 lost** — 0 splits, 0 merges,
+blindspot 220 → 220, exhibits unchanged, independent signal identical. The reachable row is the
+guard that matters and it moved nothing. Compare `--unicode-words` (replace), rejected at 78
+rescued for 149 lost.
+
+**Enabled in production 2026-08-28** (`RWE_CLUSTER_UNICODE_WORDS=fallback`), and confirmed by
+two checks that answer different questions:
+
+* `story_service.unicode_words()` prints `fallback` — the **process** sees the variable;
+* re-running the audit shows the baseline arm at **1,686 stories** with the excluded population
+  already at **79 covered** rather than 0, and applying the flag again buys nothing — the
+  **builder** uses it. The instrument reports this as `*** THE BENEFIT IS ZERO`, which is what a
+  confirmed adoption looks like from a before/after tool, not a failure.
+
+Two things this did **not** settle. 79 of 2,653 excluded articles is **3.0% reach**: the other
+97% still join nothing, because giving a Korean headline tokens does not give it a Korean peer.
+And the whole gain is 79 articles against a 29,611-article window. The tokenizer was blocking
+the mechanism; **M14's density question is now askable, not answered.**
+
+### 7.9 · What this cohort cannot tell us [A]
 
 The syndication filter is load-bearing for §4's reason, and it also **suppresses the duplicate-title
 risk by construction**. A cohort selected to be below the ceiling will attach cleanly more often than
