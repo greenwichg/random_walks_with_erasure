@@ -275,7 +275,13 @@ def measure(st, reg, *, as_if=frozenset()) -> dict:
         # prefilter, for the reason `audit_source_cohort` gives: the cap is not binding, so the two
         # are equivalent for the build, and this keeps the audit off the query path entirely.
         def _names(r):
-            return {_identity(reg, r), (r.get("publisher") or "").strip().lower()}
+            # Both spellings LOWER-CASED, because `main` lower-cases what the caller typed.
+            # 571 of the registry's 573 canonicals carry capitals ("BBC", "The Guardian"), so
+            # comparing the raw canonical against a folded input meant the canonical branch could
+            # never match — while the script's own unmatched-name message tells the reader to pass
+            # exactly that. An outlet was then reachable only by its raw publisher string, and
+            # naming it the documented way reported it as absent from the catalog.
+            return {_identity(reg, r).lower(), (r.get("publisher") or "").strip().lower()}
         cohort = [r for r in tier_a if _names(r) & as_if]
         keep = [r for r in tier_a if not (_names(r) & as_if)]
         # Which of the names given actually matched. A name that matched nothing is a typo or an
@@ -344,8 +350,8 @@ def main(argv=None) -> int:
                 print(f"    {name:<30} IN THE CATALOG since {ever[name]} — published nothing in "
                       f"this window")
             else:
-                print(f"    {name:<30} NOT IN THE CATALOG under this exact string — the name is "
-                      f"wrong, or it resolves to a registry canonical")
+                print(f"    {name:<30} NOT IN THE CATALOG — the name is wrong. Either spelling "
+                      f"works: the raw publisher string, or its registry canonical")
         print("    Everything below describes ONLY the outlets that matched.")
 
     if not cohort:

@@ -216,3 +216,53 @@ def test_the_runner_reports_assignment_but_never_branches_on_it(field):
         stripped = line.strip()
         if field in stripped and stripped.startswith(("if ", "elif ", "assert ")):
             pytest.fail(f"runner branches on {field}: {stripped}")
+
+
+def _seed(st, publisher, host, titles, when=NOW):
+    for i, t in enumerate(titles):
+        st.upsert_feed_article(canonical_url=f"{host}/a{i}", url=f"https://{host}/a{i}?utm=x",
+                               publisher=publisher, source_publisher=None, title=t,
+                               description="", body=None, published_at=when.isoformat(),
+                               source_feed="f", scored={})
+
+
+def test_as_if_matches_an_outlet_named_by_its_registry_canonical(tmp_path):
+    """**The trap the unmatched-name message walked the reader into.** `main` lower-cases what the
+    caller typed; `_identity` returns the registry canonical unmodified, and 571 of the registry's
+    573 canonicals carry capitals. So the canonical branch of the comparison could never fire, and
+    naming an outlet the documented way ("or it resolves to a registry canonical") reported it as
+    NOT IN THE CATALOG — a wrong name and an unmatchable one are indistinguishable in that output.
+
+    The outlet is seeded under a raw string that is NOT its canonical, so only the canonical branch
+    can select it. Revert the `.lower()` in `_names` and this fails with an empty cohort."""
+    import store as store_mod
+    import story_service
+
+    reg = outlet_registry.default_registry()
+    resolved = reg.resolve("theguardian.com")
+    assert resolved is not None and resolved.canonical != "theguardian.com", \
+        "fixture needs a tracked outlet whose canonical differs from the raw string"
+
+    st = store_mod.Store(f"sqlite:///{tmp_path}/asif.db")
+    _seed(st, "theguardian.com", "theguardian.com",
+          [f"Ferry service resumes after harbour dredging {k}" for k in range(3)],
+          when=story_service._now() if hasattr(story_service, "_now") else NOW)
+
+    m = asc.measure(st, reg, as_if={resolved.canonical.lower()})
+    assert m["cohort"], "naming the outlet by its registry canonical selected nothing"
+    assert m["unmatched"] == [], f"canonical reported as unmatched: {m['unmatched']}"
+    assert all(r.get("publisher") == "theguardian.com" for r in m["cohort"])
+
+
+def test_as_if_still_matches_an_outlet_named_by_its_raw_publisher_string(tmp_path):
+    """The path that did work must keep working — the fix widens matching, it does not move it."""
+    import store as store_mod
+
+    reg = outlet_registry.default_registry()
+    st = store_mod.Store(f"sqlite:///{tmp_path}/asif_raw.db")
+    _seed(st, "Coastal Herald", "coastalherald.example",
+          [f"Sea wall repairs begin at north quay {k}" for k in range(3)])
+
+    m = asc.measure(st, reg, as_if={"coastal herald"})
+    assert m["cohort"], "the raw publisher string no longer selects the outlet"
+    assert m["unmatched"] == []

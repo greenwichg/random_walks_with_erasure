@@ -258,13 +258,69 @@ That is precisely the Tier B counterfactual: remove outlets from the build, rebu
 *"no cohort member may appear in the story set it is scored against"* — which is the trap this
 experiment could most easily fall into.
 
-**[X] The experiment.** Pick ~20 *legitimate, low-volume* Tier A outlets — the §4 proxy for the real
-Tier B population, **not** the 8 syndicators — and run:
+**[X] The experiment.** Pick the *legitimate, low-volume* Tier A outlets — the §4 proxy for the real
+Tier B population, **not** the 8 syndicators — and run the audit against them.
+
+### 7.1 · The cohort must not be chosen by hand
+
+The first draft of this section said "pick ~20 outlets", which is the experiment's weak point rather
+than a detail of it. A population selected after looking at the data can be selected to produce a
+result, and nothing in the audit's output would show that it had been. So the rule is pre-registered
+in `examples/select_asif_population.py` and the selection is a run, not a judgement:
+
+| filter | why |
+|---|---|
+| `3 <= articles <= 20` in the window | enough rows for a non-degenerate rate; few enough that removing the outlet cannot reshape the story set it is then scored against |
+| `syndication < SYNDICATION_CEILING` | the republisher filter — §4's whole finding, at the policy module's own constant |
+| `hostStability >= 90%` | `source_evaluation`'s other demotion cause |
+| top host looks like a domain | kills feed-title artifacts without filtering on registry membership |
+
+Registry-tracked is deliberately **not** a filter. Requiring it would bias the cohort toward majors
+having a quiet week — the opposite of the low-volume tail being modelled — so tracked/untracked is
+reported as a split, and a difference between the two strata becomes a finding instead of a hidden
+selection. Eligible outlets are ordered by **name**, an ordering that cannot correlate with the
+outcome the way volume can.
+
+### 7.2 · A matching defect found while building the selector [F]
+
+`measure` lower-cases the names the caller types, but `_identity` returns the registry canonical
+unmodified — and **571 of the registry's 573 canonicals carry capitals** (`BBC`, `The Guardian`,
+`Associated Press`). The canonical branch of the comparison therefore could never fire. An outlet was
+reachable only by its raw publisher string, while the script's own unmatched-name message told the
+reader the opposite:
+
+> `NOT IN THE CATALOG under this exact string — the name is wrong, **or it resolves to a registry
+> canonical**`
+
+So naming an outlet the documented way reported it as absent from the catalogue, and a wrong name
+and an unmatchable one were indistinguishable in the output. Fixed by folding both spellings, with
+the message corrected and a test that fails on the un-folded comparison. The selector emits **raw
+lower-cased publisher strings** regardless, which match on a currently deployed image as well as a
+rebuilt one — so the experiment does not wait on a deploy.
 
 ```
-dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" \
-    --as-if "<20 legitimate low-volume outlets>"
+# 1. choose the cohort by rule (runs inside the image without being baked into it)
+dc run --rm -T api python - < examples/select_asif_population.py
+
+# 2. run the command it prints
+dc run --rm -T api python examples/audit_shadow_cohort.py --db "$RWE_DB_URL" --as-if "…"
 ```
+
+An empty selection refuses to print a command, because `--as-if ""` parses to an empty set and falls
+back to the **default shadow-lane run** — a different question whose output reads like an answer to
+this one.
+
+### 7.3 · What this cohort cannot tell us [A]
+
+The syndication filter is load-bearing for §4's reason, and it also **suppresses the duplicate-title
+risk by construction**. A cohort selected to be below the ceiling will attach cleanly more often than
+a genuine 50k tail would, so the duplicate-title rate this run reports is a *floor*, not an estimate.
+Read it as "even the clean case double-counts this much", never as the rate to expect at scale.
+
+The falsification direction survives intact — a near-zero attach rate on the *most favourable*
+population available is decisive against Tier B. A high attach rate is correspondingly weaker
+evidence for it, and the honest follow-up is a second run with the syndication filter relaxed, read
+against the first.
 
 Read three numbers:
 
@@ -299,3 +355,5 @@ invalidate the whole direction.
 | Tier B attachment is the first binding milestone | **holds among measured constraints**, but aggregator headroom is unmeasured and sits upstream |
 | attachment cost is linear | **[A]** — the shape supports it; never timed |
 | a story with attached Tier B coverage is still the product | **[R]** — unanswered, and it is a product decision, not a measurement |
+| "pick ~20 outlets" for the experiment | **too loose.** A hand-picked cohort can be picked to produce a result; §7.1 replaces it with a pre-registered rule |
+| `--as-if` accepts the registry canonical | **was false** — the case fold made it unmatchable for 571 of 573 outlets. Fixed in this commit |
