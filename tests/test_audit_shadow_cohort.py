@@ -421,3 +421,42 @@ def test_the_population_block_is_printed(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "the cohort as a POPULATION" in out
     assert "would attach" in out and "duplicate titles" in out
+
+
+def test_articles_the_tokenizer_cannot_reach_are_split_out_of_the_rate():
+    """**A zero that was never tested, reported as a zero that was.** `se.would_attach`
+    returns None whenever a title yields fewer than `MIN_TITLE_TOKENS` tokens, and the shipped
+    tokenizer is ASCII — a CJK, Arabic, Korean or Thai headline produces nearly none. The
+    first production run's cohort carried 東森新聞, عدن الغد, youm7.com, 뉴시스 and 日テレnews nnn,
+    all of which scored zero BEFORE the pair rule ran. Counting them in the denominator makes
+    the population rate a floor and reads as evidence about Tier B when it is evidence about
+    the tokenizer."""
+    index = se.assignment_index([_story("s1", HEAD_A)])
+    cohort = [_row("Outlet One", "one.example", HEAD_A),                    # reachable, lands
+              _row("Outlet One", "one.example", "Council extends library hours downtown"),
+              _row("東森新聞", "ebc.example", "台北市長宣布新政策"),          # 0 tokens
+              _row("عدن الغد", "adenghad.example", "الحكومة تعلن خطة جديدة")]  # 0 tokens
+
+    whole = asc.cohort_assignment(cohort, index, asc.carrier_index(cohort))
+    assert whole["articles"] == 4 and whole["reachable"] == 2, \
+        "the unspaced-script rows must not count as reachable"
+    assert whole["attached"] == 1
+    assert whole["rate"] == 0.25, "the floor is over every article"
+    assert whole["reachableRate"] == 0.5, "the measurement is over the ones that could match"
+
+
+def test_the_reachable_split_is_printed_beside_the_floor(tmp_path, capsys):
+    """Both numbers, or a reader takes the floor for the measurement — which is exactly what
+    happened when only one was on screen."""
+    import store as store_mod
+    st_path = f"sqlite:///{tmp_path}/reach.db"
+    st = store_mod.Store(st_path)
+    _seed(st, "Coastal Herald", "coastalherald.example",
+          [f"Sea wall repairs begin at north quay {k}" for k in range(4)])
+    _seed(st, "theguardian.com", "theguardian.com",
+          [f"Ferry service resumes after dredging {k}" for k in range(4)])
+
+    asc.main(["--db", st_path, "--as-if-select", "--share", "0.9"])
+    out = capsys.readouterr().out
+    assert "of REACHABLE" in out
+    assert "score zero BEFORE anything is tested" in out

@@ -153,8 +153,20 @@ def cohort_assignment(cohort: list, index: tuple, carriers: dict) -> dict:
 
     ``duplicateTitles`` is the §5 acceptance criterion that separates a real coverage gain
     from restored double-counting: of the articles that DID attach, how many carry a headline
-    another publisher already ran. A high rate means Tier B bought syndication, not breadth."""
+    another publisher already ran. A high rate means Tier B bought syndication, not breadth.
+
+    ``reachable`` is the denominator that keeps the rate honest, and it is why the first
+    reported figure was a floor rather than a measurement. ``se.would_attach`` returns
+    ``None`` whenever a title yields fewer than ``clustering.MIN_TITLE_TOKENS`` tokens, and
+    the SHIPPED tokenizer is ASCII: a headline in Chinese, Japanese, Korean, Arabic, Thai or
+    any unspaced script produces nearly none. Those articles score zero BEFORE anything is
+    tested. Counting them in the denominator reports "was tested and did not match" for an
+    article that could never have matched — the same shape as a gate that cannot fire, read
+    as a gate that passed. `audit_clustering_change._reach` splits its benefit the same way
+    and for the same reason."""
     agg = se.assignment_rate(cohort, index)
+    reach = [r for r in cohort
+             if len(clustering.title_tokens(r.get("title") or "")) >= clustering.MIN_TITLE_TOKENS]
     landed = [r for r in cohort
               if se.would_attach(r.get("title"), r.get("publishedAt"), index)]
     dup = sum(1 for r in landed
@@ -162,7 +174,9 @@ def cohort_assignment(cohort: list, index: tuple, carriers: dict) -> dict:
     return {**agg,
             "duplicateTitles": dup,
             "duplicateRate": round(dup / max(1, len(landed)), 4),
-            "publishers": len({(r.get("publisher") or "").strip().lower() for r in landed})}
+            "publishers": len({(r.get("publisher") or "").strip().lower() for r in landed}),
+            "reachable": len(reach),
+            "reachableRate": round(len(landed) / max(1, len(reach)), 4)}
 
 
 def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
@@ -455,8 +469,14 @@ def main(argv=None) -> int:
     if w:
         touched = sum(1 for v in table.values() if v["attached"])
         print(f"\n=== the cohort as a POPULATION (not the per-outlet table below) ===")
+        unreachable = w["articles"] - w["reachable"]
         print(f"  would attach   : {w['attached']:,} of {w['articles']:,} articles "
               f"({w['rate']:.1%})")
+        print(f"  ... of REACHABLE: {w['attached']:,} of {w['reachable']:,} "
+              f"({w['reachableRate']:.1%}) — {unreachable:,} articles yield fewer than "
+              f"{clustering.MIN_TITLE_TOKENS} tokens under the shipped ASCII tokenizer and "
+              f"score zero BEFORE anything is tested. The first rate is a floor; this one is "
+              f"the measurement.")
         print(f"  distinct stories: {w['stories']:,}   "
               f"outlets landing at least one: {touched:,} of {len(table):,}")
         print(f"  publishers added: {w['publishers']:,}")

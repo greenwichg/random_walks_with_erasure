@@ -428,7 +428,52 @@ per-outlet table, using the same `se.would_attach` the table uses so there is no
 definition of "attaches". The 3.8%/5.0% control above stands and the run is re-runnable; only
 the reporting was missing, so nothing measured has to be discarded.
 
-### 7.6 · What this cohort cannot tell us [A]
+### 7.6 · The result [F]
+
+```
+Tier A built  : 27,999 articles -> 1,582 stories (6,735 covered)
+cohort        : 1,472 articles across 254 outlets
+
+would attach   : 120 of 1,472 articles (8.2%)
+distinct stories: 95   outlets landing at least one: 67 of 254
+publishers added: 67
+duplicate titles: 19 of 120 attached (15.8%)
+```
+
+**The control reproduced exactly**: 1,582 stories on both runs against a 1,644 baseline — a
+3.8% story loss for a 5.0% article cut, and the same figure twice, so the cohort really is
+deterministic. Nothing about the corpus was mangled to get this number.
+
+**Against the pre-registered bars:**
+
+| criterion | bar | result | verdict |
+|---|---|---|---|
+| attach rate | near 0 falsifies | 8.2% | **not falsified** |
+| stories touched | ≈1 per outlet = feeding one running story | 95 stories from 67 outlets, 1.26 articles per touched story | **broad, not concentrated** |
+| duplicate titles | high = restored double-counting | 15.8%, well under the 35% ceiling | **mostly real coverage** |
+
+So Tier B attachment is **not falsified**, and the coverage it would add is mostly genuine
+rather than syndication returning by the back door.
+
+**But the rate is a floor, not a measurement**, and the reason is a defect this run exposed in
+the instrument. `would_attach` returns `None` when a title yields fewer than `MIN_TITLE_TOKENS`
+tokens, and the shipped tokenizer is ASCII. The cohort carries 東森新聞 (18 articles), عدن الغد
+(19), youm7.com (15), al bayan (13), alyaum (13), 뉴시스, 日テレnews nnn and more. **Every one of
+those articles scores zero before the pair rule runs.** Counting them in the denominator
+reports "tested and did not match" for an article that could never have matched — a gate that
+cannot fire, read as a gate that passed, which is the failure this series keeps correcting.
+`cohort_assignment` now reports the rate over reachable articles beside the floor, so the
+re-run separates evidence about Tier B from evidence about the tokenizer.
+
+**The reading that matters for the roadmap, and it cuts against Tier B.** 92% of tail articles
+and **187 of 254 outlets (74%) contribute nothing to any story** even with attachment built.
+For three quarters of the tail, Tier B is search-only. Attachment adds ~1.26 articles to 95 of
+1,582 stories — **6.0% of the story set gains one more source**. Whether that is worth building
+is a product judgement, not a measurement, and this document should not pretend otherwise. The
+experiment did what it was for: it removed the possibility that the answer was zero, and it
+bounded the upside at something modest.
+
+### 7.7 · What this cohort cannot tell us [A]
 
 The syndication filter is load-bearing for §4's reason, and it also **suppresses the duplicate-title
 risk by construction**. A cohort selected to be below the ceiling will attach cleanly more often than
@@ -476,3 +521,5 @@ invalidate the whole direction.
 | "pick ~20 outlets" for the experiment | **too loose.** A hand-picked cohort can be picked to produce a result; §7.1 replaces it with a pre-registered rule |
 | `--as-if` accepts the registry canonical | **was false** — the case fold made it unmatchable for 571 of 573 outlets. Fixed in this commit |
 | "the duplicate-title rate is the only piece not already reported" (§7) | **wrong.** The cohort-wide attach rate, the story union and the publisher count were absent too. One reading of `main` would have caught it before a production run |
+| the attach rate is a measurement | **it was a floor.** Unspaced-script titles score zero before the pair rule runs, and I designed a multilingual cohort without checking that the tokenizer could reach it — after spending M14 on exactly this tokenizer |
+| Tier B attachment is the first binding milestone (§6) | **weaker than stated.** It is not falsified, but 74% of tail outlets contribute nothing to stories even with it, so the milestone buys search coverage plus one extra source on 6% of stories |
