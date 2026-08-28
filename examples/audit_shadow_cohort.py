@@ -137,6 +137,34 @@ def identity_first_seen(st, reg, identities) -> tuple:
     return first, counts
 
 
+def cohort_assignment(cohort: list, index: tuple, carriers: dict) -> dict:
+    """Assignment over the WHOLE cohort, which the per-outlet table cannot be summed into.
+
+    **The number the Tier B experiment exists to produce, and the one this runner did not
+    print.** The table answers "is this outlet worth carrying" and is truncated to ``--show``
+    rows, so a 254-outlet cohort showed 30 of them and the population-level rate had to be
+    bounded by hand — 83 attachments visible out of somewhere between 83 and 307. That is too
+    wide to decide anything on.
+
+    Summing the table would not fix it either: ``assignmentStories`` is distinct *per outlet*,
+    so adding the column double-counts every story two cohort outlets both touch.
+    ``se.assignment_rate`` over the whole cohort takes the union, and ``se.would_attach`` here
+    is the same function it calls — there is no second definition of "would attach".
+
+    ``duplicateTitles`` is the §5 acceptance criterion that separates a real coverage gain
+    from restored double-counting: of the articles that DID attach, how many carry a headline
+    another publisher already ran. A high rate means Tier B bought syndication, not breadth."""
+    agg = se.assignment_rate(cohort, index)
+    landed = [r for r in cohort
+              if se.would_attach(r.get("title"), r.get("publishedAt"), index)]
+    dup = sum(1 for r in landed
+              if (t := clustering.title_tokens(r.get("title") or "")) and len(carriers[t]) > 1)
+    return {**agg,
+            "duplicateTitles": dup,
+            "duplicateRate": round(dup / max(1, len(landed)), 4),
+            "publishers": len({(r.get("publisher") or "").strip().lower() for r in landed})}
+
+
 def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
                  first_seen: "dict | None" = None,
                  catalog_articles: "dict | None" = None) -> dict:
@@ -325,18 +353,20 @@ def measure(st, reg, *, as_if=frozenset(), as_if_share=None) -> dict:
     # The self-scoring guard runs before anything is computed FROM the index, so a caller cannot
     # read a rate that was ~100% by construction. `main` refuses to report on it; M9 refuses to act.
     mine = self_scored(cohort, stories)
-    table, first_seen, catalog_articles = {}, {}, {}
+    table, first_seen, catalog_articles, whole = {}, {}, {}, {}
     if cohort and not mine:
         identities = {_identity(reg, r) for r in cohort}
         first_seen, catalog_articles = identity_first_seen(st, reg, identities)
-        table = outlet_stats(cohort, reg, carrier_index(peers, cohort),
-                             se.assignment_index(stories),
+        carriers = carrier_index(peers, cohort)
+        index = se.assignment_index(stories)
+        table = outlet_stats(cohort, reg, carriers, index,
                              first_seen=first_seen, catalog_articles=catalog_articles)
+        whole = cohort_assignment(cohort, index, carriers)
     return {"windowStart": window_start, "mode": mode, "tierA": tier_a, "built": keep,
             "stories": stories, "cohort": cohort, "unmatched": unmatched,
             "unmatchedEver": st.publisher_first_seen(set(unmatched)) if unmatched else {},
             "selfScored": mine, "table": table, "firstSeen": first_seen,
-            "catalogArticles": catalog_articles, "asIf": bool(as_if)}
+            "catalogArticles": catalog_articles, "asIf": bool(as_if), "whole": whole}
 
 
 def main(argv=None) -> int:
@@ -416,6 +446,23 @@ def main(argv=None) -> int:
           f"tracked {sum(1 for v in table.values() if v['tracked']):,}   "
           f"rated {sum(1 for v in table.values() if v['rated']):,}   "
           f"[membership guard passed: 0 self-scored]")
+
+    # The COHORT-WIDE numbers, printed before the per-outlet table because for a population
+    # question they are the answer and the table is the detail. Truncating the table to
+    # --show rows left a 254-outlet run with no population rate at all; see
+    # :func:`cohort_assignment`.
+    w = m["whole"]
+    if w:
+        touched = sum(1 for v in table.values() if v["attached"])
+        print(f"\n=== the cohort as a POPULATION (not the per-outlet table below) ===")
+        print(f"  would attach   : {w['attached']:,} of {w['articles']:,} articles "
+              f"({w['rate']:.1%})")
+        print(f"  distinct stories: {w['stories']:,}   "
+              f"outlets landing at least one: {touched:,} of {len(table):,}")
+        print(f"  publishers added: {w['publishers']:,}")
+        print(f"  duplicate titles: {w['duplicateTitles']:,} of {w['attached']:,} attached "
+              f"({w['duplicateRate']:.1%}) — headlines another publisher already ran. A high "
+              f"share here is restored double-counting, not new coverage.")
 
     scan = story_service.scan_days()
     if observation_is_window_bound(table, scan):

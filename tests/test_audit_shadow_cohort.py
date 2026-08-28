@@ -334,3 +334,90 @@ def test_the_share_flag_reaches_the_selector(tmp_path):
 
     assert asc.measure(st, reg, as_if_share=0.9)["cohort"], "a wide cap must admit something"
     assert asc.measure(st, reg, as_if_share=0.01)["cohort"] == [], "a tiny cap must admit nothing"
+
+
+# ── cohort-wide assignment ───────────────────────────────────────────────────────────────
+
+HEAD_A = "Storm system brings record rainfall across the eastern seaboard"
+HEAD_B = "Central bank holds interest rates steady for a third consecutive meeting"
+
+
+def _story(sid, headline):
+    return {"id": sid, "coverage": [{"headline": headline, "publishedAt": NOW.isoformat()},
+                                    {"headline": headline, "publishedAt": NOW.isoformat()}]}
+
+
+def test_cohort_assignment_takes_the_UNION_of_stories_not_the_per_outlet_sum():
+    """**Why the per-outlet table cannot simply be summed.** `assignmentStories` is distinct
+    *per outlet*, so two cohort outlets that both land on the same story contribute 1 each and
+    adding the column reports 2 stories touched where the truth is 1. On a 254-outlet cohort
+    that error compounds silently in the direction that flatters Tier B."""
+    index = se.assignment_index([_story("s1", HEAD_A)])
+    cohort = [_row("Outlet One", "one.example", HEAD_A),
+              _row("Outlet Two", "two.example", HEAD_A)]
+
+    per_outlet = [se.assignment_rate([r], index)["stories"] for r in cohort]
+    whole = asc.cohort_assignment(cohort, index, asc.carrier_index(cohort))
+
+    assert sum(per_outlet) == 2, "fixture must have both outlets landing, or there is no union"
+    assert whole["stories"] == 1, "the cohort-wide count double-counted a shared story"
+    assert whole["attached"] == 2 and whole["rate"] == 1.0
+
+
+def test_cohort_assignment_reports_the_population_rate_over_every_article():
+    """The number the experiment exists to produce. Half the cohort matches a story, half does
+    not, so a rate that ignored the misses would read 100%."""
+    index = se.assignment_index([_story("s1", HEAD_A)])
+    cohort = ([_row("Outlet One", "one.example", HEAD_A) for _ in range(2)]
+              + [_row("Outlet One", "one.example", "Local library extends its weekend hours")
+                 for _ in range(2)])
+    whole = asc.cohort_assignment(cohort, index, asc.carrier_index(cohort))
+    assert whole["articles"] == 4 and whole["attached"] == 2 and whole["rate"] == 0.5
+
+
+def test_duplicate_titles_are_counted_only_among_the_articles_that_attached():
+    """§5's criterion separating new coverage from restored double-counting. Counted over the
+    ATTACHED rows, not the whole cohort: a duplicate headline that lands nowhere costs nothing,
+    and including it would dilute exactly the signal the measure exists to raise."""
+    index = se.assignment_index([_story("s1", HEAD_A)])
+    tier_a = [_row("Wire Service", "wire.example", HEAD_A)]
+    # attaches AND is a duplicate of the wire copy
+    dupe = _row("Echo Daily", "echo.example", HEAD_A)
+    # a duplicate that attaches to nothing -- must not be counted
+    orphan_dupe = _row("Echo Daily", "echo.example", HEAD_B)
+    orphan_peer = _row("Wire Service", "wire.example", HEAD_B)
+
+    carriers = asc.carrier_index(tier_a, [dupe, orphan_dupe, orphan_peer])
+    whole = asc.cohort_assignment([dupe, orphan_dupe], index, carriers)
+
+    assert whole["attached"] == 1
+    assert whole["duplicateTitles"] == 1 and whole["duplicateRate"] == 1.0
+
+
+def test_original_coverage_is_not_counted_as_a_duplicate():
+    """The positive case. Without it the duplicate measure could report 100% always and every
+    result would read as syndication."""
+    index = se.assignment_index([_story("s1", HEAD_A)])
+    # shares enough tokens to attach, but no other publisher ran this exact headline
+    original = _row("Local Paper", "local.example",
+                    "Storm system brings record rainfall to coastal counties overnight")
+    whole = asc.cohort_assignment([original], index, asc.carrier_index([original]))
+    assert whole["attached"] == 1, "fixture must attach for the duplicate check to mean anything"
+    assert whole["duplicateTitles"] == 0 and whole["duplicateRate"] == 0.0
+
+
+def test_the_population_block_is_printed(tmp_path, capsys):
+    """The aggregate existing in `measure`'s dict but not on screen would be the same defect
+    it fixes: the run that prompted it printed 30 of 254 outlets and no population rate."""
+    import store as store_mod
+    st_path = f"sqlite:///{tmp_path}/pop.db"
+    st = store_mod.Store(st_path)
+    _seed(st, "Coastal Herald", "coastalherald.example",
+          [f"Sea wall repairs begin at north quay {k}" for k in range(4)])
+    _seed(st, "theguardian.com", "theguardian.com",
+          [f"Ferry service resumes after dredging {k}" for k in range(4)])
+
+    asc.main(["--db", st_path, "--as-if-select", "--share", "0.9"])
+    out = capsys.readouterr().out
+    assert "the cohort as a POPULATION" in out
+    assert "would attach" in out and "duplicate titles" in out

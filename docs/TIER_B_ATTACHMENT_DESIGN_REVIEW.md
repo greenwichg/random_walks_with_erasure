@@ -395,7 +395,40 @@ Tier B never participates in formation — but it means the Tier A participation
 A cohort rate materially below 23.7% is therefore not evidence of a worse outlet; only a rate
 near zero carries the falsifying weight, which is why §7 puts the decision there.
 
-### 7.5 · What this cohort cannot tell us [A]
+### 7.5 · The experiment ran — and the runner did not print its headline number [F]
+
+```
+mode          : --as-if: 254 of 254 named outlets, rebuilt without them
+Tier A built  : 27,980 articles -> 1,582 stories (6,737 covered)
+cohort        : 1,470 articles
+outlets       : 254   tracked 29   rated 26   [membership guard passed: 0 self-scored]
+```
+
+Everything procedural held. All 254 names matched, the self-scoring guard passed, and the
+**perturbation control came in at 1,582 stories against a 1,644 baseline — a 3.8% loss for a
+5.0% cut**, close enough that the cohort is a fair sample rather than a corpus amputation.
+
+Then the run could not answer the question. `attached` is printed **per outlet**, truncated to
+`--show` (30) rows out of 254. Summing the visible rows gives 83 attachments; the invisible
+224 outlets can each hold 0 or 1, so the population rate is bounded only to **5.6%–20.9%** —
+useless for a decision. Summing the table's `stories` column would have been worse than
+useless: it is distinct *per outlet*, so every story two cohort outlets both touch is
+double-counted, and the error flatters Tier B.
+
+**This is a defect in §7 of this document, not only in the runner.** §5 named the acceptance
+criteria — attached count, stories gaining coverage, duplicate-title rate, publishers added,
+attach rate — and §7 then asserted that the duplicate-title rate was *"the only piece not
+already reported."* That was wrong, and checking it would have cost one reading of `main`. The
+cohort-level attach rate, the story union and the publisher count were all absent too. An
+acceptance criterion nobody checked the instrument can emit is the same defect class as a gate
+that cannot fire.
+
+`cohort_assignment` now computes all of them over the whole cohort, printed **before** the
+per-outlet table, using the same `se.would_attach` the table uses so there is no second
+definition of "attaches". The 3.8%/5.0% control above stands and the run is re-runnable; only
+the reporting was missing, so nothing measured has to be discarded.
+
+### 7.6 · What this cohort cannot tell us [A]
 
 The syndication filter is load-bearing for §4's reason, and it also **suppresses the duplicate-title
 risk by construction**. A cohort selected to be below the ceiling will attach cleanly more often than
@@ -442,3 +475,4 @@ invalidate the whole direction.
 | a story with attached Tier B coverage is still the product | **[R]** — unanswered, and it is a product decision, not a measurement |
 | "pick ~20 outlets" for the experiment | **too loose.** A hand-picked cohort can be picked to produce a result; §7.1 replaces it with a pre-registered rule |
 | `--as-if` accepts the registry canonical | **was false** — the case fold made it unmatchable for 571 of 573 outlets. Fixed in this commit |
+| "the duplicate-title rate is the only piece not already reported" (§7) | **wrong.** The cohort-wide attach rate, the story union and the publisher count were absent too. One reading of `main` would have caught it before a production run |
