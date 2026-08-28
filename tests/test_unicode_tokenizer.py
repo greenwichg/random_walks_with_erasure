@@ -327,3 +327,72 @@ def test_the_env_flag_reaches_the_clusterer_too(monkeypatch):
     assert len(story_service.build_stories(rows)) == 1
     monkeypatch.setenv("RWE_CLUSTER_UNICODE_WORDS", "0")
     assert story_service.build_stories(rows) == []
+
+
+# --------------------------------------------------------------------- the fallback variant
+def test_fallback_never_changes_an_article_that_already_clusters():
+    """**The whole point of the variant, and it is an identity, not a threshold.**
+
+    The full replacement cost 149 articles on production because accented Latin fragments into
+    short ASCII pieces that many unrelated articles share, and replacing them with whole words
+    dissolves the clusters that coincidence built — Vietnamese covered went 32 -> 0. In fallback
+    mode an article whose ASCII tokens already reach `MIN_TITLE_TOKENS` keeps that exact set, so
+    it cannot lose a token and the 149-article cost is zero by construction."""
+    for title in list(HEADLINES.values()) + [
+            "Erdoğan meets Orbán in Budapest", "Beyoncé announces world tour dates",
+            "Cumhurbaşkanı yeni bütçe planını açıkladı"]:
+        shipped = T(title)
+        if len(shipped) >= clustering.MIN_TITLE_TOKENS:
+            assert T(title, unicode_words="fallback") == shipped, title
+
+
+def test_fallback_gives_the_excluded_population_the_same_tokens_as_replace():
+    """The benefit side is unchanged: the rows that could not cluster get exactly what the full
+    replacement gave them, because for them the ASCII count is below the floor and the fallback
+    fires."""
+    for lang in DEAD_TODAY:
+        assert (T(HEADLINES[lang], unicode_words="fallback")
+                == T(HEADLINES[lang], unicode_words=True)), lang
+
+
+def test_fallback_rescues_a_korean_event_without_touching_the_english_one():
+    en = [{"headline": f"Senate passes the funding bill {w}"} for w in
+          ("after debate", "averting shutdown", "to avert shutdown")]
+    for a in en:
+        assert (story_service.article_tokens(a, 0, False, "fallback")
+                == story_service.article_tokens(a))
+    ko = {"headline": "대통령이 새로운 예산안을 발표했다"}
+    assert story_service.article_tokens(ko) == frozenset()
+    assert len(story_service.article_tokens(ko, 0, False, "fallback")) == 4
+
+
+def test_the_fallback_mode_is_reachable_from_the_environment(monkeypatch):
+    monkeypatch.setenv("RWE_CLUSTER_UNICODE_WORDS", "fallback")
+    assert story_service.unicode_words() == "fallback"
+    assert len(story_service.build_stories(_korean_rows())) == 1
+
+
+def test_fallback_clusters_the_korean_event_through_the_build():
+    rows = _korean_rows()
+    assert story_service.build_stories(rows) == []
+    assert len(story_service.build_stories(rows, uni="fallback")) == 1
+
+
+def test_the_build_threads_the_MODE_not_a_boolean(monkeypatch):
+    """`bool("fallback")` is `True`, so a build that coerced the mode would silently run the
+    **rejected** replace behaviour while the caller asked for the variant — and no clustering
+    outcome could tell, because both modes cluster the Korean fixture.
+
+    A mutation found that: coercing `uni` to a bool left all 59 tests green. So this asserts the
+    value that reaches `article_tokens` rather than an effect downstream of it."""
+    seen = []
+    real = story_service.article_tokens
+    monkeypatch.setattr(story_service, "article_tokens",
+                        lambda a, cap=0, hyphen=False, uni=False: (seen.append(uni),
+                                                                   real(a, cap, hyphen, uni))[1])
+    story_service.build_stories(_korean_rows(), uni="fallback")
+    assert seen and set(seen) == {"fallback"}, f"the build coerced the mode to {set(seen)}"
+
+    seen.clear()
+    story_service.build_stories(_korean_rows(), uni=True)
+    assert set(seen) == {True}

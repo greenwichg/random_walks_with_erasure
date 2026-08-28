@@ -573,7 +573,7 @@ source would have looked un-evaluated forever while two rows described it. It is
 differentially — the test compares against the real function rather than restating the rule, because
 a restatement would be the third copy and a third copy cannot detect drift in the other two.
 
-Full suite: **3,959 passed, 9 skipped**.
+Full suite: **4,041 passed, 9 skipped**.
 
 
 ---
@@ -726,16 +726,74 @@ A per-language table follows as the secondary view, and `member_key` is now shar
 `audit_source_cohort` and pinned differentially — the lookup whose earlier drift "invalidated the
 first two production runs" and reported participation 20× low.
 
-### 8.7 · The re-run that decides it
+### 8.7 · The re-run: REJECTED, on the evidence the reach table added
+
+```
+  population    articles  covered before    after  dropped   newly
+  reachable       26,522           6,887    6,765      149      27
+  excluded         2,630               0       78        0      78
+
+  the trade: 78 article(s) reached a story that structurally could not,
+             against 149 lost from stories that already worked.
+```
+
+**VERDICT: ADOPT. The answer is no.** Two independent reasons, and the second is the larger:
+
+1. **The cost is 1.9× the benefit.** 149 articles lost against 78 rescued; net coverage −44.
+2. **It does not fix the defect it was built for — 3.0% reach.** 2,630 articles in the window are
+   structurally excluded; the change reaches 78 of them.
+
+By language, before → after covered:
+
+| | before | after | dropped | newly | |
+|---|---:|---:|---:|---:|---|
+| vi | 32 | **0** | 32 | 0 | **wiped out** |
+| tr | 22 | 11 | 11 | 0 | halved |
+| en | 5,154 | 5,137 | 21 | 4 | |
+| ar | 0 | 9 | 0 | 9 | |
+| ja | 1 | 8 | 1 | 8 | |
+| ko | 0 | 4 | 0 | 4 | |
+| ru | 0 | 3 | 0 | 3 | |
+
+The cost lands on **accented Latin**, and the mechanism is clear: Vietnamese and Turkish words
+fragment into short ASCII pieces today, many *unrelated* articles share those pieces, and replacing
+them with whole words dissolves the clusters that coincidence built. `--pieces` shows the largest
+loss — a 17-article, 8-publisher Vietnamese cluster — dissolving to **zero** pieces, not to a
+smaller core. A genuine eight-publisher event would retain one; dissolving completely is what a
+false merge looks like. So those splits are plausibly *corrections* — but corrections nobody asked
+for, at a price paid in coverage.
+
+### 8.8 · The finding underneath, which is bigger than the tokenizer
+
+**3% reach is the number to take away.** Giving a Korean headline tokens does not give it a Korean
+*peer* to cluster with. A story needs ≥ `MIN_SHARED_TOKENS` with another article, from a different
+publisher, inside the same six-day window — and the window holds 139 Korean articles across 4
+outlets, 98 Arabic across 6, 52 Japanese across 3.
+
+**The binding constraint on international stories is corpus density per language, not the
+tokenizer.** The tokenizer is necessary and nowhere near sufficient.
+
+That connects straight back to M11 and changes what the 50k expansion is *for*. Discovery ranks
+candidates by article volume, which is dominated by English, so a volume-ordered expansion adds
+English sources to a corpus that already clusters English well. **Reaching international stories
+needs language-targeted admission** — enough peers per language to clear the shared-token floor —
+which is a different selection rule from the one `source_discovery` implements today.
+
+### 8.9 · The variant the measurement indicates
+
+`--unicode-fallback`: take the Unicode path **only when the ASCII tokenizer yields fewer than
+`MIN_TITLE_TOKENS`**. An article that already clusters keeps its exact token set, so it cannot lose
+one and the 149-article cost is **zero by construction**; the excluded population gets exactly the
+tokens replace gave it. Built, defaulted off, not yet measured:
 
 ```
 dc run --rm -T api python examples/audit_clustering_change.py --db "$RWE_DB_URL" \
-    --unicode-words --pieces 5
+    --unicode-fallback --pieces 5
 ```
 
-Two things to read, in this order. **The reach table**: if `excluded → newly` is in the hundreds,
-the change does what it was built for and 150 lost articles is a real trade to weigh. If it is near
-zero, the candidate costs 2.2% of coverage for nothing and the answer is no whatever the VERDICT
-line says. **Then `--pieces`**: the tool's docstring is explicit that a rising story count is
-fragments as often as it is events, and the Vietnamese and Turkish splits are exactly where that
-distinction has to be made by reading titles rather than counts.
+The prediction, stated before the run so it can be wrong: `reachable → dropped` should be **0 or
+very near it**, and `excluded → newly` should be **at least the 78** replace achieved. If dropped is
+materially above zero, the fallback is leaking through cluster composition — an excluded article
+joining a cluster can still change it — and that is worth knowing precisely.
+
+It still will not move the 3% reach, because that is not a tokenizer problem. §8.8 is the milestone.

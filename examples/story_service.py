@@ -1028,10 +1028,32 @@ def unicode_words() -> bool:
     separate risk profile — folding merges Turkish ``ı``/``i`` and German ``ö``/``o`` — and pairing
     them would make one measurement unable to attribute either result.
 
-    Off until ``audit_clustering_change.py --unicode-words`` has run against the live catalogue.
+    ## The production measurement, and why there are now two modes
+
+    ``--unicode-words`` (**replace**) ran on the live catalogue 2026-08-27 and is **REJECTED**:
+
+        rescued 78 articles, cost 149 that were already in stories   (1.9x the benefit)
+        reached 78 of the 2,630 structurally-excluded articles       (3.0%)
+        Vietnamese covered 32 -> 0,  Turkish 22 -> 11,  net coverage -44
+
+    Two findings, and the second is the larger one. **The cost lands on accented Latin**: Vietnamese
+    and Turkish words fragment into short ASCII pieces today, many unrelated articles share those
+    pieces, and replacing them with whole words dissolves the clusters that coincidence built. And
+    **the fix does not fix the thing it was for** — 3% reach. Giving a Korean headline tokens does
+    not give it a Korean peer to cluster WITH: the binding constraint on international stories is
+    corpus density per language, not only the tokenizer.
+
+    ``fallback`` is the variant the measurement indicates: take the Unicode path only when the ASCII
+    tokenizer yields fewer than ``MIN_TITLE_TOKENS``. An article that already clusters keeps its
+    exact token set, so the 149-article cost is **zero by construction**, and the excluded population
+    gets the same tokens it got under replace. Not yet measured against the live catalogue.
+
+    Off until ``audit_clustering_change.py --unicode-fallback`` has run against the live catalogue.
     This function decides the story partition for the whole product, and the LAST tokenizer
     candidate measured worse than the disease — see :func:`hyphen_compounds`."""
     v = os.environ.get("RWE_CLUSTER_UNICODE_WORDS", "").strip().lower()
+    if v == "fallback":
+        return "fallback"
     return v in {"1", "true", "yes", "on"}
 
 
@@ -2295,7 +2317,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     hyph = hyphen_compounds() if hyphen is None else bool(hyphen)
     # Resolved ONCE for the build, never per article: reading the environment inside a per-row
     # loop is the cost `corpus.tier_resolver` exists to document.
-    uni_on = unicode_words() if uni is None else bool(uni)
+    uni_on = unicode_words() if uni is None else (uni if uni == "fallback" else bool(uni))
     # The corpus-derived boilerplate set joins the SAME gate as the manual lexicons — computed
     # once over the full build's articles and threaded to the repair re-cluster unchanged, so
     # both passes judge edges against one vocabulary.

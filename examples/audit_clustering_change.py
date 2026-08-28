@@ -518,6 +518,12 @@ def main(argv=None) -> int:
                     help="derived-boilerplate df floor (default: configured, 25)")
     ap.add_argument("--boilerplate-days", type=int, default=None, metavar="N",
                     help="derived-boilerplate distinct-days floor (default: configured, 5)")
+    ap.add_argument("--unicode-fallback", action="store_true",
+                    help="CANDIDATE TOKENIZER, the variant --unicode-words' production numbers "
+                         "indicate: take the Unicode path ONLY when the ASCII tokenizer yields "
+                         "fewer than MIN_TITLE_TOKENS. An article that already clusters keeps its "
+                         "exact tokens, so the 149-article cost measured for the full replacement "
+                         "is zero by construction. See story_service.unicode_words.")
     ap.add_argument("--unicode-words", action="store_true",
                     help="CANDIDATE TOKENIZER: match \\w plus combining marks instead of "
                          "[a-z0-9], and emit character bigrams for scripts with no word separator "
@@ -574,7 +580,8 @@ def main(argv=None) -> int:
                   after_entity_merge=args.entity_merge,
                   after_lexicons=lex_names,
                   after_hyphen=True if args.hyphen_compounds else None,
-                  after_uni=True if args.unicode_words else None,
+                  after_uni=("fallback" if args.unicode_fallback else
+                             True if args.unicode_words else None),
                   after_derived=True if args.derived_boilerplate else None,
                   after_derived_df=args.boilerplate_df,
                   after_derived_days=args.boilerplate_days)
@@ -601,6 +608,7 @@ def main(argv=None) -> int:
               if (args.entity_merge or story_service.entity_merge_min()) else "")
            + (", entity-veto" if (args.entity_veto or story_service.entity_veto()) else "")
            + (f", lexicons {'+'.join(lex_names)}" if lex_names else "")
+           + (", unicode-fallback" if args.unicode_fallback else "")
            + (", unicode-words" if args.unicode_words else "")
            + (", hyphen-compounds" if args.hyphen_compounds else "")
            + ((", derived-boilerplate"

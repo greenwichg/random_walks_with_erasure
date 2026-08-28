@@ -135,6 +135,18 @@ def _unsegmented(ch: str) -> bool:
     return any(lo <= o <= hi for lo, hi in _UNSEGMENTED)
 
 
+def _keep(toks, *, wide: bool) -> set:
+    """Content tokens: length > 2, not a bare number, not a stop-word.
+
+    ``wide`` exempts unsegmented runs from the length floor. A 2-character bigram **is** the unit
+    for Chinese, Japanese and Thai, and holding those to a 3-character floor would re-create the
+    zero-token defect one layer down — the gate would simply move from `title_tokens` to this
+    filter and the symptom would be identical."""
+    return set(t for t in toks
+               if (len(t) > 2 or (wide and _unsegmented(t[0])))
+               and not t.isdigit() and t not in _STOPWORDS)
+
+
 def _script_tokens(lower: str) -> list:
     """``\\w+`` words, with unsegmented runs replaced by their character bigrams.
 
@@ -197,9 +209,24 @@ def title_tokens(title: str, hyphen_compounds: bool = False,
     ``orb``, so two ENGLISH headlines about one event — one keeping the diacritics, one not — share
     only ``budapest`` and ``meets`` and fall below :data:`MIN_SHARED_TOKENS`.
 
-    Defaulted off and shipped off, exactly as ``hyphen_compounds`` is: this function decides the
-    story partition for the whole product, and the last tokenizer candidate measured **worse** than
-    the disease. Measure with ``audit_clustering_change.py --unicode-words`` before proposing it.
+    Two modes, and the production measurement is why there are two:
+
+    ``True`` (*replace*)   **MEASURED 2026-08-27 AND REJECTED.** Every headline takes the Unicode
+                           path. It rescued **78** articles and cost **149** that were already in
+                           stories — 1.9x the benefit — and reached only 78 of the **2,630**
+                           structurally-excluded articles in the window, 3.0%. Vietnamese coverage
+                           went 32 -> **0** and Turkish 22 -> 11: accented Latin fragments into
+                           short ASCII pieces today, many articles share those pieces, and replacing
+                           them with whole words dissolves the clusters built on that coincidence.
+    ``"fallback"``         the Unicode path fires **only when the ASCII tokenizer yields fewer than**
+                           :data:`MIN_TITLE_TOKENS`. An article that already clusters keeps its exact
+                           token set, so it cannot lose one — the 149-article cost is zero by
+                           construction, and what remains is the 78-article gain plus whatever the
+                           newly-tokenized rows join.
+
+    Defaulted off and shipped off either way, exactly as ``hyphen_compounds`` is: this function
+    decides the story partition for the whole product. Measure with
+    ``audit_clustering_change.py --unicode-words`` / ``--unicode-fallback`` before proposing either.
 
     Pure numbers are dropped: in a headline a bare number is nearly always a count, a date or a
     listicle rank ("6 Best… Since 2010"), not the thing the story is about. It is a real trade —
@@ -217,13 +244,9 @@ def title_tokens(title: str, hyphen_compounds: bool = False,
     "additive only" because tokens are only added; the union growth is what that reasoning
     missed, and it is kept here so the next tokenizer candidate meets it."""
     lower = (title or "").lower()
-    toks = _script_tokens(lower) if unicode_words else re.findall(r"[a-z0-9]+", lower)
-    # The length floor is applied to BIGRAMS too, which would drop every one of them, so
-    # unsegmented runs are exempted from it — a 2-character bigram IS the unit for those scripts,
-    # and holding them to a 3-character floor would re-create the zero-token defect one layer down.
-    out = set(t for t in toks
-              if (len(t) > 2 or (unicode_words and _unsegmented(t[0])))
-              and not t.isdigit() and t not in _STOPWORDS)
+    out = _keep(re.findall(r"[a-z0-9]+", lower), wide=False)
+    if unicode_words and (unicode_words != "fallback" or len(out) < MIN_TITLE_TOKENS):
+        out = _keep(_script_tokens(lower), wide=True)
     if hyphen_compounds:
         for compound in re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)+", lower):
             joined = compound.replace("-", "")
