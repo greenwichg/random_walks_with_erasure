@@ -8,8 +8,8 @@ Everything else exists because one of them could pass for the wrong reason.
 
 The recurring defect in this repository's own instruments is a test whose premise is switched off —
 by the harness, by an environment default, or by a guard that cannot fire. Every invariant below was
-checked by reverting the specific product line it is about and confirming a test fails. **Seventeen
-mutations, seventeen caught:**
+checked by reverting the specific product line it is about and confirming a test fails. **Twenty-one
+mutations, twenty-one caught:**
 
     COMPLETED made empty                        the probing claim made a no-op
     re-seeding downgrades the state             record_admission_probe refuses nothing
@@ -19,7 +19,9 @@ mutations, seventeen caught:**
     INCOMPLETE maps to `rejected`               an incomplete probe gets no cooloff
     _lifecycle_identity drifts from M8's        the partition guard never fires
     the CLI pre-flight does not refuse          the window count is the catalogue count
-    shadow_exclusions stops hiding admitted hosts
+    shadow_exclusions stops hiding admitted hosts   status sizes only the validated set
+    the cohort share is dropped                     the catalogue is rescanned per host
+    cohort impact counts hosts, not articles
 
 The last four are the partition guard, and they exist because the first 49 tests here **could not
 have caught its absence**: every one of them built an admission row with no `feed_articles` rows
@@ -612,25 +614,60 @@ def test_the_cli_refuses_a_bulk_admit_and_names_the_numbers(tmp_path, monkeypatc
         corpus.wire_admissions(None)
 
 
-def test_status_says_what_admitting_the_validated_set_would_move(tmp_path, _real_window):
+def test_status_sizes_the_candidate_cohort_before_any_probe_is_made(tmp_path, _real_window):
+    """**The number a "should we run this campaign at all" decision needs, and it costs no request.**
+
+    Over `candidate` rows this is an upper bound — not every host will pass — but it is available
+    from rows already in the catalogue, which is where discovery found these hosts. Sizing it only
+    for `validated` (as the first version did) means the number arrives *after* the campaign that
+    the decision was about.
+    """
     db = f"sqlite:///{tmp_path / 'st.db'}"
     st = store_mod.Store(db)
-    _ingest(st, "heavy.example", 40)
+    _ingest(st, "heavy.example", 40)                    # candidate: 24 in window, 40 in catalogue
+    _ingest(st, "mid.example", 20)                      # validated: all 20 inside six days
     import outlet_registry
     st.record_admission_candidates(
         sd_candidates(st.list_discovery_rows(), outlet_registry.default_registry()))
-    st.claim_admission_probe("heavy.example")
-    st.record_admission_probe("heavy.example", verdict="ADMIT", feed_url="https://heavy.example/f")
+    st.claim_admission_probe("mid.example")
+    st.record_admission_probe("mid.example", verdict="ADMIT", feed_url="https://mid.example/f")
     st.engine.dispose()
     try:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             sc.main(["status", "--db", db])
         out = buf.getvalue()
-        assert "would leave the 6-day story partition" in out
-        assert "40 article(s) would leave Search and Discover" in out
+        assert "candidate  (upper bound: not all will validate)" in out
+        assert "24 of 44 article(s) in the 6-day window would leave the STORY PARTITION" in out
+        assert "40 of 60 article(s) in the catalogue would leave SEARCH and DISCOVER" in out
+        # The share, not just the count: "40 articles" and "67% of everything we carry" are the
+        # same fact and only the second one is a decision.
+        assert "(66.7%)" in out
+        assert "validated  (admittable right now)" in out
+        assert "20 of 60 article(s) in the catalogue" in out
     finally:
         corpus.wire_admissions(None)
+
+
+def test_the_cohort_impact_is_computed_from_one_catalogue_scan(tmp_path, _real_window):
+    """Both numbers come from the same row fetch. Two fetches would double a 47 MB transient on
+    production for no new information, and the memo is what keeps a 1,173-host bulk admit from
+    paying the scan 1,173 times."""
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'scan.db'}")
+    _ingest(st, "heavy.example", 40)
+    calls = []
+    real = st.list_discovery_rows
+    st.list_discovery_rows = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+
+    st.record_admission_candidates([_cand("heavy.example")])
+    for _ in range(5):
+        st.admission_partition_impact("heavy.example")
+    st.admission_cohort_impact(states=["candidate"])
+    assert len(calls) == 1, f"the catalogue was scanned {len(calls)} times, not once"
+
+    catalogue, window = st.host_article_counts(window_days=6.0)
+    assert catalogue["heavy.example"] == 40
+    assert window["heavy.example"] == 24, "the window count is really the catalogue count"
 
 
 def sd_candidates(rows, reg):

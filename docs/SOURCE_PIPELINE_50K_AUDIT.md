@@ -437,7 +437,13 @@ saying so. The fix:
   out is genuinely neutral and needs no acknowledgement — a guard that fired there would be
   demanding a counterfactual for a no-op.
 * `source_campaign.py admit` prints a pre-flight naming the totals and the ten largest hosts, and
-  exits 2 without `--accept-partition-change`. `status` reports the same for the validated set.
+  exits 2 without `--accept-partition-change`.
+* `store.admission_cohort_impact` sizes a whole state group, and `status` reports it for
+  **`candidate` as well as `validated`**. Sizing only the validated set — which is what the first
+  version did — delivers the number *after* the campaign the decision was about. Over `candidate`
+  rows it is an upper bound (not every host will pass its probe), it costs **no network request**,
+  and it reports the **share** of the catalogue alongside the count: "40,000 articles" and "27% of
+  everything we carry" are the same fact, and only the second one is a decision.
 
 **The first 54-test pass did not catch this, and the reason is the point of §7.6.** Every admission
 test built an `source_admission` row without any `feed_articles` rows behind it — a state no real
@@ -446,13 +452,13 @@ ingest the catalogue rows first.
 
 ### 7.6 · Verification
 
-54 tests in `tests/test_source_admission.py`, and the two that carry the requirement are
+55 tests in `tests/test_source_admission.py`, and the two that carry the requirement are
 `test_a_second_full_campaign_makes_no_requests` and
 `test_an_interrupted_campaign_resumes_where_it_stopped`. Both assert *how many times `validate` was
 called* and *the per-host `probe_count`*, not that the output got shorter — the latter would pass for
 any change that printed less.
 
-Every guard was checked by breaking the product and confirming a test fails. **17 mutations, 17
+Every guard was checked by breaking the product and confirming a test fails. **21 mutations, 21
 caught:**
 
 ```
@@ -464,7 +470,9 @@ crawl configs skip the is_shadow re-check        the runner swallows a real inte
 INCOMPLETE is recorded as a rejection            an incomplete probe gets no cooloff
 _lifecycle_identity drifts from M8's              the partition guard never fires
 the CLI pre-flight does not refuse               the window count is the catalogue count
-shadow_exclusions stops hiding admitted hosts
+shadow_exclusions stops hiding admitted hosts    status sizes only the validated set
+the cohort share is dropped                      the catalogue is rescanned per host
+cohort impact counts hosts, not articles
 ```
 
 The last one is worth naming, because it is a defect I introduced and the mutation pass found rather
@@ -475,4 +483,4 @@ source would have looked un-evaluated forever while two rows described it. It is
 differentially — the test compares against the real function rather than restating the rule, because
 a restatement would be the third copy and a third copy cannot detect drift in the other two.
 
-Full suite: **3,958 passed, 9 skipped**.
+Full suite: **3,959 passed, 9 skipped**.

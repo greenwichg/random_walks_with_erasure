@@ -2945,15 +2945,19 @@ class Store:
             s.flush()
             return self._admission_row(row)
 
-    def host_article_counts(self, *, window_days: "float | None" = None) -> dict:
-        """``{host: article count}`` over the catalogue, or over the last ``window_days``.
+    def host_article_counts(self, *, window_days: "float | None" = None) -> "tuple[dict, dict]":
+        """``(catalogue_counts, window_counts)`` — ``{host: article count}``, from **one** scan.
 
         Built from :meth:`list_discovery_rows` — the narrow six-field projection M10 measured at
         0.54 s / 46.9 MB for 150k rows — and grouped in Python because the host is derived from the
-        URL and SQL cannot key on it. Memoized per ``(window_days)`` for the life of this ``Store``:
-        an admission run is a short-lived process, and a bulk admit of 1,173 hosts must not pay the
-        scan 1,173 times. A long-lived process must not use this for anything time-sensitive; today
-        the only caller is :meth:`admit_source`."""
+        URL and SQL cannot key on it.
+
+        Both dicts come from a single row fetch rather than two, because the window is a filter over
+        the same rows and fetching twice would double a 47 MB transient for no new information.
+        Memoized per ``window_days`` for the life of this ``Store``: an admission run is a
+        short-lived process, and a 1,173-host bulk admit must not pay the scan 1,173 times. Nothing
+        long-lived should use this — the memo never expires, and today the only callers are
+        :meth:`admit_source` and the campaign runner's reporting."""
         key = float(window_days) if window_days else 0.0
         cached = getattr(self, "_host_count_memo", None)
         if cached is None:
@@ -2961,17 +2965,18 @@ class Store:
         if key in cached:
             return cached[key]
         import source_discovery as _sd
-        rows = self.list_discovery_rows()
-        if key:
-            floor = (_utcnow() - timedelta(days=key)).isoformat()
-            rows = [r for r in rows if (r.get("publishedAt") or "") >= floor]
-        counts: dict = {}
-        for r in rows:
+        floor = (_utcnow() - timedelta(days=key)).isoformat() if key else None
+        catalogue: dict = {}
+        window: dict = {}
+        for r in self.list_discovery_rows():
             host = _sd._host(r)
-            if host:
-                counts[host] = counts.get(host, 0) + 1
-        cached[key] = counts
-        return counts
+            if not host:
+                continue
+            catalogue[host] = catalogue.get(host, 0) + 1
+            if floor is not None and (r.get("publishedAt") or "") >= floor:
+                window[host] = window.get(host, 0) + 1
+        cached[key] = (catalogue, window if floor is not None else dict(catalogue))
+        return cached[key]
 
     def admission_partition_impact(self, host: str) -> dict:
         """What admitting ``host`` would take out of the product, measured rather than assumed.
@@ -2992,10 +2997,35 @@ class Store:
         """
         import story_service as _ss
         key = (host or "").strip().lower()
-        return {"host": key,
-                "window": self.host_article_counts(window_days=_ss.scan_days()).get(key, 0),
-                "catalogue": self.host_article_counts().get(key, 0),
-                "windowDays": _ss.scan_days()}
+        catalogue, window = self.host_article_counts(window_days=_ss.scan_days())
+        return {"host": key, "window": window.get(key, 0),
+                "catalogue": catalogue.get(key, 0), "windowDays": _ss.scan_days()}
+
+    def admission_cohort_impact(self, *, states=None) -> dict:
+        """What admitting a whole group of hosts would take out of the product.
+
+        **The number to have before authorising a campaign, not after it.** Over ``candidate`` rows
+        it is an upper bound — not every host will pass its probe — but an upper bound is exactly
+        what a "should we run this at all" decision needs, and it is available with **no network
+        request at all**, from rows we already hold.
+
+        Reports the catalogue total alongside, because "40,000 articles" and "27% of everything we
+        carry" are the same fact and only the second one is a decision."""
+        import story_service as _ss
+        rows = self.admission_rows(states=states)
+        catalogue, window = self.host_article_counts(window_days=_ss.scan_days())
+        per_host = [{"host": r["host"], "window": window.get(r["host"], 0),
+                     "catalogue": catalogue.get(r["host"], 0)} for r in rows]
+        total = sum(catalogue.values())
+        cat = sum(h["catalogue"] for h in per_host)
+        return {"hosts": len(per_host),
+                "hostsWithLiveRows": sum(1 for h in per_host if h["catalogue"]),
+                "window": sum(h["window"] for h in per_host),
+                "windowTotal": sum(window.values()),
+                "catalogue": cat, "catalogueTotal": total,
+                "catalogueShare": (cat / total) if total else 0.0,
+                "windowDays": _ss.scan_days(),
+                "byHost": sorted(per_host, key=lambda h: -h["catalogue"])}
 
     @staticmethod
     def _lifecycle_identity(publisher: str) -> str:

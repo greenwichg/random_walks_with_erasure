@@ -134,19 +134,42 @@ def _print_status(st, args) -> None:
             print(f"      {r['host']:<40} claimed {r['claimedAt']}")
 
 
+def _print_cohort_impact(st, args) -> None:
+    """Size the partition change BEFORE the campaign, not after it.
+
+    Over `candidate` rows this is an upper bound — not every host will pass its probe — and an upper
+    bound is exactly what a "should we run this at all" decision needs. It costs no network request:
+    the rows are already in the catalogue, which is where discovery found these hosts in the first
+    place."""
+    print(f"\n=== what admitting would MOVE OUT of the product ===")
+    print("    Admission is an A -> shadow move on rows that are LIVE. Every candidate is a host we")
+    print("    ALREADY INGEST — discovery mines the crawl exhaust — and corpus.DEFAULT_TIER is 'A',")
+    print("    so its articles cluster and are searchable today. Admitting it removes them from")
+    print("    both. source_lifecycle.crosses_tier_a('A','shadow') is True; M9 marks the same move")
+    print("    automatic=False and requires a clustering counterfactual for it.")
+    for label, states in (("candidate  (upper bound: not all will validate)", ["candidate"]),
+                          ("validated  (admittable right now)", ["validated"])):
+        imp = st.admission_cohort_impact(states=states)
+        if not imp["hosts"]:
+            continue
+        print(f"\n  {label}")
+        print(f"    {imp['hosts']:,} host(s), {imp['hostsWithLiveRows']:,} with live rows")
+        print(f"    {imp['window']:,} of {imp['windowTotal']:,} article(s) in the "
+              f"{imp['windowDays']:g}-day window would leave the STORY PARTITION"
+              f"  ({imp['window'] / max(1, imp['windowTotal']):.1%})")
+        print(f"    {imp['catalogue']:,} of {imp['catalogueTotal']:,} article(s) in the catalogue "
+              f"would leave SEARCH and DISCOVER  ({imp['catalogueShare']:.1%})")
+        top = [h for h in imp["byHost"] if h["catalogue"]][:args.show or 10]
+        if top:
+            print(f"    {'host':<38} {'in window':>10} {'in catalogue':>13}")
+            for h in top:
+                print(f"    {h['host'][:38]:<38} {h['window']:>10,} {h['catalogue']:>13,}")
+
+
 def cmd_status(args) -> int:
     st = _store(args)
     _print_status(st, args)
-    validated = st.admission_rows(states=["validated"])
-    if validated:
-        impacts = [st.admission_partition_impact(r["host"]) for r in validated]
-        win = sum(i["window"] for i in impacts)
-        cat = sum(i["catalogue"] for i in impacts)
-        print(f"\n=== what admitting the {len(validated):,} validated host(s) would move ===")
-        print("    Admission is an A -> shadow move on rows that are LIVE, because every candidate")
-        print("    is a host we already ingest. It is a partition change, not an addition.")
-        print(f"  {win:,} article(s) would leave the {impacts[0]['windowDays']:g}-day story partition")
-        print(f"  {cat:,} article(s) would leave Search and Discover")
+    _print_cohort_impact(st, args)
     if args.show:
         for state in ("validated", "rejected", "incomplete"):
             rows = st.admission_rows(states=[state], limit=args.show)
