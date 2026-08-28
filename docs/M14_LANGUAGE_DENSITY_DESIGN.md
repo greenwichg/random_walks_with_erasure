@@ -580,3 +580,96 @@ shows **0.05**; `nl` at 28 shows **0.25**. Whatever separates German and Dutch f
 Portuguese and Italian, it is **not** how many publisher strings the catalogue holds. Articles per
 publisher is the obvious confound and is now reported, but the honest position is that the corrected
 run has to be read before anything is concluded from these.
+
+
+---
+
+## 13 · Stage 0 on the corrected axis: **M14 STOPS**
+
+Run 2026-08-28 against `5af0838`, 29,189-article window, `peers` = publishers filing ≥ 10 articles
+— the axis §3/§6/§9 pre-registered.
+
+```
+lang  peers   pubs  co-coverage  mean partners
+ en    202   2439       28.2%           1.22
+ de      8    127       17.4%           0.38
+ tr      6     45        6.9%           0.07
+ es      5    153        2.3%           0.04
+ id      5     20        0.0%           0.00
+ pt      1     64        4.7%           0.05
+ fr      1     55        8.2%           0.10
+ it      0     57        2.1%           0.02
+ nl      0     28       21.5%           0.25
+ pl      0     21        0.0%           0.00
+ fi      0     16        0.0%           0.00
+ sv      0     18        9.1%           0.09
+
+NOT MONOTONE — the peer hypothesis fails on the stratum where it is testable.
+```
+
+**The bar was pre-registered in §9 and restated in §11, and it failed. M14 stops.** This is the
+third justification for the peer hypothesis to fail against data — after the two
+`audit_source_cohort.verdict` already records — and the standard set there applies: *"Until a third
+survives contact with the data, low participation is an observation, not a verdict."* It did not
+survive.
+
+### 13.1 · The refutation is comprehensive, not marginal
+
+**15 separate pairs break monotonicity.** The decisive one:
+
+> **`nl` has ZERO publishers filing ≥ 10 articles, and the third-highest density in the stratum
+> (0.25) — six times Spanish, which has 153 publishers and 5 above the floor.**
+
+And the obvious alternative axis fails too: `nl` has under 96 articles against Spanish's 345.
+**Neither publisher count nor article count predicts density.** Every version of "more sources in
+language L raises L's density" that this design proposed is unsupported.
+
+### 13.2 · What the data suggests instead — and why it makes M14 *worse*, not recoverable
+
+The pattern is consistent with density being **beat overlap**, not corpus size: 28 Dutch outlets
+covering Dutch national news overlap heavily at three articles each, while 153 Spanish outlets
+covering 153 different regions overlap nowhere at any volume.
+
+If that is right, it does not rescue this milestone — **it buries it.** M14's whole mechanism was
+"admit more publishers in an underrepresented language". Under an overlap explanation, admitting 50
+more Spanish regional outlets adds 50 more non-overlapping beats and moves density by nothing. The
+selection criterion would have to be *which beats a candidate covers*, which is a different problem
+from source admission and is not what M10/M11 were built to answer.
+
+**This is a hypothesis, not a finding, and one specific check would settle it.** The co-coverage
+metric cannot distinguish independent co-coverage from **syndication**: a wire story republished by
+ten Dutch outlets produces exactly the pair pattern that ten outlets independently covering one event
+does. `audit_source_cohort` already measures syndication per outlet for precisely this reason, and
+`nl`'s 0.25 has not been checked against it. Until it is, "overlap explains it" is unproven — and the
+refutation above does not depend on it either way, because the hypothesis predicted density rises
+with peers and it does not.
+
+### 13.3 · What survives Stage 0
+
+| | |
+|---|---|
+| §1 · the unlabelled quarter | **stands** — ~4,700 rows (16% of the window) invisible to targeting, 1,203 of them unlabelled *and* tokenizer-dead. Independent of the density question. |
+| the instrument | **validated** — co-coverage 28.2% against 27.9% story participation measured through the real builder; strata derived with no language list reproduced the hand-made classification, including Vietnamese as `fragment` at 63%. |
+| `Δ` marginal coverage | **works, and reorders**: on English, `nbc news` is volume rank 53 and Δ rank 16; `the independent` is volume 14 and Δ 3; `new york post` has 843 articles and ranks 6th. The top-20 sets overlap 75%, so the §9 bar ("differs substantially") is at best borderline — and English was never the language M14 existed for. |
+| the tokenizer strata | **stands** — `ru ar ja ko zh` at 95–100% dead. `--unicode-fallback` remains unmeasured and is still the only thing that would make those languages measurable at all. |
+
+### 13.4 · Two instrument defects, both found by their own fixtures
+
+Recorded because the pattern matters more than either defect. A **saturating metric** made a flat
+line read as confirmation, and an **axis that did not match its own specification** tested a claim
+nobody had made. Both were caught before a conclusion was drawn, but two in one milestone is the
+signal to distrust the third result rather than to relax — which is why §13.2 is labelled a
+hypothesis and given a check rather than written up as a finding.
+
+### 13.5 · Not started, and needing a decision
+
+Nothing below is authorised by this document; it is what the data points at.
+
+* **Language backfill** (§1) is the one unambiguous, independent action. It is a metadata fix, not a
+  source campaign, and it unblocks any future language work.
+* **`--unicode-fallback`**, measured. Group A is 1,000+ articles that cannot cluster at all, and the
+  variant costs nothing by construction.
+* **The syndication check on `nl`**, which decides whether §13.2's explanation is real.
+
+The 50,000-source goal is unaffected in its Tier B form — breadth of *search*. What Stage 0 removes
+is the claim that source admission alone buys international *stories*.
