@@ -198,11 +198,17 @@ Derived from §3, stated as a requirement rather than a guess:
 
 ## 4.5 First harness results, and two findings the plan did not predict
 
+> **⚠ SUPERSEDED — the 5k HARD FAIL below no longer reproduces.** It was measured before the B6
+> stagger landed, and the stagger removes its cause. Kept in full rather than edited in place,
+> because the reasoning that follows it is what produced the fix. **Read §4.6 for the current
+> numbers**; a reader who stops here concludes the campaign is blocked at 5,000 sources, and it
+> is not.
+
 Cohorts 100 / 1,000 / 5,000, poll rate held at 2.5/s, 16 workers, offline fetch.
 
 ```
                 100        1,000      5,000
-lock occupancy  16.8%      39.3%      82.6%      <- HARD FAIL at 5k
+lock occupancy  16.8%      39.3%      82.6%      <- HARD FAIL at 5k (SUPERSEDED, see 4.6)
 tier A rows     0          0          0          <- isolation holds
 shadow leaks    0          0          0          <- isolation holds
 cluster fetch   ~4 ms      15.6 ms    46.1 ms
@@ -227,6 +233,12 @@ rate: the harness window is dominated by the initial burst, not the steady state
 This is a real production property, not an artefact — a deploy would hammer every configured
 publisher at once. **The fix is jittered initial due times**, which is a small change to
 `MultiSourcePoller.start`. Not made here: the brief was the harness.
+
+> **B6 — CLOSED.** The fix shipped as `sources.initial_leases`: the first `workers` sources stay
+> due immediately (staggering them would delay the first ingest for nothing) and the rest spread
+> **evenly** across one interval — deterministic rather than random, so cohort runs stay
+> reproducible. `RWE_POLL_STAGGER=0` restores this section's behaviour. See §4.6 for the
+> differential that closes it.
 
 ### B7 — CLOSED, and it was not a bottleneck. Both of my claims were wrong.
 
@@ -268,6 +280,26 @@ dramatic architectural finding and were nothing of the kind.
 
 Ladder run after the B6 stagger landed: 100 → 50,000, 25 s per cohort, 16 workers, 2.5 polls/s held
 constant.
+
+### The stagger is what closed B6 — controlled, not inferred
+
+"After the stagger landed" is a claim about chronology; this is the claim about *cause*. Re-run at
+the one cohort §4.5 recorded as a HARD FAILURE, with `RWE_POLL_STAGGER` as the only variable:
+
+| 5,000 sources | polls in window | lock occupancy | verdict |
+|---|---|---|---|
+| stagger **on** (today's default) | 66 | **4.8%** | PASS |
+| stagger **off** (`RWE_POLL_STAGGER=0`, pre-B6) | 2,341 | **94.0%** | **HARD FAILURE** |
+
+§4.5's 82.6% reproduces on demand when the stagger is off and vanishes when it is on, so the number
+belonged to the cold start rather than to 5,000 sources. `initial_leases` is unit-tested in
+`test_poll_worker_pool.py`; this is the system-level half — that the stagger moved the *outcome*,
+not merely the due-time table.
+
+The 35× drop in polls is the mechanism, and it is correct: with the stagger the window observes the
+steady state (≈50 polls demanded in 20 s, 66 seen, the surplus being the immediate `workers`), where
+before it observed the entire cohort arriving at once. It is also why coverage is low by
+construction — the same structural limit this section closes with.
 
 ### Established at 50,000 sources
 
