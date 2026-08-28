@@ -486,3 +486,97 @@ the catalogue, and they can be done before the ToS review that still gates any p
   argument on both sides, and it belongs to the user.
 * **Not that the 50,000 figure delivers international stories.** By §8.1's arithmetic it delivers
   ~5,000 clustering sources and ~45,000 searchable ones, and the honest version of the goal says so.
+
+
+---
+
+## 12 · Stage 0, run on production — one hypothesis refuted, one measurement invalid
+
+Run 2026-08-28 against `962f848`, 29,165-article window. Offline, no publisher contact.
+
+### 12.1 · §3.1's hypothesis is REFUTED: the unlabelled quarter is not mostly English
+
+`?` is 7,526 rows — 25.8% of the window, as designed. But:
+
+```
+script       articles  share        of the 6,320 Latin-script rows,
+latin           6,320  84.0%        2,809 carry English function words = 44.4%
+cyrillic          286   3.8%
+arabic            155   2.1%        NON-LATIN and unlabelled: 1,206
+devanagari        129   1.7%
+hangul            111   1.5%
+greek              85   1.1%
+thai               82   1.1%
+```
+
+§3.1 predicted *"the unlabelled bucket is mostly English with missing metadata"* on the strength of
+its 20.2% participation. **It is not.** Only 44% of its Latin rows look English, so roughly **3,500
+Latin non-English rows plus 1,206 non-Latin rows — about 16% of the whole window — are invisible to
+any language-targeted strategy.** And the 1,206 non-Latin ones are doubly invisible: unlabelled *and*
+tokenizer-dead.
+
+§3.1's own bar said what to do if this came back: *"If it hides a large non-English population, the
+whole priority order in §9 changes."* It does. **Language backfill precedes targeting.**
+
+### 12.2 · The metric validates against an independent measurement
+
+Worth stating because it is the reason to trust the rest of the run. `coCoverage` is computed from
+`clustering.pair_admits` over the raw catalogue; story participation was measured separately by
+`audit_source_cohort` through the actual story builder:
+
+| | co-coverage (this run) | participation (`audit_source_cohort`) |
+|---|---:|---:|
+| en | 28.2% | 27.9% |
+| de | 17.3% | 19.0% |
+
+Two independent paths to nearly the same number. And the derived strata reproduced the design's
+hand-made classification with no language list: `vi` came back **`fragment`, 63% fragment share** —
+exactly the Vietnamese artifact §2 argued from the `--unicode-words` evidence — while `ru ar ja ko
+zh` all came back `tokenizer-dead` at 95–100%.
+
+### 12.3 · The peer test as run is INVALID — wrong axis, and the mistake is mine
+
+```
+NOT MONOTONE — the peer hypothesis fails on the stratum where it is testable.
+```
+
+**That verdict does not stand, because the runner did not plot the quantity this design specified.**
+§3, §6 and §9 say *above-floor peers* — publishers filing ≥ 10 articles per window — in four places,
+and the design was committed (`b3c312e`) before the runner (`962f848`). The runner counted every
+distinct publisher string:
+
+| | design (≥10 articles) | runner (raw) | ratio | articles/publisher |
+|---|---:|---:|---:|---:|
+| en | 225 | 2,426 | 10.8× | 7.6 |
+| de | 11 | 127 | 11.5× | 3.0 |
+| es | 7 | 153 | **21.9×** | **2.2** |
+| tr | 6 | 44 | 7.3× | 5.5 |
+| id | 5 | 20 | 4.0× | 5.1 |
+
+Spanish's 153 "publishers" file 2.2 articles each. A publisher filing twice a week cannot co-cover an
+event with anybody, so the denominator was filled with rows that could never pair — and the axis
+became roughly *"how many one-off strings did GDELT attach to this language"*, which is not a density
+measure and is not what anyone proposed.
+
+**This is a correction of the instrument, not a rescue of the hypothesis**, and the distinction rests
+on the timestamps: the specification is in a document committed before the code that failed to
+implement it. `PEER_FLOOR` now applies the design's floor, both columns are reported so the gap stays
+visible, and the value is tied to `source_discovery.VOLUME_FLOOR` by a test — the same evidence that
+justifies spending a request on a host is the evidence that it files enough to overlap.
+
+**The corrected run may still refute the hypothesis. If it does, M14 stops**, and §11's first bullet
+already committed to that.
+
+### 12.4 · A second instrument flaw, from the same run
+
+Section 3 auto-selected `fi` — `healthy[-1]`, the language with the *fewest* peers, which has zero
+pairs — and reported "no publisher adds a single cross-publisher partner". True, and useless: a
+ranking needs something to rank. It now picks the densest testable language.
+
+### 12.5 · What is worth reading even from the invalid run
+
+`de` (127 raw publishers) shows mean partners **0.38** while `es` (153) shows **0.04** and `pt` (65)
+shows **0.05**; `nl` at 28 shows **0.25**. Whatever separates German and Dutch from Spanish,
+Portuguese and Italian, it is **not** how many publisher strings the catalogue holds. Articles per
+publisher is the obvious confound and is now reported, but the honest position is that the corrected
+run has to be read before anything is concluded from these.

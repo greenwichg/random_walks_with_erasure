@@ -96,11 +96,16 @@ def main(argv=None) -> int:
     print(f"    rejects it before any other test and its density is UNMEASURABLE. `fragment` means")
     print(f"    its tokens are mostly orthographic debris, so the number is untrustworthy in BOTH")
     print(f"    directions. Only `healthy` rows may be compared with each other.")
-    print(f"\n  {'lang':>5} {'stratum':<15} {'arts':>7} {'pubs':>5} {'pairs':>8} "
-          f"{'co-cov':>7} {'dead':>6} {'frag':>6}  top script")
+    print(f"\n    `peers` is publishers filing >= {sdn.PEER_FLOOR} articles in the window — the axis")
+    print(f"    the design pre-registered. `pubs` is every distinct string, most of which appear")
+    print(f"    once or twice and could never co-cover anything; the gap between the two columns is")
+    print(f"    why the first run of this audit refuted a claim nobody had made.")
+    print(f"\n  {'lang':>5} {'stratum':<15} {'arts':>7} {'pubs':>5} {'peers':>6} {'a/pub':>6} "
+          f"{'pairs':>8} {'co-cov':>7} {'dead':>6} {'frag':>6}  top script")
     for lang, p in list(prof.items())[:args.show]:
         top = p["scripts"][0][0] if p["scripts"] else ""
         print(f"  {lang[:5]:>5} {p['stratum']:<15} {p['articles']:>7,} {p['publishers']:>5} "
+              f"{p['peers']:>6} {p['articlesPerPublisher']:>6.1f} "
               f"{p['pairs']:>8,} {p['coCoverage']:>6.1%} {p['deadShare']:>5.0%} "
               f"{p['fragmentShare']:>5.0%}  {top}")
 
@@ -108,7 +113,7 @@ def main(argv=None) -> int:
     # Section 1 already accounts for it, and letting a bucket that mixes English with Korean sit in
     # a table about per-language density would put a number there that means nothing.
     healthy = [p for p in prof.values() if p["stratum"] == "healthy" and p["language"] != "?"]
-    healthy.sort(key=lambda p: -p["publishers"])
+    healthy.sort(key=lambda p: -p["peers"])
     print(f"\n  --- the testable stratum: {len(healthy)} language(s), `?` excluded as a metadata "
           f"gap rather than a language ---")
     if len(healthy) < 3:
@@ -117,11 +122,11 @@ def main(argv=None) -> int:
         print(f"      four-point curve fit this design refused to do. The tokenizer fix")
         print(f"      (--unicode-fallback) has to land before the question can be asked.")
     else:
-        print(f"  {'lang':>5} {'publishers':>11} {'co-coverage':>12} {'mean partners':>14}")
+        print(f"  {'lang':>5} {'peers':>6} {'pubs':>6} {'co-coverage':>12} {'mean partners':>14}")
         for p in healthy:
-            print(f"  {p['language'][:5]:>5} {p['publishers']:>11} {p['coCoverage']:>11.1%} "
-                  f"{p['meanPartners']:>14.2f}")
-        pubs = [p["publishers"] for p in healthy]
+            print(f"  {p['language'][:5]:>5} {p['peers']:>6} {p['publishers']:>6} "
+                  f"{p['coCoverage']:>11.1%} {p['meanPartners']:>14.2f}")
+        pubs = [p["peers"] for p in healthy]
         depth = [p["meanPartners"] for p in healthy]
         print(f"\n    The verdict reads MEAN PARTNERS, not co-coverage. Co-coverage asks only")
         print(f"    whether an article has AT LEAST ONE cross-publisher partner, so it saturates —")
@@ -133,8 +138,9 @@ def main(argv=None) -> int:
         spread = (max(depth) - min(depth)) if depth else 0.0
         mono = all(depth[i] >= depth[i + 1] for i in range(len(depth) - 1))
         strict = mono and spread > 0 and depth[0] > depth[-1]
-        print(f"\n  BAR: mean partners rises with publisher count, and VARIES across the stratum.")
-        print(f"  RESULT: publishers {pubs}, mean partners {depth}")
+        print(f"\n  BAR: mean partners rises with PEER count (>= {sdn.PEER_FLOOR} articles), and")
+        print(f"       VARIES across the stratum.")
+        print(f"  RESULT: peers {pubs}, mean partners {depth}")
         if not depth or spread == 0:
             print(f"          FLAT — no relationship either way. The hypothesis is NOT supported;")
             print(f"          publisher count predicts nothing here, which is what the original")
@@ -147,7 +153,12 @@ def main(argv=None) -> int:
             print(f"          refuted once; this is the third justification failing, and M14 stops.")
 
     # ----------------------------------------------------------------- 3 · Δ vs volume
-    target = args.lang or (healthy[-1]["language"] if healthy else "")
+    # The densest testable language, not the thinnest. The first run auto-picked `healthy[-1]` —
+    # the language with the FEWEST peers, which had zero pairs — and reported "no publisher adds a
+    # single partner", which is true and useless: a ranking needs something to rank.
+    rankable = [p for p in healthy if p["pairs"] > 0]
+    target = args.lang or (rankable[0]["language"] if rankable else
+                           healthy[0]["language"] if healthy else "")
     if not target:
         print("\n(no language to rank — skipping the Δ comparison)")
         return 0

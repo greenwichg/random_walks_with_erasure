@@ -61,6 +61,20 @@ FRAGMENT_SHARE = 0.5
 #: strata classification is noise — one article decides the share.
 MIN_LANGUAGE_ARTICLES = 20
 
+#: Articles a publisher must file in the window to count as a PEER. Not a quality bar — a
+#: co-coverage bar. A publisher filing two articles a week cannot plausibly cover the same event as
+#: another, so counting it as density inflates the denominator with rows that could never pair.
+#:
+#: Measured on production 2026-08-27, this is the difference between a meaningful axis and a
+#: meaningless one: Spanish showed **153 distinct publishers for 342 articles** — 2.2 each — against
+#: the **7** that clear this floor. The first Stage 0 run plotted the raw count and refuted a claim
+#: nobody had made; `docs/M14_LANGUAGE_DENSITY_DESIGN.md` specifies "above-floor peers (>= 10
+#: articles per 6-day window)" in four places and was committed before the runner was written.
+#:
+#: The value matches `source_discovery.VOLUME_FLOOR`, deliberately: the same evidence that justifies
+#: spending a request on a host is the evidence that it files enough to overlap with anybody.
+PEER_FLOOR = 10
+
 STRATA = ("healthy", "fragment", "tokenizer-dead", "too-small")
 
 
@@ -277,11 +291,17 @@ def language_profile(rows: list) -> dict:
         # `meanPartners` is the depth: the average number of DISTINCT other publishers holding a
         # partner for an article. Two publishers cap it at 1.0 however complete their overlap, so it
         # keeps rising with peer count where the share cannot.
-        _, partners = partner_index(group, pairs)
+        by_pub, partners = partner_index(group, pairs)
         mean_partners = sum(len(p) for p in partners) / len(group)
+        peers = sum(1 for p, idxs in by_pub.items() if len(idxs) >= PEER_FLOOR)
         out[lang] = {
             "language": lang, "articles": len(group), "stratum": stratum,
+            # BOTH counts, because the difference between them is the finding that invalidated the
+            # first Stage 0 run. `publishers` is every distinct string; `peers` is the ones that
+            # file enough to co-cover, which is the quantity the hypothesis is about.
             "publishers": len({_pub(r) for r in group if _pub(r)}),
+            "peers": peers,
+            "articlesPerPublisher": round(len(group) / max(1, len(by_pub)), 2),
             "deadShare": round(dead_share, 4), "fragmentShare": round(frag_share, 4),
             "pairs": len(pairs), "covered": len(covered),
             "coCoverage": round(len(covered) / len(group), 4),

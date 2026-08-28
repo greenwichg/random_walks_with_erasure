@@ -346,3 +346,31 @@ def test_mean_partners_is_capped_by_the_publisher_count():
     rows = [_row(f"p{i}.ex", "Council approves the annual transport budget plan", "xx")
             for i in range(2) for _ in range(9)]
     assert sd.language_profile(rows)["xx"]["meanPartners"] == 1.0
+
+
+def test_peers_counts_only_publishers_that_could_co_cover():
+    """**The axis the first production run got wrong.**
+
+    `docs/M14_LANGUAGE_DENSITY_DESIGN.md` specifies "above-floor peers (>= 10 articles per 6-day
+    window)" in four places and was committed before the runner. The runner plotted raw distinct
+    publishers instead, and on production Spanish showed **153 publishers for 342 articles** — 2.2
+    each — against the **7** that clear the floor. A publisher filing twice a week cannot co-cover
+    an event, so counting it as density fills the denominator with rows that could never pair, and
+    the hypothesis was tested against a quantity nobody had proposed.
+
+    Both columns are reported now, because the gap between them IS the finding."""
+    rows = [_row(f"big{i}.ex", f"Council approves the transport budget measure {k}", "xx")
+            for i in range(3) for k in range(12)]
+    rows += [_row(f"tiny{i}.ex", f"One off report number {i}", "xx") for i in range(40)]
+    prof = sd.language_profile(rows)["xx"]
+    assert prof["publishers"] == 43
+    assert prof["peers"] == 3, "the floor did not remove the one-off publishers"
+    assert prof["articlesPerPublisher"] < 2.0
+
+
+def test_the_peer_floor_is_the_discovery_floor():
+    """Same value, deliberately: the evidence that justifies spending a request on a host is the
+    evidence that it files enough to overlap with anybody. A second, drifting floor would be the
+    fifth converged definition this audit series has had to chase."""
+    import source_discovery
+    assert sd.PEER_FLOOR == source_discovery.VOLUME_FLOOR
