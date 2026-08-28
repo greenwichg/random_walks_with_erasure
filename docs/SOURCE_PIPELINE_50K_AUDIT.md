@@ -796,4 +796,12 @@ very near it**, and `excluded → newly` should be **at least the 78** replace a
 materially above zero, the fallback is leaking through cluster composition — an excluded article
 joining a cluster can still change it — and that is worth knowing precisely.
 
-It still will not move the 3% reach, because that is not a tokenizer problem. §8.8 is the milestone.
+It still will not move the 3% reach, because that is not a tokenizer problem. §8.8 is the milestone,
+and it is now designed in full: **`docs/M14_LANGUAGE_DENSITY_DESIGN.md`**.
+
+That design's own headline finding is sharper than §8.8 stated. `RWE_STORIES_MAX_SCAN` caps the
+clustering window at 60,000 rows against today's 29,152, and the M11 cohort measures 6.3 in-window
+articles per long-tail host — so **Tier A can absorb roughly 4,900 more sources and then it is
+full**. The 50,000-source corpus is ~5,000 clustering sources and ~45,000 searchable ones. M14 is
+therefore an *allocation* policy for a bounded resource, and today's volume ordering spends the whole
+budget on English.
