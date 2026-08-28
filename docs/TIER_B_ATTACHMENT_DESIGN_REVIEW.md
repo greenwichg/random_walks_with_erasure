@@ -473,7 +473,59 @@ is a product judgement, not a measurement, and this document should not pretend 
 experiment did what it was for: it removed the possibility that the answer was zero, and it
 bounded the upside at something modest.
 
-### 7.7 · What this cohort cannot tell us [A]
+### 7.7 · The corrected result, and what it recommends [F]
+
+```
+Tier A built  : 28,011 articles -> 1,586 stories (6,745 covered)
+cohort        : 1,473 articles across 255 outlets
+
+would attach    : 122 of 1,473 articles (8.3%)
+... of REACHABLE: 122 of 1,156 (10.5%) — 317 articles yield fewer than 3 tokens
+distinct stories: 96   outlets landing at least one: 68 of 255
+duplicate titles: 20 of 122 attached (16.4%)
+```
+
+**The measurement is 10.5%**, not the 8.3% floor. The control held again — 1,586 stories
+against a 1,644 baseline, a 3.5% story loss for a 5.0% article cut, the third consistent
+reading.
+
+**The tokenizer gap is 21.5% of the cohort, and it is symmetric.** `assignment_index` applies
+the same `MIN_TITLE_TOKENS` filter to *story members*, so a story built entirely from unspaced
+scripts never enters the index either — verified directly: a two-member Chinese story yields
+**0 indexed members**. Those 317 articles therefore have nothing to attach **to**. Counting
+them differently is not the fix; the tokenizer is, and it has to change on both sides. That is
+`story_service.unicode_words()` in `"fallback"` mode, which fires *only* when ASCII yields
+fewer than `MIN_TITLE_TOKENS` and so cannot disturb any headline that already tokenizes.
+
+This is not a new finding — `unicode_words`'s own docstring records it from the other
+direction: those languages contributed *"472 window articles and **one** in-story article —
+0.2%, against 29% for English… not a participation problem with a tuning answer; it is a
+structural exclusion."* The Tier B cohort reached the same conclusion by an independent route.
+
+**Recommendation: do not build Tier B attachment next.** [X]
+
+The experiment did its job and the answer is "real but small". Attachment would add ~1.27
+articles to 96 of 1,586 stories — **6.1% of the story set gains one more source** — while
+**187 of 255 tail outlets (73%) contribute nothing to any story even with it built**. Those
+outlets are already ingested and already searchable, so attachment does not unlock the tail;
+it improves a twentieth of the story set.
+
+**Run `--unicode-fallback` instead.** It is already built, defaulted off, and unmeasured; it
+targets exactly the 21.5% this run found structurally excluded; it affects **Tier A quality
+directly** rather than only Tier B's marginal contribution; and it is one command with no new
+code:
+
+```
+dc run --rm -T api python examples/audit_clustering_change.py --db "$RWE_DB_URL" \
+    --unicode-fallback
+```
+
+Read it on the reach table, the same way `--unicode-words` was read and **rejected** (78
+rescued against 149 lost). Fallback is the milder variant and may fail the same bar — but it
+is the cheapest open question on this path, and unlike Tier B attachment it cannot be answered
+by argument.
+
+### 7.8 · What this cohort cannot tell us [A]
 
 The syndication filter is load-bearing for §4's reason, and it also **suppresses the duplicate-title
 risk by construction**. A cohort selected to be below the ceiling will attach cleanly more often than
@@ -522,4 +574,4 @@ invalidate the whole direction.
 | `--as-if` accepts the registry canonical | **was false** — the case fold made it unmatchable for 571 of 573 outlets. Fixed in this commit |
 | "the duplicate-title rate is the only piece not already reported" (§7) | **wrong.** The cohort-wide attach rate, the story union and the publisher count were absent too. One reading of `main` would have caught it before a production run |
 | the attach rate is a measurement | **it was a floor.** Unspaced-script titles score zero before the pair rule runs, and I designed a multilingual cohort without checking that the tokenizer could reach it — after spending M14 on exactly this tokenizer |
-| Tier B attachment is the first binding milestone (§6) | **weaker than stated.** It is not falsified, but 74% of tail outlets contribute nothing to stories even with it, so the milestone buys search coverage plus one extra source on 6% of stories |
+| Tier B attachment is the first binding milestone (§6) | **no.** Measured at 10.5% attach: 6.1% of stories gain one source, and 73% of tail outlets contribute nothing to stories even with it built. §7.7 recommends `--unicode-fallback` first — it is already built, targets the 21.5% found structurally excluded, and improves Tier A rather than only Tier B |
