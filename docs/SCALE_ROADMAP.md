@@ -17,6 +17,21 @@ weakest number and they all look alike once formatted.
 
 ---
 
+> ### ⚠ Decision review, 2026-08-28 — read `docs/PATH_TO_50K_DECISION_REVIEW.md` first
+>
+> Two corrections to this document, both measured:
+>
+> **The volume model below is 3–10× too high.** Part 1 sizes 50k as 150k–500k articles/day from an
+> assumed 3–10 articles/source/day. Observed on production: 29,189 articles in the 6-day window
+> across 4,854 outlet identities = **1.00 article/outlet/day**, so 50,000 outlets is ~50,000/day,
+> **10.3×** today rather than 31–103×. Every break below is real and further away than modelled.
+>
+> **The first milestone was never built.** This document's own answer is *"Tier B scales to 50k…
+> that one change is the first milestone and every other stage depends on it"* — and **M4 is not in
+> the built list, `story_service` has no attachment path, and Tier B has zero members.** M7–M11
+> built discovery, validation and admission for sources there is nowhere affordable to put. At
+> 50,000 outlets the 60,000-row cap truncates the clustering window to **29 hours**.
+
 ## The one-paragraph answer
 
 Three bounds break before 50k sources, and **the two that break first are silent**. Not the
