@@ -29,13 +29,18 @@ reasons that have nothing to do with whether Tier B attachment works. What is wa
    set it is then scored against. Low volume *is* the point.
 3. **``syndication < source_evaluation.SYNDICATION_CEILING``** — the republisher filter, at
    the policy module's own constant rather than a second number chosen here.
-4. **``hostStability >= MIN_HOST_STABILITY``** — the other demotion cause in
-   `source_evaluation.evaluate`.
+4. **``hostStability >= MIN_HOST_STABILITY``**, over the outlet's OWN hosts — the other
+   demotion cause in `source_evaluation.evaluate`. Aggregator hosts are excluded from the
+   numerator and kept in the denominator, so an outlet reaching us half through Google News
+   scores 50% rather than 100% on a domain that is not its own.
 5. **Top host looks like a domain** — kills feed-title artifacts ("google news") without
    filtering on registry membership. Requiring TRACKED would bias the population toward
    majors having a quiet week, which is not the tail this stands in for; tracked/untracked
    is reported as a split instead, so a difference between the two strata is visible as a
    finding rather than hidden as a filter.
+6. **A share cap** on the cohort as a whole — see :func:`subsample`. The rule above is about
+   which outlets are *suitable*; the cap is about how many can be removed from the corpus at
+   once without the rebuilt story set ceasing to resemble production.
 
 ## What it emits, and why that spelling
 
@@ -55,6 +60,7 @@ window — not the registry canonical. Two reasons, and the second is the load-b
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 from collections import Counter, defaultdict
@@ -71,6 +77,7 @@ import audit_shadow_cohort as asc      # noqa: E402
 import clustering                      # noqa: E402
 import corpus                          # noqa: E402
 import outlet_registry                 # noqa: E402
+import source_discovery                # noqa: E402
 import source_evaluation as se         # noqa: E402
 import story_service                   # noqa: E402
 import store as store_mod              # noqa: E402
@@ -82,9 +89,11 @@ MAX_ARTICLES = 20
 MAX_SYNDICATION = se.SYNDICATION_CEILING
 MIN_HOST_STABILITY = 0.9
 
-#: Above this share of Tier A, removing the cohort perturbs the story set it is scored
-#: against, and the attach rate stops being a clean read.
-MAX_COHORT_SHARE = 0.10
+#: Cap on the cohort's share of Tier A articles. ``--as-if`` rebuilds the corpus WITHOUT the
+#: cohort, so the cohort is also the perturbation — see :func:`subsample`. The first
+#: production run qualified 1,058 outlets carrying 21.9% of Tier A, which is far too much to
+#: remove and still call the rebuilt story set "production".
+MAX_COHORT_SHARE = 0.05
 
 
 def looks_like_domain(host: str) -> bool:
@@ -106,7 +115,15 @@ def profile(tier_a: list, reg) -> list:
 
     out = []
     for key, arts in by_id.items():
-        hosts = Counter(asc._host(a) for a in arts if asc._host(a))
+        # The outlet's OWN hosts. An article ingested through Google News RSS carries
+        # `news.google.com`, so counting raw hosts gave several unrelated outlets -- Barron's,
+        # Charlotte Observer, Daily Beast -- a top host of `news.google.com` at 100% stability:
+        # a filter meant to catch scattered rows passing on a domain that is not the outlet's.
+        # `publisher_metadata` already learned this ("an aggregator's domain says who delivered
+        # the article, not who wrote it"), so the proxy rule comes from `source_discovery`
+        # rather than from a third list here.
+        all_hosts = [asc._host(a) for a in arts if asc._host(a)]
+        hosts = Counter(h for h in all_hosts if not source_discovery.is_proxy_host(h, reg))
         dup = sum(1 for a in arts
                   if (t := clustering.title_tokens(a.get("title") or "")) and len(carriers[t]) > 1)
         out.append({
@@ -115,6 +132,8 @@ def profile(tier_a: list, reg) -> list:
             "syndication": dup / max(1, len(arts)),
             "hostStability": (hosts.most_common(1)[0][1] / max(1, len(arts))) if hosts else 0.0,
             "topHost": hosts.most_common(1)[0][0] if hosts else "",
+            "ownHosts": len(hosts),
+            "proxied": len(all_hosts) - sum(hosts.values()),
             "tracked": reg.resolve(key) is not None,
             "tier": corpus.tier_of(arts[0].get("publisher"), arts[0].get("url")),
             # Every spelling in the window — see the module docstring on why raw strings.
@@ -132,6 +151,7 @@ FILTERS = (
     (f"syndication >= {MAX_SYNDICATION:.0%}", lambda r: r["syndication"] >= MAX_SYNDICATION),
     (f"hostStability < {MIN_HOST_STABILITY:.0%}",
      lambda r: r["hostStability"] < MIN_HOST_STABILITY),
+    ("every row aggregator-proxied", lambda r: r["ownHosts"] == 0),
     ("host not a domain", lambda r: not looks_like_domain(r["topHost"])),
     ("a spelling contains a comma", lambda r: any("," in s for s in r["spellings"])),
 )
@@ -144,9 +164,48 @@ def eligible(rows: list) -> list:
     return sorted(keep, key=lambda r: r["key"])
 
 
+def _draw_order(key: str) -> str:
+    """A stable pseudo-random order over outlet names, for :func:`subsample`.
+
+    **Name order is neutral for listing and wrong for truncating.** Taking a prefix of an
+    alphabetical list does not take a sample of the population — it takes everything whose
+    name begins with a digit or a Latin letter early in the alphabet, and drops the Cyrillic,
+    Greek, Arabic and CJK names entirely. On this corpus that is a language filter wearing a
+    sampling filter's clothes, and the resulting attach rate would describe one part of the
+    catalogue while claiming to describe the tail.
+
+    Hashing the identity is deterministic (same cohort every run, so the experiment is
+    repeatable), independent of every quantity the audit measures, and blind to script."""
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()
+
+
+def subsample(picked: list, corpus_articles: int, share: float) -> list:
+    """The largest hash-ordered prefix of ``picked`` whose articles stay within ``share``.
+
+    **Why a cap at all.** ``--as-if`` rebuilds Tier A *without* the cohort, so the cohort is
+    also the perturbation. Remove a fifth of the corpus and the story set the cohort is then
+    scored against is not the production one: stories carried by two cohort outlets vanish
+    entirely (``min_publishers = 2``), and their articles cannot attach to a story that no
+    longer exists. A low attach rate would then be unreadable — the corpus was gutted, or
+    Tier B recovers nothing, and the run cannot tell those apart. Capping the share keeps the
+    rebuilt story set close enough to production that the number means what it says.
+
+    Returned in name order, like :func:`eligible`; only the *selection* uses hash order."""
+    budget = share * max(1, corpus_articles)
+    total, taken = 0, []
+    for r in sorted(picked, key=lambda r: _draw_order(r["key"])):
+        if total + r["articles"] > budget:
+            continue          # skip, don't stop: a big outlet must not truncate the draw
+        taken.append(r)
+        total += r["articles"]
+    return sorted(taken, key=lambda r: r["key"])
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=os.environ.get("RWE_DB_URL"))
+    ap.add_argument("--share", type=float, default=MAX_COHORT_SHARE,
+                    help="cap the cohort at this share of Tier A articles — see subsample()")
     args = ap.parse_args(argv)
 
     st = store_mod.Store(args.db)
@@ -163,24 +222,26 @@ def main(argv=None) -> int:
             print(f"    {r['key']}  tier={r['tier']}")
         return 2
 
-    picked = eligible(rows)
+    qualified = eligible(rows)
+    q_total = sum(r["articles"] for r in qualified)
+    picked = subsample(qualified, len(tier_a), args.share)
     total = sum(r["articles"] for r in picked)
     tracked = sum(1 for r in picked if r["tracked"])
 
     print(f"Tier A window : {len(tier_a):,} articles across {len(rows):,} outlets")
     print(f"rule          : {MIN_ARTICLES}-{MAX_ARTICLES} articles, syndication < "
           f"{MAX_SYNDICATION:.0%}, hostStability >= {MIN_HOST_STABILITY:.0%}, host is a domain")
-    print(f"eligible      : {len(picked)} outlets, {total:,} articles "
-          f"({total / max(1, len(tier_a)):.1%} of Tier A) — "
+    print(f"qualified     : {len(qualified):,} outlets, {q_total:,} articles "
+          f"({q_total / max(1, len(tier_a)):.1%} of Tier A)")
+    print(f"cohort        : {len(picked):,} outlets, {total:,} articles "
+          f"({total / max(1, len(tier_a)):.1%} of Tier A, cap {args.share:.0%}) — "
           f"{tracked} registry-tracked, {len(picked) - tracked} untracked")
+    print(f"                hash-ordered draw over the qualified set — deterministic, and "
+          f"blind to script in a way an alphabetical prefix is not")
 
     print("\nwhy outlets were excluded (each test applied alone):")
     for label, fn in FILTERS:
         print(f"  {label:<28} {sum(1 for r in rows if fn(r)):>5}")
-
-    if total > MAX_COHORT_SHARE * max(1, len(tier_a)):
-        print(f"\n*** the cohort is over {MAX_COHORT_SHARE:.0%} of Tier A — removing it perturbs "
-              f"the story set it is scored against; lower MAX_ARTICLES before trusting the result")
 
     print(f"\n{'outlet':<40} {'arts':>5} {'synd':>6} {'stab':>6}  {'reg':<4} host")
     for r in picked[:60]:
@@ -194,7 +255,8 @@ def main(argv=None) -> int:
     # looks like an answer to this one. Same shape as the placeholder that printed
     # INCOMPLETE: a cohort that cannot be evaluated must not produce a command to evaluate it.
     if not picked:
-        print("\n*** NO OUTLET MET THE RULE — nothing to run. Widen the band or relax a filter "
+        print("\n*** EMPTY COHORT — nothing to run. Either no outlet met the rule, or --share "
+              "is smaller than the smallest qualifying outlet. Widen the band or raise the cap "
               "deliberately and say so; do not run --as-if with an empty list, it silently "
               "becomes the default shadow-lane run.")
         return 1

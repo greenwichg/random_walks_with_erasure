@@ -310,7 +310,56 @@ An empty selection refuses to print a command, because `--as-if ""` parses to an
 back to the **default shadow-lane run** — a different question whose output reads like an answer to
 this one.
 
-### 7.3 · What this cohort cannot tell us [A]
+### 7.3 · First production run of the selector — and why the cohort is capped [F]
+
+```
+Tier A window : 29,451 articles across 4,972 outlets
+qualified     : 1,058 outlets, 6,445 articles (21.9% of Tier A)
+  articles < 3   3,508     articles > 20   164     syndication >= 35%   435
+  hostStability < 90%  266     host not a domain  0     comma in a spelling  2
+```
+
+Three things this settles, and one it breaks:
+
+* **Tier A already carries 4,972 distinct outlets in a 6-day window** [F]. The 50k target is
+  ~10× that, not the ~300× the roadmap's framing implies. Worth re-reading §6 against.
+* **3,508 outlets — 71% — published fewer than 3 articles in six days.** The tail is not
+  hypothetical; we are already ingesting it. This is the strongest available evidence that
+  §6.2's question ("does outlet count improve the product?") is the live one.
+* The syndication filter removed 435 outlets and the comma filter fired twice, so both do
+  work on real data rather than only on fixtures.
+
+**A false pass the run exposed** [F]. Barron's, the Charlotte Observer, 9news.com and the
+Daily Beast all appeared with `topHost = news.google.com` at 100% host stability. An article
+ingested through Google News RSS carries the aggregator's host, so a filter meant to catch
+*scattered* rows was passing on a domain that is not the outlet's. `publisher_metadata`
+already documents this exact trap — *"an aggregator's domain says who delivered the article,
+not who wrote it"*, after comparing `news.google.com` against Wikidata refused the Associated
+Press, Reuters, CBS News, Forbes, CNBC, Politico and the Washington Post. Host stability is
+now measured over the outlet's **own** hosts, using `source_discovery.is_proxy_host` rather
+than a third copy of the proxy list, with the denominator left as every article — so an
+outlet reaching us half through an aggregator scores 50% and is excluded. Aggregator-only
+outlets get their own census line, since how much of the catalogue arrives proxied is worth
+seeing rather than filing beside genuine junk hosts.
+
+**What it breaks: 21.9% is far too large a cohort.** `--as-if` rebuilds Tier A *without* the
+cohort, so the cohort is also the perturbation. Removing a fifth of the corpus destroys
+stories that only two cohort outlets carried (`min_publishers = 2`), and those articles then
+cannot attach to a story that no longer exists. A low attach rate would be unreadable — the
+corpus was gutted, or Tier B recovers nothing, and the run could not distinguish them.
+
+So the selector now caps the cohort at `--share` (default 5%) via a **hash-ordered draw**.
+Name order is neutral for listing and wrong for truncating: a prefix of an alphabetical list
+takes everything beginning with a digit or an early Latin letter and drops the Cyrillic,
+Greek, Arabic and CJK names outright — on this corpus, a language filter wearing a sampling
+filter's clothes. Hashing the identity is deterministic, repeatable, and blind to script.
+
+**The perturbation has a direct control.** The audit prints `Tier A built: N articles -> M
+stories`. The un-perturbed baseline is **29,336 → 1,630 stories**. If the rebuild without a
+5% cohort still prints ≈1,600, the perturbation is small and the attach rate is a clean read;
+if it prints materially fewer, the cohort is still too large and `--share` must come down.
+
+### 7.4 · What this cohort cannot tell us [A]
 
 The syndication filter is load-bearing for §4's reason, and it also **suppresses the duplicate-title
 risk by construction**. A cohort selected to be below the ceiling will attach cleanly more often than

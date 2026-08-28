@@ -168,7 +168,7 @@ def test_an_empty_selection_refuses_to_print_a_command(monkeypatch, tmp_path, ca
 
     assert sel.main([]) == 1
     out = capsys.readouterr().out
-    assert "NO OUTLET MET THE RULE" in out
+    assert "EMPTY COHORT" in out
     assert "run this next" not in out
     assert "audit_shadow_cohort.py" not in out, "printed a runnable command for an empty cohort"
 
@@ -183,3 +183,136 @@ def test_the_selector_reuses_the_audits_definitions_rather_than_restating_them()
     assert "se.SYNDICATION_CEILING" in src, "the ceiling must come from the policy module"
     for banned in ("def _identity", "def carrier_index", "jaccard", "0.35"):
         assert banned not in src, f"selector restates a shared definition — found {banned!r}"
+
+
+# ── subsample ────────────────────────────────────────────────────────────────────────────
+
+def _fake(key, articles):
+    return {"key": key, "articles": articles, "spellings": [key], "tracked": False}
+
+
+def test_the_cohort_is_capped_at_its_share_of_the_corpus():
+    """`--as-if` rebuilds Tier A WITHOUT the cohort, so the cohort is also the perturbation.
+    The first production run qualified 1,058 outlets carrying 21.9% of Tier A — remove that
+    and stories carried by two cohort outlets vanish outright (`min_publishers = 2`), so
+    their articles cannot attach to a story that no longer exists and a low rate would be
+    unreadable."""
+    rows = [_fake(f"outlet{i}", 10) for i in range(100)]
+    taken = sel.subsample(rows, corpus_articles=1000, share=0.05)
+    assert sum(r["articles"] for r in taken) <= 50
+    assert taken, "a cap that admits nothing is not a sample"
+
+
+def test_the_draw_is_deterministic():
+    """The experiment has to be repeatable: the same corpus must yield the same cohort, or a
+    second run measures a different population and the comparison is meaningless."""
+    rows = [_fake(f"outlet{i}", 7) for i in range(60)]
+    first = [r["key"] for r in sel.subsample(rows, 1000, 0.05)]
+    second = [r["key"] for r in sel.subsample(rows, 1000, 0.05)]
+    assert first == second
+
+
+def test_the_draw_is_not_an_alphabetical_prefix():
+    """**The bug this ordering exists to avoid.** Truncating a name-ordered list does not
+    sample the population — it takes everything whose name starts with a digit or an early
+    Latin letter and drops the Cyrillic, Greek, Arabic and CJK names entirely. On the real
+    corpus that is a language filter wearing a sampling filter's clothes.
+
+    Asserted on scripts rather than on letters, because that is the harm: a script present in
+    the qualified set must not be absent from a cohort large enough to hold it."""
+    scripts = {"latin": "outlet", "cyrillic": "новости", "greek": "εφημερίδα",
+               "arabic": "صحيفة", "cjk": "新聞"}
+    rows = [_fake(f"{stem}{i}", 4) for stem in scripts.values() for i in range(12)]
+
+    # The budget must BIND, or the draw takes everything and no ordering can be wrong. At 50
+    # articles out of 240 offered, roughly a fifth survives — and Python sorts these keys by
+    # code point, so a name-ordered prefix is all-Latin and nothing else.
+    taken = sel.subsample(rows, corpus_articles=100, share=0.5)
+    assert 0 < len(taken) < len(rows), "the cap must bind for this test to mean anything"
+
+    present = {name for name, stem in scripts.items()
+               if any(r["key"].startswith(stem) for r in taken)}
+    assert len(present) > 1, f"the draw kept only {present} — an alphabetical prefix, not a sample"
+
+
+def test_a_large_outlet_is_skipped_rather_than_truncating_the_draw():
+    """Stopping at the first outlet that overflows the budget would make the cohort depend on
+    where a big outlet happened to land in the draw order — the same run yielding a cohort of
+    2 or of 40 for no reason a reader could see."""
+    smalls = [_fake(f"small{i}", 2) for i in range(20)]
+    # The oversized outlet must land FIRST in the draw order, or `break` never fires early and
+    # the test passes on where the hash happened to put it rather than on the behaviour.
+    huge = min((f"huge{j}" for j in range(500)), key=sel._draw_order)
+    assert sel._draw_order(huge) < min(sel._draw_order(r["key"]) for r in smalls)
+
+    taken = sel.subsample(smalls + [_fake(huge, 999)], corpus_articles=1000, share=0.05)
+    assert huge not in {r["key"] for r in taken}
+    assert len(taken) == 20, "the oversized outlet truncated the draw instead of being skipped"
+
+
+def test_the_cohort_is_returned_in_name_order():
+    """Selection uses hash order; presentation uses name order, so the printed table and the
+    emitted list stay readable and diffable between runs."""
+    rows = [_fake(k, 3) for k in ("zulu", "alpha", "mike")]
+    assert [r["key"] for r in sel.subsample(rows, 1000, 0.5)] == ["alpha", "mike", "zulu"]
+
+
+# ── aggregator hosts ─────────────────────────────────────────────────────────────────────
+
+def test_an_outlet_delivered_entirely_through_an_aggregator_is_excluded():
+    """**The false pass the first production run exposed.** An article ingested through Google
+    News RSS carries `news.google.com` as its host, so counting raw hosts gave Barron's, the
+    Charlotte Observer and the Daily Beast a top host of `news.google.com` at 100% stability —
+    a filter meant to catch scattered rows, passing on a domain that is not the outlet's.
+
+    Excluded rather than passed: the cohort stands in for sources we would crawl at their own
+    domain, and an aggregator-proxied row is not that. `publisher_metadata` reached the same
+    conclusion — "an aggregator's domain says who delivered the article, not who wrote it"."""
+    proxied = [_row("Barron's", "news.google.com", f"Markets close mixed on rate news {k}", k)
+               for k in range(6)]
+    assert _keys(proxied) == set()
+
+    rows = _profile(proxied)
+    assert rows[0]["ownHosts"] == 0
+    assert rows[0]["proxied"] == 6
+
+    # The aggregator case is redundant for EXCLUSION -- an empty topHost already fails the
+    # domain test -- so it earns its place only by being reported separately. Without its own
+    # census line these outlets are filed under "host not a domain" beside genuine junk, and
+    # how much of the catalogue arrives via an aggregator becomes invisible.
+    census = {label: fn for label, fn in sel.FILTERS}
+    aggregator = [label for label in census if "aggregator" in label]
+    assert aggregator, "no census line distinguishes aggregator-proxied outlets"
+    assert census[aggregator[0]](rows[0])
+
+
+def test_stability_is_measured_over_all_rows_so_a_half_proxied_outlet_fails():
+    """The denominator stays every article, not just the ones on the outlet's own domain — an
+    outlet reaching us half through an aggregator has half its rows carrying someone else's
+    host, and that is exactly the unstable-identity case the filter exists for."""
+    mixed = ([_row("Half Wire", "halfwire.example", f"Council debates zoning plan {k}", k)
+              for k in range(5)]
+             + [_row("Half Wire", "news.google.com", f"Council debates transit plan {k}", 10 + k)
+                for k in range(5)])
+    rows = _profile(mixed)
+    assert rows[0]["hostStability"] == pytest.approx(0.5)
+    assert _keys(mixed) == set()
+
+
+def test_an_outlet_on_its_own_domain_is_untouched_by_the_proxy_rule():
+    """The positive case — the proxy rule must not quietly shrink the pool it was added to
+    clean up."""
+    own = _clean("Coastal Herald", "coastalherald.example")
+    rows = _profile(own)
+    assert rows[0]["ownHosts"] == 1 and rows[0]["proxied"] == 0
+    assert _keys(own) == {"coastal herald"}
+
+
+def test_the_proxy_rule_comes_from_source_discovery_not_a_third_local_list():
+    """`publisher_metadata.AGGREGATOR_HOSTS` and `source_discovery.PROXY_HOSTS` already exist.
+    A third copy here would drift from both, and the gate would silently stop matching the one
+    the ingestion path actually uses."""
+    src = (ROOT / "examples" / "select_asif_population.py").read_text()
+    assert "source_discovery.is_proxy_host" in src
+    for banned in ("news.google.com\"", "AGGREGATOR_HOSTS = ", "PROXY_HOSTS = "):
+        assert banned not in src, f"selector restates the proxy list — found {banned!r}"
