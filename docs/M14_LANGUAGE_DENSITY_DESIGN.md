@@ -359,18 +359,50 @@ policy applied evenly.
 Each stage has an entry condition, a falsifiable bar, and an exit that is a decision rather than a
 default. **Stage 0 is the whole design's hinge — if it fails, the rest does not run.**
 
-### Stage 0 — falsify the hypothesis (no admission at all)
+### Stage 0 — falsify the hypothesis (no admission at all)  ✅ **BUILT**
 
-Offline, on the catalogue we already hold. ~1 week.
+Offline, on the catalogue we already hold. `examples/source_density.py` (pure) +
+`examples/audit_language_density.py` (read-only runner):
 
-1. **Settle the unlabelled quarter** (§3.1) by script-detecting 7,545 titles.
-2. **Re-test the peer hypothesis on Group C only**, with Vietnamese excluded as a known artifact and
-   the tokenizer-dead languages excluded as unmeasurable.
-3. **Compute `Δ(H)` for all 1,173 candidates** and compare its ranking against the volume ranking.
+```
+dc run --rm -T api python examples/audit_language_density.py --db "$RWE_DB_URL"
+```
 
-**Bar:** within Group C, co-coverage rate rises monotonically with peer count; and the `Δ` ranking
-differs substantially from the volume ranking. *If `Δ` and volume rank the pool the same way, the
-whole premise of M14 is wrong and volume-ordered admission was right all along.*
+1. **Settle the unlabelled quarter** (§3.1) by script — and the strata are **derived from the
+   headlines**, not from a language list, so the classification does not bake today's corpus into
+   the code.
+2. **Re-test the peer hypothesis on the healthy stratum only**, with the tokenizer-dead and
+   fragment languages excluded because their numbers are not measurements. `?` is excluded too: it
+   is a metadata gap, not a language.
+3. **Rank publishers by `Δ`** — marginal cross-publisher coverage, greedily — and compare against
+   the volume ranking.
+
+**Bar:** within the healthy stratum, **mean partners** rises with publisher count *and varies*
+across it; and the `Δ` ranking differs substantially from the volume ranking. *If `Δ` and volume rank the pool the
+same way, the whole premise of M14 is wrong and volume-ordered admission was right all along.*
+
+The runner prints both bars with its own RESULT line, so the verdict is stated rather than inferred
+— and it refuses to test the hypothesis on fewer than three healthy languages, because a
+relationship read off two points is the four-point curve fit §6 declined to do.
+
+> **Three findings already, from building it.** A cross-publisher pair needs **two** publishers, so
+> from a cold start every singleton scores zero and a pure greedy returns an empty ranking on a
+> corpus with 121 admissible pairs — the selection now bootstraps on the best *pair* and credits the
+> first step 0, because admitting only it buys nothing. And Latin must **not** win a mixed headline:
+> a real production line, `Champions League: Πέρασαν στη league phase Φενέρμπαχτσε…`, is 11 Latin
+> characters to 10 Greek, so a plurality vote files a Greek outlet under Latin and the hidden
+> non-Latin corpus is under-counted — the one direction that would license targeting a corpus we
+> cannot see.
+>
+> The third is a defect in the instrument itself, found by rehearsing the runner against a corpus
+> with three healthy languages at 8, 4 and 2 publishers. **All three reported 100% co-coverage**,
+> and the monotonicity test — `all(cov[i] >= cov[i+1])` — scored that flat column as *"the
+> hypothesis survives"*. Co-coverage asks only whether an article has **at least one**
+> cross-publisher partner, so it saturates the moment two publishers overlap, and a flat line passes
+> a `>=` test: a gate that cannot fail, in the instrument built to test a hypothesis. The profile now
+> also reports **mean partners** — distinct other publishers holding a partner, averaged over
+> articles, which two publishers cap at 1.0 however complete their overlap — and the verdict reads
+> that column and requires it to *vary*. On the same rehearsal it reads 7.00 / 3.00 / 1.00.
 
 ### Stage 1 — 100 sources, ONE language, as an experiment
 
