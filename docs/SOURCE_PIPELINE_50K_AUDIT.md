@@ -672,14 +672,70 @@ One pass-through — `derived_boilerplate` — is wired and **not** pinned by a 
 corpus-derived document-frequency set, and a four-article fixture cannot exercise one meaningfully;
 recorded rather than papered over.
 
-### 8.5 · The measurement that decides it
-
-Nothing should ship on the strength of §8.1. The run:
+### 8.5 · The measurement, run — and why ADOPT is not yet supportable
 
 ```
-dc run --rm -T api python examples/audit_clustering_change.py --db "$RWE_DB_URL" --unicode-words
+before : 1,612 stories, largest 70   [PRODUCTION BASELINE]
+after  : 1,623 stories, largest 70
+clusters split 65   merged 5
+articles in a story: 6,870 -> 6,826  (dropped out 150, newly covered 106)
+blindspot claims: 223 -> 222     independent signal: 0/97 bad, mean 0.97 -> unchanged
+exhibits: both in-window ones unchanged [ok]
+VERDICT: ADOPT (dropped 2.2% of covered articles)
 ```
 
-The bars are the ones `hyphen_compounds` was rejected on: clusters split, clusters merged, covered
-articles dropped, story count, and the ratified exhibits. A candidate that fixes 516 articles by
-breaking 2,000 English ones is not an improvement, and this is the tool that says which it is.
+**Strictly better than the candidate this repository rejected.** `hyphen_compounds` was turned down
+at 121 splits, 2.6% dropped, and a *falling* story count. This is 65 splits, 2.2%, and +11 stories.
+
+**And it still should not be adopted on that, because the benefit is unmeasured.** The tool's own
+docstring says so — *"The VERDICT line is a COST check, not the whole criterion… Two candidates have
+now printed ADOPT and been rejected on the rest of it"* — and the specific gap is that
+**`newlyCovered: 106` does not say who**. 106 rescued Korean and Arabic articles and 106 more English
+wire duplicates print the same number. That is the defect `audit_source_cohort` already had to fix in
+itself: *"29 collateral losses against an unquantified good is not a trade, it is half a trade."*
+
+The losses point the same way. The largest single drop is a 17-article, 8-publisher **Vietnamese**
+cluster that dissolved entirely, and Turkish and more Vietnamese clusters follow it. Vietnamese and
+Turkish are accented Latin — precisely where the change is most aggressive, because their words go
+from ASCII fragments to whole words. Whether those splits are *corrections* (clusters that were held
+together by fragment coincidence) or *regressions* (real events now severed) is not decidable from a
+count, and only two of fourteen ratified exhibits are in this window, so the rubric contributes
+almost nothing here.
+
+### 8.6 · What was built in response: the benefit half
+
+`audit_clustering_change.py` now reports **who a change reached**, split by the defect rather than by
+a language guess:
+
+```
+  population    articles  covered before    after  dropped   newly
+  reachable            4               4        4        0       0
+  excluded             4               0        4        0       4
+
+  the trade: 4 article(s) reached a story that structurally could not,
+             against 0 lost from stories that already worked.
+```
+
+`excluded` is every article whose headline yields fewer than `MIN_TITLE_TOKENS` under the **shipped**
+tokenizer — the exact condition `pair_admits` rejects on, derivable from the title alone, and
+independent of `language`, which is populated for ~80% of rows and 0% for some adapters. Its
+`dropped` is 0 by construction, so its `newly` **is** the entire measured benefit. A change that
+reaches nobody now prints `*** THE BENEFIT IS ZERO ***` rather than leaving it to be inferred.
+
+A per-language table follows as the secondary view, and `member_key` is now shared with
+`audit_source_cohort` and pinned differentially — the lookup whose earlier drift "invalidated the
+first two production runs" and reported participation 20× low.
+
+### 8.7 · The re-run that decides it
+
+```
+dc run --rm -T api python examples/audit_clustering_change.py --db "$RWE_DB_URL" \
+    --unicode-words --pieces 5
+```
+
+Two things to read, in this order. **The reach table**: if `excluded → newly` is in the hundreds,
+the change does what it was built for and 150 lost articles is a real trade to weigh. If it is near
+zero, the candidate costs 2.2% of coverage for nothing and the answer is no whatever the VERDICT
+line says. **Then `--pieces`**: the tool's docstring is explicit that a rising story count is
+fragments as often as it is events, and the Vietnamese and Turkish splits are exactly where that
+distinction has to be made by reading titles rather than counts.

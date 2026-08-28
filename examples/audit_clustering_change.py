@@ -63,6 +63,7 @@ import argparse
 import os
 
 import clustering
+import discover
 import story_service
 import store as store_mod
 
@@ -160,6 +161,18 @@ def _exhibit_outcomes(rows: list, a_member: dict, b_member: dict) -> list:
     return out
 
 
+def member_key(row: dict) -> str:
+    """The key a story's coverage entry carries for this row — the row side of
+    :func:`index_by_member`.
+
+    `_coverage` fills ``c["url"]`` from the article's DISPLAY url, ``_absolute_url(row["url"] or
+    row["canonicalUrl"])``. Looking up ``canonicalUrl`` instead misses on most rows, and
+    `audit_source_cohort.member_key` carries the full account: that mistake invalidated two
+    production runs by reporting participation 20x low. `tests/test_clustering_reach.py` pins the
+    two definitions against each other rather than restating the rule."""
+    return discover._absolute_url(row.get("url") or row.get("canonicalUrl"))
+
+
 def index_by_member(stories: list) -> dict:
     """article id -> the story id it landed in, so membership can be diffed."""
     out = {}
@@ -201,6 +214,49 @@ MERGE_MAX_LARGEST = 120
 #: actually detects a bad merge is the bad-cluster COUNT, which has a fixed meaning regardless of
 #: how many clusters are scored.
 MERGE_MEAN_TOLERANCE = 0.01
+
+
+def _reach(rows: list, a_member: dict, b_member: dict) -> dict:
+    """Coverage change split by whether an article could reach a story **at all** before.
+
+    ``droppedOut`` and ``newlyCovered`` are one number each, and one number cannot adjudicate a
+    change whose whole purpose is to rescue a population. `audit_source_cohort` records the same
+    defect and the fix for it: *"Every previous version of this script measured COST precisely and
+    BENEFIT not at all, which is why the five-outlet cohort could not be adjudicated: 29 collateral
+    losses against an unquantified good is not a trade, it is half a trade."*
+
+    The split is by the **defect itself**, not by a language guess: an article whose headline yields
+    fewer than ``MIN_TITLE_TOKENS`` under the SHIPPED tokenizer is structurally excluded from every
+    story — `pair_admits` rejects it before any other test — so it is exactly the population a
+    tokenizer change exists to reach. Deriving the bucket from the title means it is always
+    available, where ``language`` is populated for only ~80% of rows and 0% of some adapters.
+
+    Two rows, and only the second one is the benefit:
+
+    ``reachable``    had enough tokens before. Its ``newly`` and ``dropped`` are the collateral —
+                     English and accented-Latin stories rearranging.
+    ``excluded``     had too few. ``dropped`` here is 0 by construction (it was in no story), so
+                     ``newly`` is the entire measured gain, and if it is small the change is paying
+                     a real cost for nothing.
+    """
+    out = {k: {"articles": 0, "before": 0, "after": 0, "dropped": 0, "newly": 0}
+           for k in ("reachable", "excluded")}
+    langs: dict = {}
+    for r in rows:
+        key = member_key(r)
+        shipped = clustering.title_tokens(r.get("title") or r.get("headline") or "")
+        bucket = "reachable" if len(shipped) >= clustering.MIN_TITLE_TOKENS else "excluded"
+        was, now = key in a_member, key in b_member
+        for sink in (out[bucket], langs.setdefault((r.get("language") or "?").strip() or "?",
+                                                   {"articles": 0, "before": 0, "after": 0,
+                                                    "dropped": 0, "newly": 0})):
+            sink["articles"] += 1
+            sink["before"] += was
+            sink["after"] += now
+            sink["dropped"] += was and not now
+            sink["newly"] += now and not was
+    return {"byReach": out,
+            "byLanguage": dict(sorted(langs.items(), key=lambda kv: -kv[1]["articles"])[:12])}
 
 
 def verdict(res: dict, *, max_dropped: float = MAX_DROPPED, merging: bool = False) -> dict:
@@ -326,6 +382,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
         if url not in b_member:
             lost[old] = lost.get(old, 0) + 1
     dropped_from = sorted(lost.items(), key=lambda kv: -kv[1])
+    reach = _reach(rows, a_member, b_member)
 
     return {
         "articles": len(rows),
@@ -362,6 +419,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
         "afterCovered": len(b_member),
         "droppedOut": len([u for u in a_member if u not in b_member]),
         "newlyCovered": len([u for u in b_member if u not in a_member]),
+        "reach": reach,
         "droppedFrom": [{
             "lost": n,
             "articles": a_by_id[sid]["totalCoverage"],
@@ -584,6 +642,40 @@ def main(argv=None) -> int:
     print(f"clusters merged    : {res['mergedCount']:,}")
     print(f"articles in a story: {res['beforeCovered']:,} -> {res['afterCovered']:,} "
           f"(dropped out {res['droppedOut']:,}, newly covered {res['newlyCovered']:,})")
+
+    # Who the change REACHED, against who it cost. `droppedOut` and `newlyCovered` are one number
+    # each, and one number cannot adjudicate a change whose purpose is to rescue a population —
+    # `audit_source_cohort` records exactly this: "29 collateral losses against an unquantified
+    # good is not a trade, it is half a trade."
+    reach = res.get("reach") or {}
+    by_reach = reach.get("byReach") or {}
+    if by_reach:
+        print(f"\n=== who the change reached ===")
+        print("    Split by the DEFECT, not by a language guess: `excluded` is every article whose")
+        print("    headline yields < MIN_TITLE_TOKENS under the SHIPPED tokenizer, so pair_admits")
+        print("    rejects it before any other test and it can be in no story at all. Its `dropped`")
+        print("    is therefore 0 by construction, and its `newly` is the ENTIRE measured benefit.")
+        print(f"\n  {'population':<12} {'articles':>9} {'covered before':>15} {'after':>8} "
+              f"{'dropped':>8} {'newly':>7}")
+        for name in ("reachable", "excluded"):
+            v = by_reach.get(name) or {}
+            print(f"  {name:<12} {v.get('articles', 0):>9,} {v.get('before', 0):>15,} "
+                  f"{v.get('after', 0):>8,} {v.get('dropped', 0):>8,} {v.get('newly', 0):>7,}")
+        gain = (by_reach.get("excluded") or {}).get("newly", 0)
+        cost = (by_reach.get("reachable") or {}).get("dropped", 0)
+        print(f"\n  the trade: {gain:,} article(s) reached a story that structurally could not, "
+              f"against {cost:,} lost from stories that already worked.")
+        if gain == 0:
+            print("  *** THE BENEFIT IS ZERO. Whatever this cost, it bought nothing for the")
+            print("      population it was built for. Do not adopt on the VERDICT line.")
+    by_lang = reach.get("byLanguage") or {}
+    if by_lang:
+        print(f"\n  {'lang':>6} {'articles':>9} {'before':>8} {'after':>8} {'dropped':>8} {'newly':>7}")
+        for lang, v in by_lang.items():
+            print(f"  {lang[:6]:>6} {v['articles']:>9,} {v['before']:>8,} {v['after']:>8,} "
+                  f"{v['dropped']:>8,} {v['newly']:>7,}")
+        print("    `language` is populated for ~80% of rows, so this is the secondary view; the")
+        print("    reach table above is the one that is always complete.")
 
     if res.get("exhibits"):
         print("\nknown exhibits (truth from the ratified rubric; 'together' = one admitted story)")
