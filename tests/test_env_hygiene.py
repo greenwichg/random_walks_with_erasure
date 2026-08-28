@@ -258,19 +258,54 @@ def test_the_password_survives_the_env_file(tmp_path, password, stored):
 # --------------------------------------------------------------------------- #
 # 4. Documented commands that do not run.
 # --------------------------------------------------------------------------- #
+#: Modules under examples/ that a documented one-liner might import. Every name here is one that
+#: `python -c` cannot import from /app without help. The clustering/story names were added after a
+#: verification one-liner published in .env.production.example — the step whose whole purpose was
+#: "do not assume it worked" — died on ModuleNotFoundError in front of the operator.
 ENGINE_MODULES = ("store", "settings_service", "notification_service", "email_sender",
                   "email_consent", "email_delivery", "email_digest", "health_report",
-                  "api_fastapi", "score_reference", "db_backup")
+                  "api_fastapi", "score_reference", "db_backup",
+                  "story_service", "clustering", "corpus", "source_evaluation",
+                  "outlet_registry", "discover", "search", "feed_service")
 
 
 def _oneliners():
-    """Every `python -c` in the docs and the ops scripts, with its source location."""
+    """Every `python -c` in the docs, the ops scripts and the env template, with its location.
+
+    Three things this scan has to survive, each learned from a command that shipped broken:
+
+    * **the env template is in scope.** A verification one-liner was published there — the step
+      whose whole purpose was "do not assume it worked" — and it died on ModuleNotFoundError in
+      front of the operator. Anywhere someone is told to type a command is an interface.
+    * **backslash continuations are joined.** A command split across lines was scanned as two
+      fragments: the first held `python -c` and imported only `sys`, the second held the engine
+      import and was never looked at. The check passed on a command that could not run.
+    A command shown inside a comment block needs no special handling: the checks are substring
+    matches, so a leading `#` never hid one. That was tried and removed — a component whose
+    removal changes no outcome is decoration, and this file is the wrong place to keep any."""
     import re
-    for path in sorted([*(ROOT / "docs").glob("*.md"), *(ROOT / "deploy" / "ops").glob("*.sh")]):
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "python -c" in line or "python3 -c" in line:
-                yield path.relative_to(ROOT), n, line
-            elif re.search(r"^\s*(import|from)\s", line):
+    for path in sorted([*(ROOT / "docs").glob("*.md"),
+                        *(ROOT / "deploy" / "ops").glob("*.sh"),
+                        *(ROOT / "deploy").glob("*.example"),
+                        *(p for p in (ROOT / "DEPLOYMENT.md", ROOT / "README.md",
+                                      ROOT / "GUIDE.md") if p.exists())]):
+        raw = path.read_text(encoding="utf-8").splitlines()
+
+        buf, start = "", None
+        for n, line in enumerate(raw, 1):
+            body = line.rstrip()
+            if start is None:
+                start = n
+            if body.endswith("\\"):
+                buf += body[:-1] + " "
+                continue
+            buf += body
+            if "python -c" in buf or "python3 -c" in buf:
+                yield path.relative_to(ROOT), start, buf
+            buf, start = "", None
+
+        for n, line in enumerate(raw, 1):
+            if re.search(r"^\s*(import|from)\s", line):
                 yield path.relative_to(ROOT), n, line       # heredoc/continuation bodies
 
 
