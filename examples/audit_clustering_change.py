@@ -103,7 +103,7 @@ def deploy_env_present() -> bool:
 def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
           quorum=None, support=None, repair=None, merge=None, desc=None, veto=None,
           veto_stats=None,
-          entity_merge=None, ent_veto=None, entities=None, lexicons=None, hyphen=None,
+          entity_merge=None, ent_veto=None, entities=None, lexicons=None, hyphen=None, uni=None,
           s_scope=None,
           derived=None, derived_df=None, derived_days=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
@@ -117,6 +117,7 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
                                        quorum=quorum, support=support, s_scope=s_scope,
                                        repair=repair, merge=merge, desc=desc,
                                        veto=veto, veto_stats=veto_stats,
+                                       uni=uni,
                                        entity_merge=entity_merge, ent_veto=ent_veto,
                                        entities=entities,
                                        lexicons=lexicons, hyphen=hyphen,
@@ -258,7 +259,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             before_quorum=None, after_quorum=None, after_support=None, after_scope=None,
             after_repair=None, after_merge=None, after_desc=None,
             after_veto=None, after_entity_merge=None, after_ent_veto=None,
-            after_lexicons=None, after_hyphen=None,
+            after_lexicons=None, after_hyphen=None, after_uni=None,
             after_derived=None, after_derived_df=None, after_derived_days=None) -> dict:
     rows = story_service._fetch(store_)
     # The entity mapping is fetched when EITHER a flag asks for the X5b pass OR production is
@@ -281,7 +282,7 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
               support=after_support, s_scope=after_scope, repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
               entity_merge=after_entity_merge, ent_veto=after_ent_veto, entities=entities,
-              lexicons=after_lexicons, hyphen=after_hyphen,
+              lexicons=after_lexicons, hyphen=after_hyphen, uni=after_uni,
               derived=after_derived, derived_df=after_derived_df,
               derived_days=after_derived_days)
     if veto_stats is not None and "derivedBoilerplate" in veto_stats:
@@ -459,6 +460,14 @@ def main(argv=None) -> int:
                     help="derived-boilerplate df floor (default: configured, 25)")
     ap.add_argument("--boilerplate-days", type=int, default=None, metavar="N",
                     help="derived-boilerplate distinct-days floor (default: configured, 5)")
+    ap.add_argument("--unicode-words", action="store_true",
+                    help="CANDIDATE TOKENIZER: match \\w plus combining marks instead of "
+                         "[a-z0-9], and emit character bigrams for scripts with no word separator "
+                         "(CJK, Thai). Measured 2026-08-27: the shipped class yields ZERO tokens "
+                         "for ko/ar/zh/ja/ru/ta/hi, and pair_admits rejects anything under "
+                         "MIN_TITLE_TOKENS before any other test, so those articles cannot join a "
+                         "story under any configuration. Does NOT fold diacritics — see "
+                         "story_service.unicode_words.")
     ap.add_argument("--hyphen-compounds", action="store_true",
                     help="AFTER side: hyphenated compounds also contribute their joined token "
                          "('X-Men' carries 'xmen', not just the generic fragment 'men') — the "
@@ -507,6 +516,7 @@ def main(argv=None) -> int:
                   after_entity_merge=args.entity_merge,
                   after_lexicons=lex_names,
                   after_hyphen=True if args.hyphen_compounds else None,
+                  after_uni=True if args.unicode_words else None,
                   after_derived=True if args.derived_boilerplate else None,
                   after_derived_df=args.boilerplate_df,
                   after_derived_days=args.boilerplate_days)
@@ -533,6 +543,7 @@ def main(argv=None) -> int:
               if (args.entity_merge or story_service.entity_merge_min()) else "")
            + (", entity-veto" if (args.entity_veto or story_service.entity_veto()) else "")
            + (f", lexicons {'+'.join(lex_names)}" if lex_names else "")
+           + (", unicode-words" if args.unicode_words else "")
            + (", hyphen-compounds" if args.hyphen_compounds else "")
            + ((", derived-boilerplate"
                + (f"(df>={args.boilerplate_df})" if args.boilerplate_df else "")

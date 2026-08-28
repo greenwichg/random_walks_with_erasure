@@ -572,14 +572,17 @@ def _geo_coherence(members: list, votes: dict) -> "tuple[Optional[float], int]":
     return round(max(votes.values()) / located, 3), located
 
 
-def article_tokens(a: dict, cap: int = 0, hyphen: bool = False) -> frozenset:
+def article_tokens(a: dict, cap: int = 0, hyphen: bool = False,
+                   uni: bool = False) -> frozenset:
     """The clustering signal for one article: its headline, plus ``cap`` dek tokens when > 0.
 
     One function so the primary build, the repair re-split and the audit cannot drift into scoring
     different things — a repair that saw a different signal from the build that produced the
     cluster would re-split on a disagreement rather than on a defect. ``hyphen`` threads the
-    hyphen-compound candidate (see :func:`hyphen_compounds`) for the same reason."""
-    toks = clustering.title_tokens(a.get("headline") or "", hyphen_compounds=hyphen)
+    hyphen-compound candidate (see :func:`hyphen_compounds`) for the same reason, and ``uni``
+    threads the Unicode-word candidate (see :func:`unicode_words`)."""
+    toks = clustering.title_tokens(a.get("headline") or "", hyphen_compounds=hyphen,
+                                   unicode_words=uni)
     if cap > 0:
         toks = toks | clustering.description_tokens(a.get("description") or "", cap)
     return toks
@@ -933,7 +936,7 @@ def boilerplate_days() -> int:
     return _env_int("RWE_CLUSTER_BOILERPLATE_DAYS", 5)
 
 
-def derived_boilerplate(arts: list, cap: int = 0, hyphen: bool = False, *,
+def derived_boilerplate(arts: list, cap: int = 0, hyphen: bool = False, uni: bool = False, *,
                         min_df: int = 25, min_days: int = 5) -> frozenset:
     """The corpus-derived boilerplate set: tokens meeting BOTH registered conditions over the
     build's own articles (the same token sets the clusterer scores — ``article_tokens`` at the
@@ -943,7 +946,7 @@ def derived_boilerplate(arts: list, cap: int = 0, hyphen: bool = False, *,
     days: dict = {}
     for a in arts:
         d = (a.get("publishedAt") or "")[:10]
-        for t in article_tokens(a, cap, hyphen):
+        for t in article_tokens(a, cap, hyphen, uni):
             df[t] = df.get(t, 0) + 1
             if d:
                 days.setdefault(t, set()).add(d)
@@ -971,14 +974,14 @@ EVENT_BAND_OUT_CAP = 2000
 
 def _event_identity_closure(arts: list, cap: int, hyphen: bool, verdicts: dict,
                             band_hi: float, stats: Optional[dict] = None,
-                            band_out: Optional[dict] = None):
+                            band_out: Optional[dict] = None, *, uni: bool = False):
     """``evidence(x, y)`` for the banded semantic judge (``event_identity``): consult a persisted
     verdict ONLY for in-band edges, veto ONLY on a confident ``different_event``, and note every
     in-band edge that has no verdict yet so the out-of-band worker can earn one. Everything else
     — high-overlap edges, unjudged pairs, ``same_event``, ``uncertain`` — is byte-identical to
     production. Deterministic: a pure function of the build's rows and the verdict dict."""
     import event_identity
-    toks = [article_tokens(a, cap, hyphen) for a in arts]
+    toks = [article_tokens(a, cap, hyphen, uni) for a in arts]
 
     def _url(i: int) -> str:
         return str(arts[i].get("url") or arts[i].get("id") or arts[i].get("headline") or "")
@@ -1003,6 +1006,33 @@ def _event_identity_closure(arts: list, cap: int, hyphen: bool, verdicts: dict,
                 "published_b": b.get("publishedAt") or ""}
         return True
     return ok
+
+
+def unicode_words() -> bool:
+    r"""Candidate tokenizer replacement — **NOT measured against the live catalogue yet. Do not turn
+    this on.** (``RWE_CLUSTER_UNICODE_WORDS``; the audit's instrument, exactly as
+    :func:`hyphen_compounds` is.)
+
+    The defect, measured 2026-08-27 and not in dispute: `clustering.title_tokens` matches
+    ``[a-z0-9]+``, which yields **zero tokens** for Korean, Arabic, Chinese, Japanese, Russian,
+    Tamil and Hindi headlines. `clustering.pair_admits` rejects anything below
+    ``MIN_TITLE_TOKENS`` before any other test, so those articles **cannot join a story under any
+    configuration**. Production, same run: those languages contributed 472 window articles and
+    **one** in-story article — 0.2%, against 29% for English. It is not a participation problem
+    with a tuning answer; it is a structural exclusion.
+
+    The candidate widens the class to ``\w`` plus combining marks (abugidas fragment without them)
+    and emits character bigrams for scripts with no word separator (CJK, Thai). What it does
+    **not** do is fold diacritics, so ``Erdoğan`` and ``Erdogan`` remain different tokens and two
+    English headlines about one event still fail to cluster. That is a separate candidate with a
+    separate risk profile — folding merges Turkish ``ı``/``i`` and German ``ö``/``o`` — and pairing
+    them would make one measurement unable to attribute either result.
+
+    Off until ``audit_clustering_change.py --unicode-words`` has run against the live catalogue.
+    This function decides the story partition for the whole product, and the LAST tokenizer
+    candidate measured worse than the disease — see :func:`hyphen_compounds`."""
+    v = os.environ.get("RWE_CLUSTER_UNICODE_WORDS", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
 
 
 def hyphen_compounds() -> bool:
@@ -1036,12 +1066,13 @@ def template_gate() -> bool:
 
 
 def _template_closure(arts: list, cap: int, stats: Optional[dict] = None,
-                      lexicon: frozenset = TEMPLATE_TOKENS, hyphen: bool = False):
+                      lexicon: frozenset = TEMPLATE_TOKENS, hyphen: bool = False,
+                      uni: bool = False):
     """``evidence(x, y)`` for the template gate: True iff the pair shares >= 1 token outside
     ``lexicon`` (the union of the active lexicons — announce alone in production). Token sets
     are the build's own (:func:`article_tokens` at the build's dek cap and hyphen mode), so the
     gate judges exactly the signal that admitted the pair. Pure and deterministic."""
-    toks = [article_tokens(a, cap, hyphen) for a in arts]
+    toks = [article_tokens(a, cap, hyphen, uni) for a in arts]
 
     def ok(x: int, y: int) -> bool:
         if (toks[x] & toks[y]) - lexicon:
@@ -1667,7 +1698,7 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
             support: int = clustering.DEFAULT_MIN_SUPPORT, s_scope: str = "any",
             desc: int = 0, veto: str = "", veto_stats: Optional[dict] = None,
             template: bool = False, lexicon: frozenset = TEMPLATE_TOKENS,
-            hyphen: bool = False, ent_veto: bool = False,
+            hyphen: bool = False, uni: bool = False, ent_veto: bool = False,
             entities: "Optional[dict]" = None, event_verdicts: "Optional[dict]" = None,
             band_out: "Optional[dict]" = None) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
@@ -1695,14 +1726,14 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     r_merge_ok = _and_merge_ok(r_merge_ok, r_ent_ok)
     if template:
         r_evidence = _and_evidence(
-            _template_closure(members, desc, veto_stats, lexicon=lexicon, hyphen=hyphen),
+            _template_closure(members, desc, veto_stats, lexicon=lexicon, hyphen=hyphen, uni=uni),
             r_evidence)
     if event_verdicts is not None:
         r_evidence = _and_evidence(
             _event_identity_closure(members, desc, hyphen, event_verdicts, event_band_hi(),
-                                    veto_stats, band_out), r_evidence)
+                                    veto_stats, band_out, uni=uni), r_evidence)
     pieces = _admit(
-        clustering.cluster(members, tokens=lambda a: article_tokens(a, desc, hyphen),
+        clustering.cluster(members, tokens=lambda a: article_tokens(a, desc, hyphen, uni),
                            time=lambda a: clustering.parse_time(a["publishedAt"]),
                            sim=sim, window_days=window_days, min_shared=min_shared,
                            min_tokens=min_tokens, idf=idf, link_quorum=quorum,
@@ -2173,6 +2204,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   template: Optional[bool] = None,
                   lexicons: "Optional[tuple[str, ...]]" = None,
                   hyphen: Optional[bool] = None,
+                  uni: Optional[bool] = None,
                   derived: Optional[bool] = None,
                   derived_df: Optional[int] = None,
                   derived_days: Optional[int] = None,
@@ -2261,13 +2293,16 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     # Candidate knobs, resolved like every other: None = whatever production is configured with.
     lex_union = _lexicon_union(template_lexicons() if lexicons is None else tuple(lexicons))
     hyph = hyphen_compounds() if hyphen is None else bool(hyphen)
+    # Resolved ONCE for the build, never per article: reading the environment inside a per-row
+    # loop is the cost `corpus.tier_resolver` exists to document.
+    uni_on = unicode_words() if uni is None else bool(uni)
     # The corpus-derived boilerplate set joins the SAME gate as the manual lexicons — computed
     # once over the full build's articles and threaded to the repair re-cluster unchanged, so
     # both passes judge edges against one vocabulary.
     der_on = derived_boilerplate_on() if derived is None else bool(derived)
     if der_on:
         der = derived_boilerplate(
-            arts, cap, hyph,
+            arts, cap, hyph, uni_on,
             min_df=boilerplate_df() if derived_df is None else int(derived_df),
             min_days=boilerplate_days() if derived_days is None else int(derived_days))
         if veto_stats is not None:
@@ -2278,7 +2313,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     use_gate = t_gate or der_on
     if use_gate:
         g_evidence = _and_evidence(
-            _template_closure(arts, cap, veto_stats, lexicon=lex_union, hyphen=hyph), g_evidence)
+            _template_closure(arts, cap, veto_stats, lexicon=lex_union, hyphen=hyph, uni=uni_on),
+            g_evidence)
     # The banded semantic judge (event_identity): verdicts are an INPUT — the build never calls a
     # network — and ``event_verdicts is None`` means the judge is off for this build, byte-identical
     # to production. Composed through the same evidence hook as every gate, so admission, quorum
@@ -2286,7 +2322,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     if event_verdicts is not None:
         g_evidence = _and_evidence(
             _event_identity_closure(arts, cap, hyph, event_verdicts, event_band_hi(),
-                                    veto_stats, band_out), g_evidence)
+                                    veto_stats, band_out, uni=uni_on), g_evidence)
     # Support breadth is resolved once and threaded to BOTH passes for the same reason the
     # evidence lexicon is: the repair re-clusters under a stricter quorum, and if it linked on a
     # different corroboration rule than the primary build it would re-split on the disagreement.
@@ -2294,7 +2330,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     scope = support_scope() if s_scope is None else (s_scope if s_scope in _SUPPORT_SCOPES
                                                      else "any")
     groups = clustering.cluster(
-        arts, tokens=lambda a: article_tokens(a, cap, hyph),
+        arts, tokens=lambda a: article_tokens(a, cap, hyph, uni_on),
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
         link_quorum=link_quorum() if quorum is None else quorum, min_support=prop,
@@ -2307,7 +2343,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                              min_shared=shared, min_tokens=tokens_floor, idf=weighting,
                              min_articles=min_articles, min_publishers=min_publishers, desc=cap,
                              veto=veto_mode, veto_stats=veto_stats, template=use_gate,
-                             lexicon=lex_union, hyphen=hyph,
+                             lexicon=lex_union, hyphen=hyph, uni=uni_on,
                              ent_veto=ent_on, entities=entities,
                              event_verdicts=event_verdicts, band_out=band_out)
             if pieces is not None:

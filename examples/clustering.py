@@ -89,8 +89,117 @@ best top since things
 """.split())
 
 
-def title_tokens(title: str, hyphen_compounds: bool = False) -> frozenset:
+#: Codepoint ranges with no word separator, so a word regex returns a whole clause as one token: CJK
+#: ideographs and their extensions, Hiragana, Katakana, and Thai. For these, :func:`title_tokens`
+#: emits character BIGRAMS — the standard information-retrieval treatment for unsegmented scripts,
+#: and the only option that does not add a segmenter dependency.
+#:
+#: **Hangul is deliberately NOT here.** Korean uses spaces between words, so it segments like any
+#: other script; bigramming it would replace 4 real words with 11 fragments and make Korean match
+#: Korean on syllable coincidence. Grouping "non-Latin" into one bucket is the error this list
+#: exists to avoid — the question is whether a script has word separators, not what it looks like.
+_UNSEGMENTED = (
+    (0x3040, 0x30FF),    # Hiragana + Katakana
+    (0x3400, 0x4DBF),    # CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),    # CJK Unified Ideographs
+    (0x0E00, 0x0E7F),    # Thai
+    (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
+)
+
+
+#: Combining-mark ranges that ``\\w`` does **not** match, because Python classifies categories ``Mn``
+#: and ``Mc`` as non-word characters. For an abugida that is fatal: Tamil ``அதிபர்`` contains U+0BBF
+#: (Mc) and U+0BCD (Mn), so ``\\w+`` returns the fragments ``அத`` and ``பர`` — both two characters,
+#: both then dropped by the length floor. Measured: ``\\w+`` alone leaves Tamil and Hindi at zero
+#: usable tokens, which would have made this candidate look like it fixed "non-Latin scripts" while
+#: leaving two of the largest ones exactly as broken as before.
+_MARKS = (
+    "̀-ͯ"      # combining diacriticals (Latin, Greek)
+    "҃-҉"      # Cyrillic
+    "֑-ׇֽֿׁׂׅׄ"    # Hebrew points
+    "ؐ-ًؚ-ٰٟۖ-ۜ"        # Arabic
+    "ऀ-ःऺ-ॏ॑-ॗॢॣ"  # Devanagari
+    "ঁ-ঃ়-্"                           # Bengali
+    "ஂா-்ௗ"                            # Tamil
+    "ఀ-ఄా-ౖ"                           # Telugu
+    "ัิ-ฺ็-๎"                     # Thai
+    "‌‍"       # ZWNJ / ZWJ — orthographic in Devanagari and Persian, not separators
+)
+
+#: One word: a ``\\w`` run that may carry combining marks anywhere inside it.
+_WORD_RE = re.compile(r"(?:\w|[" + _MARKS + r"])+", re.UNICODE)
+
+
+def _unsegmented(ch: str) -> bool:
+    o = ord(ch)
+    return any(lo <= o <= hi for lo, hi in _UNSEGMENTED)
+
+
+def _script_tokens(lower: str) -> list:
+    """``\\w+`` words, with unsegmented runs replaced by their character bigrams.
+
+    Two different problems, handled in one pass because they occur in one string — a Japanese
+    headline routinely carries Latin brand names, and a Korean one carries numerals.
+
+    * **Space-separated non-ASCII** (Cyrillic, Arabic, Greek, Hebrew, Devanagari, Tamil, Hangul
+      words, and every accented Latin alphabet) needs only a wider character class. ``[a-z0-9]+``
+      splits ``kündigt`` into ``k``/``ndigt`` and yields **nothing at all** for a script with no
+      ASCII letters.
+    * **Unsegmented** scripts have no word boundary to find, so ``\\w+`` returns the whole clause as
+      a single token — which passes the length filter and then matches only a byte-identical
+      headline. Bigrams give them a token set with the granularity the Jaccard rule assumes.
+    """
+    out = []
+    for word in _WORD_RE.findall(lower):
+        for run in _same_script_runs(word):
+            if _unsegmented(run[0]):
+                # Bigrams. A one-character run has none, so it is kept whole rather than dropped —
+                # a single ideograph is a real word in both Chinese and Japanese.
+                out.extend(run[i:i + 2] for i in range(len(run) - 1)) if len(run) > 1 \
+                    else out.append(run)
+            else:
+                out.append(run)
+    return out
+
+
+def _same_script_runs(word: str) -> list:
+    """``word`` split into maximal runs of one kind, segmented or not.
+
+    A Japanese headline routinely carries a Latin brand name with no space around it —
+    ``iPhone17発表`` is one ``\\w+`` match — and bigramming that whole blob would destroy the Latin
+    word while leaving ``e17`` style junk. Splitting first keeps each half under the rule that suits
+    it."""
+    runs, run = [], ""
+    for ch in word:
+        if run and _unsegmented(ch) != _unsegmented(run[-1]):
+            runs.append(run)
+            run = ""
+        run += ch
+    if run:
+        runs.append(run)
+    return runs
+
+
+def title_tokens(title: str, hyphen_compounds: bool = False,
+                 unicode_words: bool = False) -> frozenset:
     """Content word tokens of a headline (lowercased, length > 2, stop-words removed).
+
+    ``unicode_words`` (**candidate; the audit's instrument, defaulted OFF — see
+    `story_service.unicode_words`**) replaces the ASCII-only ``[a-z0-9]+`` class with ``\\w+`` plus
+    bigrams for unsegmented scripts. The defect it targets is measured and severe: ``[a-z0-9]+``
+    yields **zero tokens** for Korean, Arabic, Chinese, Japanese, Russian and Tamil headlines, and
+    :func:`pair_admits` rejects anything under :data:`MIN_TITLE_TOKENS` before any other test — so
+    those articles **cannot join a story under any configuration**. Production 2026-08-27: those six
+    languages contributed 472 window articles and **1** in-story article, 0.2%, against 29% for
+    English.
+
+    It is not only an international defect. ``Erdoğan`` tokenizes to ``erdo`` and ``Orbán`` to
+    ``orb``, so two ENGLISH headlines about one event — one keeping the diacritics, one not — share
+    only ``budapest`` and ``meets`` and fall below :data:`MIN_SHARED_TOKENS`.
+
+    Defaulted off and shipped off, exactly as ``hyphen_compounds`` is: this function decides the
+    story partition for the whole product, and the last tokenizer candidate measured **worse** than
+    the disease. Measure with ``audit_clustering_change.py --unicode-words`` before proposing it.
 
     Pure numbers are dropped: in a headline a bare number is nearly always a count, a date or a
     listicle rank ("6 Best… Since 2010"), not the thing the story is about. It is a real trade —
@@ -108,9 +217,13 @@ def title_tokens(title: str, hyphen_compounds: bool = False) -> frozenset:
     "additive only" because tokens are only added; the union growth is what that reasoning
     missed, and it is kept here so the next tokenizer candidate meets it."""
     lower = (title or "").lower()
-    toks = re.findall(r"[a-z0-9]+", lower)
+    toks = _script_tokens(lower) if unicode_words else re.findall(r"[a-z0-9]+", lower)
+    # The length floor is applied to BIGRAMS too, which would drop every one of them, so
+    # unsegmented runs are exempted from it — a 2-character bigram IS the unit for those scripts,
+    # and holding them to a 3-character floor would re-create the zero-token defect one layer down.
     out = set(t for t in toks
-              if len(t) > 2 and not t.isdigit() and t not in _STOPWORDS)
+              if (len(t) > 2 or (unicode_words and _unsegmented(t[0])))
+              and not t.isdigit() and t not in _STOPWORDS)
     if hyphen_compounds:
         for compound in re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)+", lower):
             joined = compound.replace("-", "")

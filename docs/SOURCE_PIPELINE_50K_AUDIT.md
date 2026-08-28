@@ -574,3 +574,112 @@ differentially — the test compares against the real function rather than resta
 a restatement would be the third copy and a third copy cannot detect drift in the other two.
 
 Full suite: **3,959 passed, 9 skipped**.
+
+
+---
+
+## 8 · The blocker the M11 tranche run exposed: the tokenizer excludes most of the world
+
+`audit_source_cohort.py`'s language table has carried this line for two days: *"every non-Latin-script
+language sits at exactly 0%, which is a question about the tokenizer, not a finding."* Running it for
+the M11 tranche made it worth answering. It is both.
+
+### 8.1 · Measured
+
+`clustering.title_tokens` matches `[a-z0-9]+`. That is ASCII-only, so it returns **zero tokens** for
+a Korean, Arabic, Chinese, Japanese, Russian, Tamil or Hindi headline. And `clustering.pair_admits`
+rejects on token count **before any other test**:
+
+```python
+floor = max(1, min_tokens)
+if len(tx) < floor or len(ty) < floor or len(tx & ty) < min_shared:
+    return False
+```
+
+So those articles **cannot join a story under any configuration**. Not "cluster poorly" — there is no
+threshold that admits them and no second route in; the `evidence` hook is an additional veto, not an
+alternative path. Production, same run:
+
+| | outlets | articles | in-story | |
+|---|---:|---:|---:|---:|
+| ko | 4 | 118 | 0 | 0% |
+| ar | 6 | 98 | 0 | 0% |
+| ru | 5 | 90 | 1 | 1% |
+| zh | 4 | 67 | 0 | 0% |
+| ja | 3 | 52 | 0 | 0% |
+| ta | 1 | 47 | 0 | 0% |
+| hi | 2 | 44 | 2 | 5% |
+| **non-Latin** | **23** | **516** | **3** | **0.6%** |
+| Latin, non-English | 36 | 632 | 81 | 12.8% |
+| en | 225 | 17,490 | 4,987 | 29% |
+
+**It is not only an international defect.** `Erdoğan` tokenizes to `erdo` and `Orbán` to `orb`, so two
+ENGLISH headlines about one event — one keeping the diacritics, one not — share only `budapest` and
+`meets`, fall below `MIN_SHARED_TOKENS`, and land in different stories. Accented Latin does not fail
+outright; it fragments (`kündigt` → `ndigt`, `cumhurbaşkanı` → `cumhurba`), which is consistent with
+de at 22% and tr at 9% against en's 29%.
+
+### 8.2 · Why this outranks the rest of the roadmap for a 50,000-source corpus
+
+A 50,000-source corpus is necessarily international, and Hidden View's product is cross-source
+comparison. A source whose articles cannot join a story contributes nothing to coverage, nothing to a
+blindspot claim, and nothing to a lean distribution — only Search volume. **The tokenizer already
+enforces a de facto Tier B on every non-Latin-script outlet**, and M9 could "promote" one to Tier A
+today with no effect whatsoever.
+
+That reframes M11's own numbers. Admitting a Korean or Arabic source is currently free of partition
+cost — those rows were never in a story — and equally free of partition *benefit*.
+
+### 8.3 · What was built: the instrument, not the fix
+
+`title_tokens` decides the story partition for the entire product, and this repository has already
+measured one tokenizer candidate against the live catalogue and **rejected** it: `hyphen_compounds`
+split 121 clusters and dropped 2.6% of covered articles. So this lands the same way — a candidate
+plus an instrument, defaulted off, shipping nothing:
+
+* `clustering.title_tokens(..., unicode_words=True)` — `\w` plus combining marks, with character
+  **bigrams** for scripts that have no word separator (CJK, Thai). Two mechanisms, because they are
+  two different problems: Hangul is deliberately word-split, not bigrammed, since Korean uses spaces.
+  Grouping "non-Latin" into one bucket is the error the range list exists to avoid.
+* Combining marks are included because `\w` excludes categories `Mn`/`Mc`. Without them Tamil
+  `அதிபர்` splits at U+0BBF into two-character fragments the length floor drops — `\w+` alone left
+  Tamil and Hindi at **zero** usable tokens, so the candidate would have looked like it fixed
+  "non-Latin scripts" while leaving two of the largest exactly as broken.
+* `story_service.unicode_words()` / `RWE_CLUSTER_UNICODE_WORDS`, resolved **once per build** and
+  threaded to the clusterer, the repair re-split, the event-identity closure and the template gate —
+  the same signal in all four, which is what `article_tokens` exists to guarantee.
+* `audit_clustering_change.py --unicode-words`.
+
+**What it deliberately does NOT do is fold diacritics**, so `Erdoğan` and `Erdogan` remain different
+tokens and the English pair above still fails to cluster. Folding is a separate candidate with a
+separate risk profile — it merges Turkish `ı`/`i` and German `ö`/`o` — and pairing them would make
+one measurement unable to attribute either result.
+
+### 8.4 · Verification
+
+54 tests. The load-bearing one is byte-identity of the default path, asserted against a
+re-implementation of the shipped expression rather than against the function under test. 10
+mutations, 10 caught — after three that were **missed** and are worth recording, because all three
+were the same shape:
+
+| missed at first | why the tests could not see it |
+|---|---|
+| the flag never reaches `clustering.cluster` | every test exercised `title_tokens` directly, so the instrument would have reported healthily while changing nothing |
+| the flag never reaches the event-identity closure | counting in-band edges passes either way — a closure with no tokens scores 0.0, which is *below* any band ceiling, so it bands everything. The separating assertion is the opposite one: the fixture scores 0.6, above the 0.5 ceiling, so a correctly-wired closure bands **nothing** |
+| the flag never reaches the template gate | the gate is off by default, so the mutation was inert until a test switched it on |
+
+One pass-through — `derived_boilerplate` — is wired and **not** pinned by a test. Its observable is a
+corpus-derived document-frequency set, and a four-article fixture cannot exercise one meaningfully;
+recorded rather than papered over.
+
+### 8.5 · The measurement that decides it
+
+Nothing should ship on the strength of §8.1. The run:
+
+```
+dc run --rm -T api python examples/audit_clustering_change.py --db "$RWE_DB_URL" --unicode-words
+```
+
+The bars are the ones `hyphen_compounds` was rejected on: clusters split, clusters merged, covered
+articles dropped, story count, and the ratified exhibits. A candidate that fixes 516 articles by
+breaking 2,000 English ones is not an improvement, and this is the tool that says which it is.
