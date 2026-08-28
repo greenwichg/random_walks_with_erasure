@@ -213,12 +213,55 @@ def verdict(s: dict, peers: int = 99) -> "tuple[str, str]":
                       f"but no registry row — curate one so it can eventually vote")
 
 
+def _tranche_hosts(st, args) -> list:
+    """The M11 hosts to run a counterfactual over, from ``--hosts`` or the admission table.
+
+    ``--from-admission cheapest`` is the ordering the cohort sizing argued for: **ascending existing
+    volume**, not descending. Volume is the evidence that a *request* is justified, which is why
+    `source_discovery` ranks by it — and it is exactly the wrong order for deciding what to *admit*,
+    because the highest-volume candidate is the one whose admission costs the product most.
+    `sportskeeda.com` at 5,089 articles is the worst first admission in the pool, not the best."""
+    if args.hosts:
+        return [h.strip().lower() for h in args.hosts.split(",") if h.strip()]
+    if not args.from_admission:
+        return []
+    states = ["candidate", "validated"] if args.from_admission == "cheapest" else [args.from_admission]
+    rows = st.admission_rows(states=states)
+    if args.from_admission == "cheapest":
+        catalogue, _window = st.host_article_counts()
+        rows = sorted(rows, key=lambda r: (catalogue.get(r["host"], 0), r["host"]))
+    return [r["host"] for r in rows][:args.tranche or len(rows)]
+
+
+def _shadow_predicate(hosts):
+    """``row -> bool``: would admitting these hosts put this row in the shadow lane?
+
+    Built from `corpus._matches` against a host-only index, which is precisely what
+    `store.admitted_shadow_hosts` contributes to `corpus.tier_index`. Using the real predicate means
+    a subdomain, or a row stored under the bare-domain publisher string, is counted here the same
+    way the running system will count it — the two cannot disagree because there is only one rule."""
+    import corpus
+    index = (frozenset(), frozenset(h.strip().lower() for h in hosts if h and h.strip()))
+    return lambda r: corpus._matches(index, r.get("publisher"),
+                                     r.get("canonicalUrl") or r.get("url"))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=os.environ.get("RWE_DB_URL"))
     ap.add_argument("--floor", type=int, default=VOLUME_FLOOR,
                     help="articles in the window below which an outlet gets no verdict")
     ap.add_argument("--show", type=int, default=30, help="candidates to list")
+    ap.add_argument("--hosts", default="",
+                    help="M11: run the counterfactual over these comma-separated hosts — what "
+                         "admitting them to the shadow lane would cost the story partition.")
+    ap.add_argument("--from-admission", default="",
+                    choices=["", "cheapest", "candidate", "validated", "admitted"],
+                    help="M11: take the tranche from the source_admission table instead of "
+                         "--hosts. `cheapest` is candidate+validated ordered by ASCENDING existing "
+                         "volume, which is the order to admit in — see _tranche_hosts.")
+    ap.add_argument("--tranche", type=int, default=0,
+                    help="with --from-admission, cap the tranche at this many hosts (0 = all)")
     args = ap.parse_args(argv)
 
     st = store_mod.Store(args.db)
@@ -372,20 +415,30 @@ def main(argv=None) -> int:
     print("    other says 'we cannot tell who this is'. If the cost lands on one of them, the")
     print("    other can ship alone.")
 
-    def counterfactual(label: str, drop: set):
-        if not drop:
-            print(f"\n  --- {label}: no outlets")
+    def counterfactual(label: str, drop, *, units: str = "outlets"):
+        """Rebuild without the selected rows and read the production bars.
+
+        ``drop`` is either a set of outlet identities (the historical form, used by the syndication
+        and host-instability verdicts) or a **predicate** on a row, which is what an M11 tranche
+        needs: admission assigns a tier to a *host*, and `corpus._matches` resolves that against the
+        article's URL as well as its publisher string. Re-deriving that rule here as "identity in
+        set" would be a second definition of what shadowing a host does, and this audit series has
+        had to converge four of those."""
+        is_dropped = drop if callable(drop) else (lambda r: _identity(reg, r) in drop)
+        count = len(drop) if not callable(drop) else len({_host(r) for r in rows if is_dropped(r)})
+        if not count:
+            print(f"\n  --- {label}: no {units}")
             return
-        keep = [r for r in rows if _identity(reg, r) not in drop]
+        keep = [r for r in rows if not is_dropped(r)]
         after = story_service.build_stories(keep, entities=ents,
                                             event_verdicts=verdicts_in)
         ma = ach.index_by_member(after)
-        moved = {member_key(r) for r in rows if _identity(reg, r) in drop}
+        moved = {member_key(r) for r in rows if is_dropped(r)}
         lost = [u for u in mb if u not in ma and u not in moved]
         cb = sum(1 for s in base if s.get("blindspotSide"))
         ca = sum(1 for s in after if s.get("blindspotSide"))
         bb, ab = ach._coherence_stats(base), ach._coherence_stats(after)
-        print(f"\n  --- {label}: {len(drop)} outlets, {len(rows) - len(keep):,} rows")
+        print(f"\n  --- {label}: {count} {units}, {len(rows) - len(keep):,} rows")
         print(f"      stories            : {len(base):,} -> {len(after):,}")
         print(f"      largest cluster    : {max((len(s['coverage']) for s in base), default=0)} -> "
               f"{max((len(s['coverage']) for s in after), default=0)}")
@@ -404,6 +457,18 @@ def main(argv=None) -> int:
     counterfactual("SYNDICATION only", synd)
     counterfactual("HOST INSTABILITY only", host)
     ma = counterfactual("ALL of them together", demote)
+
+    # ---------------------------------------------------------------- an M11 tranche
+    tranche = _tranche_hosts(st, args)
+    if tranche:
+        print(f"\n=== M11 TRANCHE: what admitting {len(tranche):,} host(s) would cost ===")
+        print("    Admission assigns the SHADOW tier, so these rows leave the story partition. The")
+        print("    bar is the same one above — OTHER articles that LOST their story — because the")
+        print("    question is identical: what breaks when this outlet stops holding clusters")
+        print("    together. Measured through `corpus` itself rather than a re-derived host match,")
+        print("    so what is simulated here is exactly what admission does.")
+        resolve = _shadow_predicate(tranche)
+        ma = counterfactual(f"admit {len(tranche):,} host(s) to shadow", resolve, units="hosts")
 
     print("\n=== ratified exhibits (all of them together) ===")
     for label, truth, b, a in ach._exhibit_outcomes(rows, mb, ma):

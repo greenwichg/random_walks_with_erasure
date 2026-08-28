@@ -500,8 +500,21 @@ history, which is what a demotion should mean." Right for a demotion. Unintended
 
 **Do not admit the cohort.** Admit small tranches where the crawl is actually wanted, and measure
 each with `audit_source_cohort.py` — whose bar is already the right one, *"OTHER articles that LOST
-their story"* (`audit_source_cohort.py:394`), the articles stranded when a host whose links held a
-cluster together is removed.
+their story"*, the articles stranded when a host whose links held a cluster together is removed.
+
+> **That recommendation did not execute when it was written, and the tool has been extended so it
+> does.** `audit_source_cohort.py` selected its own cohort by volume floor and had no way to take a
+> host list — a recommendation pointing at a tool that cannot accept its input is the "diagnostic
+> nothing invokes" defect this repository keeps finding, committed in a document rather than in code.
+> It now takes `--hosts`, or `--from-admission {cheapest,candidate,validated,admitted}` with
+> `--tranche N`, and filters rows through **`corpus._matches` itself** rather than a re-derived host
+> match, so what is simulated is exactly what admission does — subdomains and bare-domain publisher
+> strings included.
+
+```
+dc run --rm -T api python examples/audit_source_cohort.py --db "$RWE_DB_URL" \
+    --from-admission cheapest --tranche 25
+```
 
 The sizing inverts the intuitive pick. **sportskeeda.com is the worst possible first admission**, not
 the best: it is the largest existing contributor in the cohort, so admitting it removes 967 in-window
@@ -509,9 +522,16 @@ articles to gain a crawl of a source we already receive 5,089 articles from. `pa
 127 articles, a real local newsroom — is the shape the long tail of a 50,000-source corpus is
 actually made of, and moving it costs 35 in-window articles.
 
-A useful default tranche rule: **rank candidates by (editorial value ÷ existing volume), not by
-volume.** The discovery report ranks by volume because volume is the evidence that a request is
-justified; it is the wrong order for deciding what to admit first.
+A useful default tranche ordering: **ascending existing volume** (`--from-admission cheapest`), not
+descending. The discovery report ranks by volume because volume is the evidence that a *request* is
+justified; it is the wrong order for deciding what to *admit*, since the highest-volume candidate is
+the one whose admission costs the product most.
+
+**But ordering is not the answer, and a fixture in `tests/test_cohort_tranche.py` is the
+demonstration.** Two hosts covering the same events, 14 articles and 11: admitting the *smaller* one
+— the cheapest by volume — strands **all 14** of the other's articles, because the story loses the
+support that held it together. Cheap to move is not the same as cheap to lose. Volume orders the
+candidates; only the counterfactual measures them, which is why `--tranche` walks up in steps.
 
 #### What this does not change
 
