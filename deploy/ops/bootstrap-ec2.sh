@@ -133,10 +133,20 @@ CRON_PATH='PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
   echo "$CRON_PATH"
   echo "*/5 * * * * $TARGET_USER $REPO_ROOT/deploy/ops/monitor.sh >> /var/log/ih-monitor.log 2>&1"
 } > /etc/cron.d/ih-monitor
-chmod 644 /etc/cron.d/ih-offhost-backup /etc/cron.d/ih-monitor
+{
+  echo "# Phase 2 — scheduled source discovery: seed + a BOUNDED probe. Installed by bootstrap-ec2.sh."
+  echo "# No-ops until RWE_DISCOVERY_CRON=1 in deploy/.env. It never admits: admission changes what"
+  echo "# readers see, and this repository does not make partition changes without a human."
+  echo "# Piped to logger, not a file: /var/log is root-owned and the cron line runs as $TARGET_USER,"
+  echo "# so a redirect would fail before the script ran. Read it with: journalctl -t ih-discover"
+  echo "$CRON_PATH"
+  echo "41 * * * * $TARGET_USER $REPO_ROOT/deploy/ops/discover-sources.sh 2>&1 | logger -t ih-discover"
+} > /etc/cron.d/ih-discover
+chmod 644 /etc/cron.d/ih-offhost-backup /etc/cron.d/ih-monitor /etc/cron.d/ih-discover
 touch /var/log/ih-backup.log /var/log/ih-monitor.log
 chown "$TARGET_USER":"$TARGET_USER" /var/log/ih-backup.log /var/log/ih-monitor.log
-echo "cron installed: hourly off-host backup (ih-offhost-backup), 5-min health monitor (ih-monitor)"
+echo "cron installed: hourly off-host backup (ih-offhost-backup), 5-min health monitor (ih-monitor),"
+echo "  hourly source discovery (ih-discover; inert until RWE_DISCOVERY_CRON=1)"
 
 cat <<EOF
 
