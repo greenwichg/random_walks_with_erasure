@@ -13,6 +13,7 @@
    checks, because a driver only present in a doc protects nothing.
 """
 import pathlib
+import re
 import subprocess
 
 import pytest
@@ -269,6 +270,74 @@ ENGINE_MODULES = ("store", "settings_service", "notification_service", "email_se
                   "outlet_registry", "discover", "search", "feed_service")
 
 
+def _operator_surfaces():
+    """Every file where an operator is told to TYPE a command, newest-first-agnostic and sorted.
+
+    Shared by the one-liner scan and the env-edit scan so the two can never drift apart on which
+    files count as an interface. The env template earned its place the hard way: a verification
+    one-liner published there died on ModuleNotFoundError in front of the operator."""
+    return sorted([*(ROOT / "docs").glob("*.md"),
+                   *(ROOT / "deploy" / "ops").glob("*.sh"),
+                   *(ROOT / "deploy").glob("*.example"),
+                   *(p for p in (ROOT / "DEPLOYMENT.md", ROOT / "README.md",
+                                 ROOT / "GUIDE.md") if p.exists())])
+
+
+def _joined_command_lines(path):
+    """(line-number, command) for `path`, with backslash continuations joined into one string."""
+    buf, start = "", None
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        body = line.rstrip()
+        if start is None:
+            start = n
+        if body.endswith("\\"):
+            buf += body[:-1] + " "
+            continue
+        yield start, buf + body
+        buf, start = "", None
+    if buf:
+        yield start, buf
+
+
+#: An in-place SUBSTITUTION of an env key: `sed -i 's|^KEY=.*|KEY=v|' … .env`. Matches both a literal
+#: key name and the `"s|^$k=.*|$kv|"` shell-variable form used by the runbook's loop.
+_ENV_SUBSTITUTION = re.compile(r"sed\s+(?:-[a-zA-Z]+\s+)*-i\b.*?s[|/]\^[$A-Za-z_]")
+
+#: What makes such an edit safe. Either an append fallback for the missing-key case (`>> …env`), or
+#: a presence guard that decides between substituting and appending (`grep -q "^$k=" …`).
+_EDIT_IS_GUARDED = (">>", "grep -q")
+
+
+def test_a_documented_env_edit_cannot_silently_do_nothing():
+    """`sed -i 's|^KEY=.*|KEY=v|' deploy/.env` is a NO-OP when the key is absent from the file.
+
+    It prints nothing, exits 0, and leaves the file unchanged — so every step after it reports
+    success. That would be merely useless if an absent key meant an absent value, but
+    `deploy/docker-compose.yml` gives most keys a default in its `environment:` allowlist, so the
+    container keeps running the OLD value while the operator has been shown a clean run. This is the
+    same defect class as a gate that cannot fire reading as a gate that passed.
+
+    Measured on production 2026-08-29: an env edit written this way left `RWE_GDELT_MAX_ARTICLES` at
+    its compose default of 25 with no error anywhere, and the miss was only caught because a later
+    `printenv` happened to be run by hand.
+
+    The safe forms are delete-then-append (`sed -i '/^KEY=/d' … && echo 'KEY=v' >> …`), which is
+    correct whether the key is missing, present once, or duplicated; or an explicit presence guard
+    that appends when `grep -q` finds nothing."""
+    unguarded = []
+    for path in _operator_surfaces():
+        for n, cmd in _joined_command_lines(path):
+            if ".env" not in cmd or not _ENV_SUBSTITUTION.search(cmd):
+                continue
+            if any(tok in cmd for tok in _EDIT_IS_GUARDED):
+                continue
+            unguarded.append(f"{path.relative_to(ROOT)}:{n}: {cmd.strip()}")
+    assert not unguarded, (
+        "in-place env-key substitution with no fallback for the absent-key case — a silent no-op "
+        "that leaves the compose default live while every step reports success:\n  "
+        + "\n  ".join(unguarded))
+
+
 def _oneliners():
     """Every `python -c` in the docs, the ops scripts and the env template, with its location.
 
@@ -284,11 +353,7 @@ def _oneliners():
     matches, so a leading `#` never hid one. That was tried and removed — a component whose
     removal changes no outcome is decoration, and this file is the wrong place to keep any."""
     import re
-    for path in sorted([*(ROOT / "docs").glob("*.md"),
-                        *(ROOT / "deploy" / "ops").glob("*.sh"),
-                        *(ROOT / "deploy").glob("*.example"),
-                        *(p for p in (ROOT / "DEPLOYMENT.md", ROOT / "README.md",
-                                      ROOT / "GUIDE.md") if p.exists())]):
+    for path in _operator_surfaces():
         raw = path.read_text(encoding="utf-8").splitlines()
 
         buf, start = "", None

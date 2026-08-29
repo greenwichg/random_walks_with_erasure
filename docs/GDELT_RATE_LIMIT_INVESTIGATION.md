@@ -96,9 +96,14 @@ The code default is already 4; **production's `deploy/.env` overrides it to 96**
 the actual cause and code cannot fix it:
 
 ```bash
-sed -i 's/^RWE_GDELT_GKG_WINDOWS=.*/RWE_GDELT_GKG_WINDOWS=4/' deploy/.env
-grep RWE_GDELT_GKG_WINDOWS deploy/.env
+# Delete-then-append: correct whether the key is absent, present once, or duplicated. A plain
+# `sed s/^KEY=.*/KEY=v/` is a silent no-op when the key is missing, and every RWE_GDELT_* key has a
+# compose default, so a no-op edit still leaves a live value behind and reads as a change that worked.
+sed -i '/^RWE_GDELT_GKG_WINDOWS=/d' deploy/.env && echo 'RWE_GDELT_GKG_WINDOWS=4' >> deploy/.env
+grep -n '^RWE_GDELT_GKG_WINDOWS=' deploy/.env                  # exactly one line
 bash deploy/ops/restart.sh api
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env \
+  exec -T api printenv RWE_GDELT_GKG_WINDOWS                   # must print 4 — the file is not the container
 ```
 
 ## Expected effect, and the honest caveat

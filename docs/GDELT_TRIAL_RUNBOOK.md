@@ -96,8 +96,17 @@ Compare against the §1 baseline. `imported` is GDELT's genuine new-article cont
 
 ```bash
 cd /opt/ih
-sed -i 's|^RWE_GDELT_ENABLED=.*|RWE_GDELT_ENABLED=0|' deploy/.env
+# Delete-then-append, NOT `sed s|^KEY=.*|KEY=0|`. A substitution is a NO-OP when the key is absent
+# from deploy/.env — and every RWE_GDELT_* key has a default in the compose `environment:` block, so
+# an absent key still reaches the container with the trial value. The rollback would then print no
+# error, change nothing, and read as a rollback that worked. (Measured 2026-08-29: an env edit
+# written this way left RWE_GDELT_MAX_ARTICLES at its compose default while every step reported
+# success.) This form is correct whether the key is missing, present once, or duplicated.
+sed -i '/^RWE_GDELT_ENABLED=/d' deploy/.env && echo 'RWE_GDELT_ENABLED=0' >> deploy/.env
+grep -n '^RWE_GDELT_ENABLED=' deploy/.env                                # must print exactly one line
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env up -d --no-deps api
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.aws.yml --env-file deploy/.env \
+  exec -T api printenv RWE_GDELT_ENABLED                                 # must print 0 — the file is not the container
 docker logs deploy-api-1 2>&1 | grep -E 'multi_source_start' | tail -1   # adapters should be ["RSS"] again
 ```
 GDELT stops polling immediately. Already-ingested GDELT articles remain **searchable** (dataset ①) and are pruned over time by retention; no purge is required. RSS is unaffected throughout.
