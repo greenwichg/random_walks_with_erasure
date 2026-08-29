@@ -72,12 +72,25 @@ with M9's evidence and M9's counterfactual.
 
 ## What this module does NOT do
 
-It does not promote to Tier A, and there is no code path here that could. :data:`ADMISSION_TIER` is
-``"shadow"`` and :func:`check_admission_tier` refuses anything else — a guard at the policy, mirrored
-by a guard at the write in `store.admit_source`, because M9's own docstring records that "M9
+It does not promote to Tier A, and there is no code path here that could. :data:`ADMISSION_TIERS` is
+``("shadow", "B")`` and :func:`check_admission_tier` refuses anything else — a guard at the policy,
+mirrored by a guard at the write in `store.admit_source`, because M9's own docstring records that "M9
 automates the decision and emits the configuration; it never mutates serving state" and admission is
 the first thing in this pipeline that *does* mutate serving state. It is allowed to, in exactly one
-direction: into the lane where nothing is surfaced.
+direction: into a lane the story builder cannot see.
+
+## Why there are two such lanes and not one
+
+``shadow`` is where an *unevaluated* source belongs — surfaced nowhere, watched rather than
+published. That was the only destination until the 50,000-outlet arithmetic made it insufficient:
+the target is ~5,000 Tier A and ~45,000 Tier B, so a pipeline whose only durable outcome was
+"hide it from readers" could reach a twentieth of the goal at best. ``B`` is the other lane the
+builder cannot see, and the one that is *searchable* — which is what most of a breadth corpus is.
+
+Both are still partition changes on live rows, because every candidate is a host we already ingest
+and `corpus.DEFAULT_TIER` is ``"A"``. `store.admit_source` refuses either without
+``accept_partition_change``, and states the per-tier consequence in the refusal rather than a
+generic one.
 """
 
 from __future__ import annotations
@@ -96,8 +109,24 @@ PROBEABLE = frozenset({"candidate", "probing", "incomplete"})
 #: This frozenset **is** the requirement "a completed host must never be re-probed unnecessarily".
 COMPLETED = frozenset({"validated", "rejected", "admitted", "withdrawn"})
 
-#: The only tier an admission may assign. See the module docstring.
+#: The tier an admission assigns unless the caller names the other one. See the module docstring.
 ADMISSION_TIER = "shadow"
+
+#: Every tier an admission may assign, most restrictive first. **Tier A is not here and cannot be.**
+#:
+#: ``shadow``  stored, deduped, attributed, surfaced nowhere. The right lane for a source no one has
+#:             evaluated, and the default for exactly that reason.
+#: ``B``       searchable and attributable, never enters the story builder. `corpus.shadow_exclusions`
+#:             states the whole difference: *"Tier B and shadow differ in exactly one way and it is
+#:             this: Tier B is searchable, shadow is not."*
+#:
+#: B was added because shadow is not a destination the 50,000-outlet target can use. The corpus is
+#: ~5,000 Tier A and ~45,000 Tier B (`M14_LANGUAGE_DENSITY_DESIGN.md` §8.1, from a measured row cap),
+#: and until this list had a second entry the only durable thing admission could do with a validated
+#: host was hide it from readers. Assigning B is still a **partition change** — it takes the host's
+#: articles out of the story builder — and `store.admit_source` refuses it without
+#: ``accept_partition_change`` exactly as it refuses shadow.
+ADMISSION_TIERS = ("shadow", "B")
 
 #: Minutes after which a ``probing`` claim is presumed dead rather than in flight.
 #:
@@ -231,18 +260,25 @@ def may_probe(row: "dict | None", *, now: datetime, force: bool = False,
 
 
 def check_admission_tier(tier: str) -> None:
-    """Raise unless ``tier`` is the one tier an admission may assign.
+    """Raise unless ``tier`` is one of the tiers an admission may assign.
 
-    Not a formality. `corpus.DEFAULT_TIER` is ``"A"``, so the difference between "admitted into the
-    shadow lane" and "admitted into the clustering corpus" is one string, and the roadmap is explicit
-    that Tier A promotion is "gated, manual, and permanently narrow". This function is the policy
-    half of that; `store.admit_source` refuses the same value at the write, so neither a new caller
-    nor a direct store user can route around it."""
-    if tier != ADMISSION_TIER:
+    Not a formality. `corpus.DEFAULT_TIER` is ``"A"``, so the difference between "admitted into a
+    non-clustering lane" and "admitted into the clustering corpus" is one string, and the roadmap is
+    explicit that Tier A promotion is "gated, manual, and permanently narrow". This function is the
+    policy half of that; `store.admit_source` refuses the same value at the write, so neither a new
+    caller nor a direct store user can route around it.
+
+    **The set widened from one tier to two, and what it protects did not.** Both ``shadow`` and
+    ``B`` are lanes the story builder cannot see, so neither can put an unevaluated source into the
+    clustering corpus — which is the whole property this guard exists for. ``"A"`` is refused here
+    for the same reason it always was: entering Tier A requires a lean
+    (`source_lifecycle.NEEDS_LEAN`) and a clustering counterfactual, and admission has neither."""
+    if tier not in ADMISSION_TIERS:
         raise ValueError(
-            f"admission may only assign the {ADMISSION_TIER!r} tier, not {tier!r}. Tier A and Tier B "
-            f"are M9's decision, made on M8's evidence with a clustering counterfactual — see "
-            f"source_lifecycle.crosses_tier_a. Admission puts a source where nothing surfaces it.")
+            f"admission may only assign {' or '.join(repr(t) for t in ADMISSION_TIERS)}, not "
+            f"{tier!r}. Tier A is M9's decision, made on M8's evidence with a clustering "
+            f"counterfactual and a lean — see source_lifecycle.crosses_tier_a. Admission puts a "
+            f"source in a lane the story builder cannot see.")
 
 
 def crawl_config_fields(row: dict) -> dict:

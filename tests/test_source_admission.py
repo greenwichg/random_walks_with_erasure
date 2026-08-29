@@ -73,12 +73,18 @@ def st(tmp_path):
 
 @pytest.fixture()
 def _wired(st):
-    """Wire the admission table into `corpus` and **always** unwire. See the module docstring."""
+    """Wire the admission table into `corpus` and **always** unwire. See the module docstring.
+
+    BOTH tiers, matching the two call sites that serve (`api_fastapi` startup and `source_campaign`).
+    A fixture that wired only shadow would leave every Tier B test unable to observe its own
+    subject — the fixture-that-cannot-see-its-mutation defect this suite has already had to fix."""
     corpus.wire_admissions(st.admitted_shadow_hosts)
+    corpus.wire_tier_b_admissions(st.admitted_tier_b_hosts)
     try:
         yield st
     finally:
         corpus.wire_admissions(None)
+        corpus.wire_tier_b_admissions(None)
 
 
 @pytest.fixture()
@@ -383,18 +389,29 @@ def test_dry_run_makes_no_request_and_writes_no_claim(campaign, monkeypatch):
 
 
 # --------------------------------------------------------------------------- admission & tier
-def test_admission_assigns_the_shadow_tier_and_refuses_every_other(seeded):
-    """`corpus.DEFAULT_TIER` is "A", so the difference between "admitted into the shadow lane" and
-    "admitted into the clustering corpus" is one string. Guarded at the policy AND at the write."""
+def test_admission_assigns_only_the_lanes_the_story_builder_cannot_see(seeded):
+    """`corpus.DEFAULT_TIER` is "A", so the difference between "admitted into a non-clustering lane"
+    and "admitted into the clustering corpus" is one string. Guarded at the policy AND at the write.
+
+    The admissible set widened from ``shadow`` alone to ``("shadow", "B")`` — both lanes the story
+    builder cannot see — and what the guard protects did not change: **"A" is still refused**, at
+    both halves, because entering Tier A needs a lean and a clustering counterfactual that admission
+    does not have. Case matters: ``"a"`` and ``"b"`` are not the tiers."""
     seeded.claim_admission_probe("alpha.example")
     seeded.record_admission_probe("alpha.example", verdict="ADMIT",
                                   feed_url="https://alpha.example/feed", discovered_via="feed")
-    for tier in ("A", "B", "a", ""):
+    for tier in ("A", "a", "b", "shadowed", ""):
         with pytest.raises(ValueError, match="may only assign"):
             seeded.admit_source("alpha.example", tier=tier)
-    with pytest.raises(ValueError, match="may only assign"):
-        sa.check_admission_tier("A")
-    assert seeded.admit_source("alpha.example")["tier"] == "shadow"
+        with pytest.raises(ValueError, match="may only assign"):
+            sa.check_admission_tier(tier)
+    assert sa.ADMISSION_TIERS == ("shadow", "B")
+    assert "A" not in sa.ADMISSION_TIERS
+    for tier in sa.ADMISSION_TIERS:                      # both are accepted, at policy and at write
+        sa.check_admission_tier(tier)
+    assert seeded.admit_source("alpha.example", tier="B")["tier"] == "B"
+    assert seeded.admit_source("alpha.example", tier="shadow", force=True)["tier"] == "shadow"
+    assert seeded.admit_source("alpha.example", force=True)["tier"] == "shadow"   # default unchanged
 
 
 def test_only_a_validated_host_is_admitted(seeded):
@@ -425,6 +442,121 @@ def test_an_admitted_host_is_shadow_to_corpus_and_its_subdomains_with_it(_wired)
     assert corpus.is_shadow("alpha.example", "https://alpha.example/a/1")
     assert "alpha.example" in corpus.shadow_exclusions(), \
         "an admitted source would be searchable — stored, not clustered, and surfaced anyway"
+
+
+def _admit_b(st, host="alpha.example"):
+    """Seed, probe and admit ``host`` into Tier B, then drop corpus's snapshot."""
+    st.record_admission_candidates([_cand(host)])
+    st.claim_admission_probe(host)
+    st.record_admission_probe(host, verdict="ADMIT", feed_url=f"https://{host}/f")
+    row = st.admit_source(host, tier="B")
+    corpus.wire_tier_b_admissions(st.admitted_tier_b_hosts)   # drops the snapshot
+    return row
+
+
+def test_an_admitted_tier_b_host_reaches_the_tier_resolver(_wired):
+    """The Tier B half of the table's whole point. Without the union in `tier_index`, an admission
+    writes a row that `tier_of` never consults and the host serves as Tier A by omission — the same
+    failure the shadow union exists to prevent, one tier over."""
+    st = _wired
+    assert corpus.tier_of("alpha.example", "https://alpha.example/a/1") == "A", \
+        "nothing admitted yet — the default tier"
+
+    assert _admit_b(st)["tier"] == "B"
+    assert st.admitted_tier_b_hosts() == {"alpha.example"}
+    assert st.admitted_shadow_hosts() == frozenset(), "a B admission must not land in the shadow set"
+    assert corpus.tier_of("alpha.example", "https://alpha.example/a/1") == "B"
+    assert corpus.tier_of("news.alpha.example", "https://news.alpha.example/a/1") == "B", \
+        "subdomain-tolerant, the same rule the shadow half uses"
+    assert corpus.tier_of("notalpha.example", "https://notalpha.example/a/1") == "A", \
+        "dot-anchored: a suffix match must not admit an impersonator"
+
+
+def test_tier_b_admission_leaves_the_host_searchable_and_shadow_does_not(_wired):
+    """`corpus.shadow_exclusions`: *"Tier B and shadow differ in exactly one way and it is this:
+    Tier B is searchable, shadow is not."* That difference is the entire reason this lane was worth
+    building — admission's only previous outcome hid a validated source from every reader."""
+    st = _wired
+    _admit_b(st, "alpha.example")
+
+    st.record_admission_candidates([_cand("beta.example")])
+    st.claim_admission_probe("beta.example")
+    st.record_admission_probe("beta.example", verdict="ADMIT", feed_url="https://beta.example/f")
+    st.admit_source("beta.example", tier="shadow")
+    corpus.wire_admissions(st.admitted_shadow_hosts)
+
+    assert corpus.tier_of("beta.example", "https://beta.example/a/1") == "shadow"
+    # Both leave the clustering corpus...
+    assert "alpha.example" in corpus.sql_exclusions()
+    assert "beta.example" in corpus.sql_exclusions()
+    # ...and only shadow leaves the reader surfaces.
+    assert "beta.example" in corpus.shadow_exclusions()
+    assert "alpha.example" not in corpus.shadow_exclusions(), \
+        "a Tier B host that readers cannot search is a shadow host wearing the wrong name"
+    assert not corpus.is_shadow("alpha.example", "https://alpha.example/a/1")
+
+
+def test_a_tier_b_only_deployment_does_not_short_circuit_the_tier_filter(_wired):
+    """`corpus.enabled()` gates the whole filter, and a Tier-B-led expansion is the state where it
+    is easiest to get wrong: no environment lists, nothing in shadow, only B admissions. If
+    `enabled()` did not ask about them, `select` would skip the tier pass and every admitted host
+    would serve as Tier A while the table said otherwise — silently."""
+    st = _wired
+    assert not corpus.enabled(), "no assignments of any kind yet"
+    _admit_b(st)
+    assert st.admitted_shadow_hosts() == frozenset(), "the ONLY assignment is Tier B"
+    assert corpus.enabled(), \
+        "enabled() ignores the Tier B admission table, so tier_of returns the A default for it"
+    assert corpus.tier_of("alpha.example", "https://alpha.example/a/1") == "B"
+
+
+def test_the_tier_b_table_is_unioned_with_its_environment_list_never_replacing_it(_wired, monkeypatch):
+    """The same failure direction as the shadow union: a table that REPLACED
+    ``RWE_CORPUS_TIER_B`` would move every environment-pinned outlet into the clustering tier the
+    moment a read came back empty, and it would present as an improvement."""
+    st = _wired
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "envonly.example")
+    _admit_b(st)
+    assert corpus.tier_of("envonly.example", "https://envonly.example/a/1") == "B"
+    assert corpus.tier_of("alpha.example", "https://alpha.example/a/1") == "B"
+
+    corpus.wire_tier_b_admissions(lambda: frozenset())     # the table read comes back empty
+    corpus.admitted_tier_b_hosts(refresh=True)
+    assert corpus.tier_of("envonly.example", "https://envonly.example/a/1") == "B", \
+        "an empty table read must not un-pin what the environment names"
+
+
+def test_shadow_still_wins_when_a_host_is_in_both_tiers(_wired, monkeypatch):
+    """`_tier_with` tests shadow before B "so an outlet named in both lands in the more restrictive
+    one". Adding a second admitted tier is exactly how that conflict becomes reachable."""
+    st = _wired
+    monkeypatch.setenv("RWE_CORPUS_SHADOW", "alpha.example")
+    _admit_b(st)
+    assert corpus.tier_of("alpha.example", "https://alpha.example/a/1") == "shadow"
+    assert "alpha.example" in corpus.shadow_exclusions(), "conflict must fail toward LESS exposure"
+
+
+def test_the_partition_refusal_states_the_truth_for_the_tier_it_names(st, _real_window):
+    """The refusal is the sentence an operator authorises, so it has to be true of the move being
+    made. A shadow admission takes articles out of Search; a Tier B admission does not — and a
+    message that said otherwise would be asking for consent to something that will not happen."""
+    _ingest(st, "heavy.example", 40)
+    import outlet_registry
+    st.record_admission_candidates(
+        sd_candidates(st.list_discovery_rows(), outlet_registry.default_registry()))
+    st.claim_admission_probe("heavy.example")
+    st.record_admission_probe("heavy.example", verdict="ADMIT", feed_url="https://heavy.example/f")
+
+    with pytest.raises(ValueError, match="leave Search and Discover") as shadow_err:
+        st.admit_source("heavy.example", tier="shadow")
+    assert "A -> shadow" in str(shadow_err.value)
+
+    with pytest.raises(ValueError, match="stay in Search and Discover") as b_err:
+        st.admit_source("heavy.example", tier="B")
+    assert "A -> B" in str(b_err.value)
+    assert "leave the story partition" in str(b_err.value), \
+        "Tier B still leaves the story builder — that half is true for both tiers"
+    assert st.admission_row("heavy.example")["state"] == "validated", "refused but admitted anyway"
 
 
 def test_the_table_is_unioned_with_the_environment_never_replacing_it(_wired, monkeypatch):
@@ -832,6 +964,39 @@ def test_seed_probe_admit_end_to_end(campaign, monkeypatch):
     st = store_mod.Store(campaign)
     assert st.admission_census()["admitted"] == 3
     assert st.admitted_shadow_hosts() == {"alpha.example", "beta.example", "delta.example"}
+
+
+def test_the_admit_cli_can_actually_reach_the_tier_b_lane(campaign, monkeypatch):
+    """A lane no operator command can select is a lane that does not exist. `--tier` is the whole
+    operator surface for Phase 1, and this asserts it reaches the WRITE — not merely that argparse
+    accepted the string."""
+    monkeypatch.setattr(sc.sv, "validate", _Probe())
+    _run(campaign, "probe", "--interval", "0")
+    out = _run(campaign, "admit", "--all-validated", "--tier", "B")
+    assert "TO THE B LANE" in out
+    assert "Tier B means SEARCHABLE" in out
+    assert "0 refused" in out
+
+    st = store_mod.Store(campaign)
+    admitted = st.admitted_tier_b_hosts()
+    assert admitted, "--tier B accepted at the CLI but wrote nothing to the table"
+    assert st.admitted_shadow_hosts() == frozenset(), "--tier B must not write shadow rows"
+    assert all(r["tier"] == "B" for r in st.admission_rows(states=["admitted"]))
+
+
+def test_the_admit_cli_defaults_to_shadow_and_refuses_tier_a(campaign, monkeypatch):
+    """The default stays the lane where nothing is surfaced — naming the searchable one has to be an
+    act. And the CLI refuses exactly what the write refuses, because it asks the same function."""
+    monkeypatch.setattr(sc.sv, "validate", _Probe())
+    _run(campaign, "probe", "--interval", "0")
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = sc.main(["admit", "--db", campaign, "--all-validated", "--tier", "A"])
+    assert rc == 2 and "may only assign" in out.getvalue()
+    assert store_mod.Store(campaign).admission_census().get("admitted", 0) == 0
+
+    assert "TO THE shadow LANE" in _run(campaign, "admit", "--all-validated")
 
 
 def test_admit_refuses_to_do_nothing_by_default(campaign):

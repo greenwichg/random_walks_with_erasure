@@ -141,8 +141,16 @@ def enabled() -> bool:
 
     **M11 added a third source of assignments** — the admission table — so this is no longer purely
     a question about the environment. It has to be, or admitting a source would write a shadow row
-    that :func:`tier_of` never consults, and the source would be crawled straight into Tier A."""
-    return bool(_setting(_TIER_B_ENV) or _setting(_SHADOW_ENV) or admitted_shadow_hosts())
+    that :func:`tier_of` never consults, and the source would be crawled straight into Tier A.
+
+    **Both admitted tiers are asked, and forgetting the second one would have been silent.** A
+    deployment whose only assignments are Tier B admissions — no environment lists, nothing in
+    shadow, which is exactly what a Tier-B-led expansion looks like on day one — would otherwise
+    answer ``False`` here, :func:`select` would short-circuit the tier filter entirely, and every
+    admitted host would serve as Tier A while the admission table said otherwise. That is this
+    codebase's own recurring defect: a gate that cannot fire reading as a gate that passed."""
+    return bool(_setting(_TIER_B_ENV) or _setting(_SHADOW_ENV)
+                or admitted_shadow_hosts() or admitted_tier_b_hosts())
 
 
 # --------------------------------------------------------------------------- #
@@ -159,8 +167,41 @@ def enabled() -> bool:
 #: being crawled either, and there are no articles from it to mis-tier.
 _ADMISSION_TTL_SECONDS = 60.0
 
-_admission_provider = None
-_admission_cache: tuple = (0.0, frozenset())
+#: One provider and one snapshot PER TIER, rather than a second copy of this machinery beside the
+#: first. Tier B and shadow ask the same question of the same table and differ only in the value of
+#: one column, so a parallel `_tier_b_provider` / `_tier_b_cache` pair would be a second definition
+#: of a rule that has exactly one — the drift this repository has had to correct four times already.
+_admission_providers: dict = {}
+_admission_caches: dict = {}
+
+
+def _wire(tier: str, provider) -> None:
+    """Register (or with ``None`` unregister) one tier's host provider and drop its snapshot."""
+    if provider is None:
+        _admission_providers.pop(tier, None)
+    else:
+        _admission_providers[tier] = provider
+    _admission_caches.pop(tier, None)
+
+
+def _admitted(tier: str, *, refresh: bool = False) -> "frozenset[str]":
+    """One tier's admitted hosts, snapshot-cached for :data:`_ADMISSION_TTL_SECONDS`."""
+    provider = _admission_providers.get(tier)
+    if provider is None:
+        return frozenset()
+    now = time.monotonic()
+    at, cached = _admission_caches.get(tier, (0.0, frozenset()))
+    if not refresh and at and (now - at) < _ADMISSION_TTL_SECONDS:
+        return cached
+    try:
+        hosts = frozenset(h.strip().lower() for h in (provider() or ()) if h and h.strip())
+    except Exception as exc:                    # pragma: no cover - defensive, logged not raised
+        _logger.warning(json.dumps({"event": "corpus_admission_read_failed", "tier": tier,
+                                    "error": f"{type(exc).__name__}: {exc}",
+                                    "detail": "falling back to the environment tier lists alone"}))
+        hosts = cached
+    _admission_caches[tier] = (now, hosts)
+    return hosts
 
 
 def wire_admissions(provider) -> None:
@@ -171,9 +212,22 @@ def wire_admissions(provider) -> None:
     the test suite constructs hijacks a module-level global, and a leaked provider pointing at a
     deleted tmp database is the kind of cross-test coupling that takes a day to find. The two places
     that actually serve — the API's startup and `source_campaign.py` — call it in one line."""
-    global _admission_provider, _admission_cache
-    _admission_provider = provider
-    _admission_cache = (0.0, frozenset())
+    _wire("shadow", provider)
+
+
+def wire_tier_b_admissions(provider) -> None:
+    """Register a ``() -> frozenset[str]`` of Tier-B-assigned hosts — normally
+    ``store.Store.admitted_tier_b_hosts``. ``None`` unregisters.
+
+    Separate from :func:`wire_admissions` rather than folded into it, because the alternative was to
+    change that function's contract at twenty-odd existing call sites to buy nothing: both wires run
+    through :func:`_wire`, so there is still exactly one implementation of the snapshot, the TTL and
+    the failure path.
+
+    **A deployment that wires only one of the two is a real state, not a bug.** `_admitted` returns
+    an empty set for an unwired tier, which composes with the environment list exactly as it did
+    before this existed."""
+    _wire("B", provider)
 
 
 def admitted_shadow_hosts(*, refresh: bool = False) -> "frozenset[str]":
@@ -197,22 +251,23 @@ def admitted_shadow_hosts(*, refresh: bool = False) -> "frozenset[str]":
     environment and no table write can un-pin it. `_tier_with` already tests shadow before B "so an
     outlet named in both lands in the more restrictive one"; this is the same principle one level up.
     """
-    global _admission_cache
-    if _admission_provider is None:
-        return frozenset()
-    now = time.monotonic()
-    at, cached = _admission_cache
-    if not refresh and at and (now - at) < _ADMISSION_TTL_SECONDS:
-        return cached
-    try:
-        hosts = frozenset(h.strip().lower() for h in (_admission_provider() or ()) if h and h.strip())
-    except Exception as exc:                    # pragma: no cover - defensive, logged not raised
-        _logger.warning(json.dumps({"event": "corpus_admission_read_failed",
-                                    "error": f"{type(exc).__name__}: {exc}",
-                                    "detail": "falling back to the environment tier lists alone"}))
-        hosts = cached
-    _admission_cache = (now, hosts)
-    return hosts
+    return _admitted("shadow", refresh=refresh)
+
+
+def admitted_tier_b_hosts(*, refresh: bool = False) -> "frozenset[str]":
+    """Hosts the admission table assigns to Tier B, snapshot-cached.
+
+    The same union, the same failure direction and the same reasoning as
+    :func:`admitted_shadow_hosts` — read it there, it is not restated here.
+
+    **What differs is what the lane does.** `shadow_exclusions` puts it plainly: *"Tier B and shadow
+    differ in exactly one way and it is this: Tier B is searchable, shadow is not."* So an A → B
+    admission takes a host out of the story builder and leaves it in Search, Discover and
+    attribution, where an A → shadow admission takes it out of both. That makes this the lane a
+    50,000-outlet corpus is mostly made of — and the reason it needed a table at all is
+    ``RWE_CORPUS_TIER_B``'s ceiling: M3's S8 puts an environment-variable tier list at ~30,000
+    sources, 1 MB of a 2 MB ``ARG_MAX``, below the ~45,000 the target implies."""
+    return _admitted("B", refresh=refresh)
 
 
 @functools.lru_cache(maxsize=8)
@@ -249,14 +304,17 @@ def tier_index() -> dict:
     unregistered outlet named rather than domained, silently matches nothing — and a tier list that
     quietly does nothing is the worst way to find that out.
 
-    The shadow half is the environment list **unioned** with the admission table's hosts (M11) — see
-    :func:`admitted_shadow_hosts` for why that composition and not a replacement. Admitted hosts land
-    in the *host* set rather than the canonical-name set because that is what they are: a discovered
-    host usually has no registry row at all, which is the population discovery works over."""
-    b = _index(_setting(_TIER_B_ENV))
+    **Both** halves are the environment list **unioned** with the admission table's hosts for that
+    tier (M11 for shadow; Tier B alongside it) — see :func:`admitted_shadow_hosts` for why that
+    composition and not a replacement. Admitted hosts land in the *host* set rather than the
+    canonical-name set because that is what they are: a discovered host usually has no registry row
+    at all, which is the population discovery works over."""
+    b_canonicals, b_hosts = _index(_setting(_TIER_B_ENV))
     canonicals, hosts = _index(_setting(_SHADOW_ENV))
+    admitted_b = admitted_tier_b_hosts()
     admitted = admitted_shadow_hosts()
-    return {"B": b, "shadow": (canonicals, hosts | admitted) if admitted else (canonicals, hosts)}
+    return {"B": (b_canonicals, b_hosts | admitted_b) if admitted_b else (b_canonicals, b_hosts),
+            "shadow": (canonicals, hosts | admitted) if admitted else (canonicals, hosts)}
 
 
 def _host_match(hosts: frozenset, text: "str | None") -> bool:

@@ -3090,11 +3090,18 @@ class Store:
         key = (host or "").strip().lower()
         impact = self.admission_partition_impact(key)
         if not accept_partition_change and (impact["window"] or impact["catalogue"]):
+            # The catalogue half means DIFFERENT things per tier and the message has to say which.
+            # `corpus.shadow_exclusions` hides shadow from every reader surface and Tier B from
+            # none, so telling an operator that a B admission removes articles from Search would be
+            # false — and it is the sentence they are being asked to authorise.
+            catalogue_effect = (
+                "they stay in Search and Discover — Tier B is searchable"
+                if tier == "B" else "they leave Search and Discover")
             raise ValueError(
-                f"admitting {key!r} is an A -> shadow move on articles that are LIVE today: "
+                f"admitting {key!r} is an A -> {tier} move on articles that are LIVE today: "
                 f"{impact['window']:,} in the {impact['windowDays']:g}-day clustering window (they "
-                f"leave the story partition) and {impact['catalogue']:,} in the catalogue (they "
-                f"leave Search and Discover). source_lifecycle.crosses_tier_a('A', 'shadow') is "
+                f"leave the story partition) and {impact['catalogue']:,} in the catalogue "
+                f"({catalogue_effect}). source_lifecycle.crosses_tier_a('A', {tier!r}) is "
                 f"True, and M9 requires a {_sl.NEEDS_COUNTERFACTUAL} for the same move — run it, "
                 f"then pass accept_partition_change=True (--accept-partition-change on "
                 f"source_campaign.py).")
@@ -3186,6 +3193,20 @@ class Store:
             return frozenset(h for (h,) in s.execute(
                 select(SourceAdmission.host)
                 .where(SourceAdmission.tier == "shadow")).all() if h)
+
+    def admitted_tier_b_hosts(self) -> "frozenset[str]":
+        """Hosts the admission table assigns to Tier B.
+
+        The mirror of :meth:`admitted_shadow_hosts`, keyed on ``tier`` for the same reason: a
+        withdrawn source stops being crawled and keeps its tier, because `corpus.DEFAULT_TIER` is
+        ``"A"`` and clearing the assignment would push everything already ingested from that host
+        back into the clustering corpus.
+
+        Read by `corpus.admitted_tier_b_hosts` and unioned with ``RWE_CORPUS_TIER_B``."""
+        with self.session() as s:
+            return frozenset(h for (h,) in s.execute(
+                select(SourceAdmission.host)
+                .where(SourceAdmission.tier == "B")).all() if h)
 
     def admitted_crawl_rows(self) -> list:
         """Admitted rows that carry a discovery document, for `crawler.load_config`.

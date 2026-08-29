@@ -318,7 +318,11 @@ async def lifespan(app: FastAPI):
     # `corpus.wire_admissions`. It must come BEFORE the registry is built: `crawler.admitted_configs`
     # filters its rows through `corpus.is_shadow`, so an unwired corpus would report every admitted
     # host as Tier A and the crawl set would come back empty.
+    # BOTH admitted tiers, or the one that is not wired serves as Tier A while the table says
+    # otherwise — and `corpus.enabled()` reads both, so wiring only shadow on a Tier-B-only
+    # deployment would short-circuit the tier filter entirely rather than fail loudly.
     corpus.wire_admissions(st.admitted_shadow_hosts)
+    corpus.wire_tier_b_admissions(st.admitted_tier_b_hosts)
     registry = sources.default_registry(store_=st)
     for _w in sources.config_warnings(registry):     # e.g. RWE_NEWSAPI_ENABLED set but no API key
         _log(logging.WARNING, "source_misconfigured", detail=_w)

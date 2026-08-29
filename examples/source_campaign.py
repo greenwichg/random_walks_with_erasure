@@ -72,6 +72,7 @@ def _store(args):
     # corpus — `crawler.admitted_configs` filters through `corpus.is_shadow`, which without this
     # reports every admitted host as Tier A.
     corpus.wire_admissions(st.admitted_shadow_hosts)
+    corpus.wire_tier_b_admissions(st.admitted_tier_b_hosts)
     return st
 
 
@@ -302,10 +303,21 @@ def cmd_admit(args) -> int:
         print("no hosts to admit")
         return 0
 
-    print(f"=== ADMITTING {len(wanted)} HOST(S) TO THE {sa.ADMISSION_TIER} LANE ===")
+    tier = args.tier
+    try:
+        sa.check_admission_tier(tier)
+    except ValueError as exc:
+        print(f"Refusing: {exc}")
+        return 2
+
+    print(f"=== ADMITTING {len(wanted)} HOST(S) TO THE {tier} LANE ===")
     print("    Not Tier A, and there is no flag that would make it Tier A. Tier A promotion is M9's")
     print("    decision on M8's evidence with a clustering counterfactual — source_lifecycle.plan.")
-    print("    Shadow means stored, deduped, attributed, and surfaced NOWHERE, pending evaluation.")
+    if tier == "B":
+        print("    Tier B means SEARCHABLE and attributable, and never entering the story builder.")
+        print("    Readers can still find these articles; stories will not be built from them.")
+    else:
+        print("    Shadow means stored, deduped, attributed, and surfaced NOWHERE, pending evaluation.")
 
     # ---------------------------------------------------------------- the pre-flight
     #
@@ -322,8 +334,12 @@ def cmd_admit(args) -> int:
         print(f"      {len(live)} of these {len(wanted)} host(s) are already in the catalogue.")
         print(f"      {win:,} article(s) inside the {live[0]['windowDays']:g}-day clustering window "
               f"would LEAVE the story partition.")
-        print(f"      {cat:,} article(s) in the catalogue would LEAVE Search and Discover.")
-        print(f"      source_lifecycle.crosses_tier_a('A', 'shadow') is True; M9 marks this move")
+        if tier == "B":
+            print(f"      {cat:,} article(s) in the catalogue STAY in Search and Discover — "
+                  f"Tier B is searchable.")
+        else:
+            print(f"      {cat:,} article(s) in the catalogue would LEAVE Search and Discover.")
+        print(f"      source_lifecycle.crosses_tier_a('A', {tier!r}) is True; M9 marks this move")
         print(f"      automatic=False and requires a clustering counterfactual for it.")
         for i in sorted(live, key=lambda i: -i["catalogue"])[:10]:
             print(f"        {i['host']:<38} {i['window']:>7,} in window   {i['catalogue']:>7,} in catalogue")
@@ -336,7 +352,7 @@ def cmd_admit(args) -> int:
     ok, failed = 0, 0
     for host in wanted:
         try:
-            row = st.admit_source(host, tier=sa.ADMISSION_TIER, publisher=args.publisher or None,
+            row = st.admit_source(host, tier=tier, publisher=args.publisher or None,
                                   article_pattern=args.pattern, force=args.force,
                                   reason=args.reason or "",
                                   accept_partition_change=args.accept_partition_change)
@@ -448,6 +464,15 @@ def main(argv=None) -> int:
         p.add_argument("--pattern", default=None)
         p.add_argument("--reason", default="")
         p.add_argument("--all-validated", action="store_true")
+        # Defaulted to `shadow` deliberately: an unevaluated source belongs where nothing surfaces
+        # it, and naming the searchable lane should be an act rather than an omission. Validated
+        # through `sa.check_admission_tier` rather than argparse `choices` so the CLI and the write
+        # refuse the same set — a second list here is how the two would drift.
+        p.add_argument("--tier", default=sa.ADMISSION_TIER,
+                       help=(f"lane to admit into: {' | '.join(sa.ADMISSION_TIERS)} "
+                             f"(default {sa.ADMISSION_TIER}). 'B' is searchable and attributable "
+                             f"but never enters the story builder; 'shadow' is surfaced nowhere. "
+                             f"Tier A is not admissible from here."))
         p.add_argument("--accept-partition-change", action="store_true",
                        help="acknowledge that admitting a host we already ingest REMOVES its "
                             "articles from the story partition and from Search. Required whenever "
@@ -458,7 +483,7 @@ def main(argv=None) -> int:
     common(sub.add_parser("seed", help="upsert candidate rows from the catalogue (offline)"))
     common(sub.add_parser("status", help="what the table holds and what a probe would do"))
     common(sub.add_parser("probe", help="STAGE 2: probe candidates. Touches publishers."))
-    common(sub.add_parser("admit", help="validated -> admitted, into the shadow lane"))
+    common(sub.add_parser("admit", help="validated -> admitted, into the shadow or Tier B lane"))
     common(sub.add_parser("withdraw", help="admitted -> withdrawn; the shadow assignment is kept"))
     common(sub.add_parser("reopen", help="put a rejected/incomplete host back in the queue"))
     common(sub.add_parser("emit-config", help="the table's admissions as env + JSON, for auditing"))
