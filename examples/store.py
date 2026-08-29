@@ -456,6 +456,19 @@ class SourceAdmission(Base):
     verdict: Mapped[Optional[str]] = mapped_column(String(16), default=None)
     feed_url: Mapped[Optional[str]] = mapped_column(Text, default=None)
     discovered_via: Mapped[Optional[str]] = mapped_column(String(24), default=None)
+    #: WHICH ACQUISITION CHANNEL supplied this host — `source_discovery.CHANNELS`. Not to be confused
+    #: with ``discovered_via`` above, which records how the host's FEED was found during the probe
+    #: ("feed" / "news sitemap"). Those answer different questions and the names are close enough
+    #: that conflating them is easy: one is about our supply, the other about the publisher's site.
+    #:
+    #: Phase 2 of the 50k roadmap is a PORTFOLIO of channels, because no single one plausibly
+    #: supplies the ~45,000 outlets Tier B needs. "Which channel yielded how many net-new eligible
+    #: hosts, per request spent" is therefore the question the phase exists to answer, and a column
+    #: is the only place that answer can live: the candidate dict is transient and the campaign runs
+    #: weeks apart. NULL on every row seeded before this existed, which is honest — those came from
+    #: the catalogue channel, but nothing recorded it at the time and backfilling a guess would make
+    #: the first channel comparison a fiction.
+    channel: Mapped[Optional[str]] = mapped_column(String(24), default=None, index=True)
     gates: Mapped[str] = mapped_column(Text, default="[]")      # JSON — every gate, not the failures
     samples: Mapped[str] = mapped_column(Text, default="[]")    # JSON — sample article URLs
 
@@ -1128,6 +1141,7 @@ class Store:
         self._ensure_publisher_metadata_columns()
         self._ensure_delivery_retry_columns()
         self._ensure_feed_schedule_columns()
+        self._ensure_source_admission_columns()
         self._ensure_search_indexes()
         self._ensure_retention_indexes()
 
@@ -2037,6 +2051,19 @@ class Store:
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
 
+    def _ensure_source_admission_columns(self) -> None:
+        """Additive, idempotent columns on ``source_admission`` — same discipline as
+        ``_ensure_media_columns``, and here for the reason ``_ensure_publisher_metadata_columns``
+        spells out: ``create_all`` creates NEW tables only, and this one shipped with M11 and is
+        already carrying 1,173 rows in production. A column added to :class:`SourceAdmission` after
+        that first deploy belongs in this list, or every read fails with ``no such column``."""
+        for name, decl in [("channel", "VARCHAR(24)")]:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE source_admission ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
     def _ensure_publisher_metadata_columns(self) -> None:
         """Additive, idempotent columns on ``publisher_metadata`` — same discipline as
         ``_ensure_media_columns``, and here for the same reason it exists there.
@@ -2826,7 +2853,8 @@ class Store:
                 "lastProbedAt": r.last_probed_at, "retryAfter": r.retry_after,
                 "verdict": r.verdict, "feedUrl": r.feed_url, "discoveredVia": r.discovered_via,
                 "gates": json.loads(r.gates or "[]"), "samples": json.loads(r.samples or "[]"),
-                "tier": r.tier, "articlePattern": r.article_pattern, "reason": r.reason}
+                "tier": r.tier, "articlePattern": r.article_pattern, "reason": r.reason,
+                "channel": r.channel}
 
     def admission_row(self, host: str) -> "dict | None":
         with self.session() as s:
@@ -2867,6 +2895,39 @@ class Store:
             out["requests"] = int(s.scalar(select(func.sum(SourceAdmission.requests_spent))) or 0)
             return out
 
+    def admission_channel_yield(self) -> "list[dict]":
+        """Per-channel supply, from the record. **The measurement Phase 2 exists to produce.**
+
+        No single channel plausibly supplies the ~45,000 outlets Tier B needs, so the phase is a
+        portfolio and the only question that decides where to invest is *which channel yielded how
+        many outlets, per request spent*. That is not answerable from a candidate list — those are
+        transient, and the campaign runs weeks apart — so it is answered here, from the rows.
+
+        ``channel`` is NULL for everything seeded before the column existed. Reported as
+        ``"(unrecorded)"`` rather than folded into ``catalogue``: those rows did come from the
+        catalogue channel, but nothing recorded it at the time, and a backfilled guess would make
+        the first channel comparison a fiction. One honest bucket beats a plausible number."""
+        with self.session() as s:
+            rows = s.execute(
+                select(SourceAdmission.channel, SourceAdmission.state, func.count(),
+                       func.sum(SourceAdmission.requests_spent))
+                .group_by(SourceAdmission.channel, SourceAdmission.state)).all()
+        by: dict = {}
+        for chan, state, n, reqs in rows:
+            key = chan or "(unrecorded)"
+            rec = by.setdefault(key, {"channel": key, "total": 0, "requests": 0, "states": {}})
+            rec["total"] += int(n or 0)
+            rec["requests"] += int(reqs or 0)
+            rec["states"][state] = rec["states"].get(state, 0) + int(n or 0)
+        for rec in by.values():
+            served = rec["states"].get("admitted", 0)
+            rec["admitted"] = served
+            # Requests per ADMITTED outlet — the portfolio's unit cost. None rather than 0 when
+            # nothing has been admitted yet: a ratio with an empty numerator is not a cheap channel,
+            # it is an unmeasured one, and printing 0.0 would read as the former.
+            rec["requestsPerAdmitted"] = (round(rec["requests"] / served, 1) if served else None)
+        return sorted(by.values(), key=lambda r: (-r["admitted"], -r["total"], r["channel"]))
+
     def record_admission_candidates(self, candidates, *, at: "str | None" = None) -> dict:
         """Seed or refresh ``candidate`` rows from a discovery pass. **Idempotent.**
 
@@ -2905,10 +2966,12 @@ class Store:
                 lang = (cand.get("language") or "").strip() or None
                 pubs = cand.get("publishers") or []
                 pub = (pubs[0] if pubs else "").strip() or None
+                chan = (cand.get("channel") or "").strip() or None
                 row = s.get(SourceAdmission, host)
                 if row is None:
                     s.add(SourceAdmission(host=host, state="candidate", since=now, first_seen=now,
-                                          articles=arts, language=lang, publisher=pub))
+                                          articles=arts, language=lang, publisher=pub,
+                                          channel=chan))
                     counts["inserted"] += 1
                     continue
                 changed = False
@@ -2918,6 +2981,13 @@ class Store:
                     row.language, changed = lang, True
                 if pub and pub != row.publisher:
                     row.publisher, changed = pub, True
+                # FIRST channel wins, and it is never overwritten. Dedup is by host, so a host three
+                # channels find is one row — and the question the column answers is "which channel
+                # got us this outlet", which only the first one did. Letting a later pass overwrite
+                # it would make a cheap channel re-offering a host look like an acquisition and
+                # quietly rewrite the yield comparison the portfolio decision rests on.
+                if chan and not row.channel:
+                    row.channel, changed = chan, True
                 counts["refreshed" if changed else "unchanged"] += 1
             s.flush()
         return counts

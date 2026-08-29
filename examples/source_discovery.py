@@ -101,17 +101,36 @@ def is_tracked(host: str, reg) -> bool:
     return bool(host) and reg.resolve(host) is not None
 
 
-def candidates(rows: list, reg, *, floor: int = VOLUME_FLOOR) -> "list[dict]":
-    """`(host, evidence)` candidates from catalog rows, richest evidence first.
+#: Every acquisition channel, as stored in ``store.SourceAdmission.channel``.
+#:
+#: Phase 2 of the 50k roadmap is a **portfolio**: no single channel plausibly supplies the ~45,000
+#: outlets Tier B needs, so the design has to carry several and the yield of each has to be
+#: comparable. These names are that comparison's key.
+#:
+#: ``catalogue``  the original channel — hosts already in our catalogue with enough observed
+#:                articles to justify a request. **It cannot add an outlet**: every candidate is a
+#:                host we already ingest, so admitting one reclassifies rather than acquires.
+#: ``directory``  bulk import from a structured list (a media register, a per-country index). Nearly
+#:                request-free, and it brings country and language with it.
+#: ``web``        gap-driven search of the open web. The only channel with the range to reach 10⁴,
+#:                and the one whose fetcher is supplied separately and deliberately.
+#: ``link``       outbound links seen while crawling a publisher we already carry.
+CHANNELS = ("catalogue", "directory", "web", "link")
+
+
+def catalogue_evidence(rows: list) -> "list[dict]":
+    """Per-host evidence from catalog rows. **The catalogue channel's half of discovery.**
 
     One entry per HOST rather than per publisher string. A host is what Stage 2 would send a request
     to, and it is also the thing that survives the publisher-name variation this catalog is full of
     — the same outlet arrives as ``Sportskeeda``, ``sportskeeda.com`` and ``SPORTSKEEDA`` and they
     are one candidate, not three.
 
-    Everything is reported, including candidates the gates reject; ``eligible`` says whether a
-    request is justified. A discovery run that silently dropped its rejections could not be audited,
-    and the rejection counts are the cheapest evidence that the gates are doing anything at all."""
+    Split out of :func:`candidates` so the gates below can serve every channel. What stayed here is
+    the only part that is channel-specific: what we know about a host and how we came to know it. A
+    directory import knows a country and a language and no articles at all; a web result knows the
+    query that found it. Each supplies its own evidence and its own admissibility predicate, and
+    they all meet at :func:`gate`."""
     by_host = defaultdict(list)
     for r in rows:
         h = _host(r)
@@ -124,14 +143,6 @@ def candidates(rows: list, reg, *, floor: int = VOLUME_FLOOR) -> "list[dict]":
         langs = Counter((a.get("language") or "").strip().lower() for a in arts
                         if (a.get("language") or "").strip())
         dated = sum(1 for a in arts if (a.get("publishedAt") or "").strip())
-        # Proxy is read BEFORE tracked, because a host can be both and "aggregator" is the more
-        # informative half: `news.google.com` IS in the registry, and reporting it as merely
-        # "already tracked" would suggest we carry it as a publisher rather than that its articles
-        # are other publishers'. Same ordering principle `source_evaluation.evaluate` uses — the
-        # disqualifying fact is read before the procedural one.
-        proxy = is_proxy_host(host, reg)
-        tracked = not proxy and is_tracked(host, reg)
-        below = len(arts) < floor
         out.append({
             "host": host,
             "articles": len(arts),
@@ -144,16 +155,81 @@ def candidates(rows: list, reg, *, floor: int = VOLUME_FLOOR) -> "list[dict]":
             # not print it. Gate 4 asks the same question of the FEED, where it can actually fail.
             "datedShare": dated / max(1, len(arts)),
             "sampleUrls": [a.get("url") or a.get("canonicalUrl") for a in arts[:3]],
+        })
+    return out
+
+
+def volume_floor(floor: int = VOLUME_FLOOR):
+    """The catalogue channel's admissibility predicate: ``>= floor`` observed articles.
+
+    Returned as a callable because the question it answers — *is a network request justified for
+    this host?* — is the same for every channel while the evidence that answers it is not. A
+    directory row has no articles and never will; requiring them would reject the entire channel for
+    lacking evidence the channel does not produce, which is how a floor stops being a cost bound and
+    starts being an accident."""
+    def admissible(rec: dict) -> "tuple[bool, str]":
+        n = int(rec.get("articles") or 0)
+        if n < floor:
+            return False, f"{n} articles, below the {floor}-article floor"
+        return True, ""
+    admissible.floor = floor                    # for the census, which reports `belowFloor`
+    return admissible
+
+
+def always_admissible(rec: dict) -> "tuple[bool, str]":
+    """A channel whose own act of discovery IS the evidence — a directory entry, a search hit.
+
+    Not a weaker bar, a different one: the shared gates (already tracked, aggregator/proxy) still
+    run, and every network gate in `source_validation` still has to pass before anything is
+    admitted. What this says is that the channel has no *prior* volume signal to threshold, so the
+    probe is where the question gets settled."""
+    return True, ""
+
+
+def gate(records: list, reg, *, admissible=None, channel: str = "catalogue") -> "list[dict]":
+    """`(host, evidence)` records -> candidates, richest evidence first. **Shared by every channel.**
+
+    Applies the two offline gates that are pure functions of a host and the registry — gate 7
+    (already tracked) and gate 8 (aggregator/proxy) — plus the channel's own ``admissible``
+    predicate, and stamps the channel so the campaign can report yield per channel later.
+
+    Everything is reported, including candidates the gates reject; ``eligible`` says whether a
+    request is justified. A discovery run that silently dropped its rejections could not be audited,
+    and the rejection counts are the cheapest evidence that the gates are doing anything at all."""
+    admissible = admissible or volume_floor()
+    out = []
+    for rec in records:
+        host = rec.get("host") or ""
+        # Proxy is read BEFORE tracked, because a host can be both and "aggregator" is the more
+        # informative half: `news.google.com` IS in the registry, and reporting it as merely
+        # "already tracked" would suggest we carry it as a publisher rather than that its articles
+        # are other publishers'. Same ordering principle `source_evaluation.evaluate` uses — the
+        # disqualifying fact is read before the procedural one.
+        proxy = is_proxy_host(host, reg)
+        tracked = not proxy and is_tracked(host, reg)
+        ok, why = admissible(rec)
+        below = not ok
+        out.append({
+            **rec,
+            "articles": int(rec.get("articles") or 0),
+            "publishers": rec.get("publishers") or [],
+            "language": rec.get("language") or "",
+            "channel": channel,
             "tracked": tracked,
             "proxy": proxy,
             "belowFloor": below,
             "eligible": not (tracked or proxy or below),
             "reason": ("aggregator/proxy host — its articles are someone else's" if proxy else
                        "already tracked by the registry" if tracked else
-                       f"{len(arts)} articles, below the {floor}-article floor" if below else
+                       why if below else
                        "no offline gate rejects it"),
         })
     return sorted(out, key=lambda c: (not c["eligible"], -c["articles"]))
+
+
+def candidates(rows: list, reg, *, floor: int = VOLUME_FLOOR) -> "list[dict]":
+    """The catalogue channel, end to end. Unchanged behaviour; now one caller of :func:`gate`."""
+    return gate(catalogue_evidence(rows), reg, admissible=volume_floor(floor), channel="catalogue")
 
 
 def worklist(cands: list) -> "list[dict]":

@@ -77,19 +77,68 @@ def _store(args):
 
 
 # --------------------------------------------------------------------------- seed
+def _seed_catalogue(st, reg, args):
+    """The original channel. Hosts we ALREADY ingest — so it reclassifies rather than acquires."""
+    rows = st.list_discovery_rows(exclude_publishers=corpus.sql_exclusions())
+    cands = sd.candidates(rows, reg, floor=args.floor)
+    return cands, [f"catalogue          : {len(rows):,} articles",
+                   f"  below the {args.floor}-article floor : "
+                   f"{sd.census(cands).get('belowFloor', 0):,}"]
+
+
+def _seed_directory(st, reg, args):
+    """A structured register. Nearly request-free, and it brings country and language with it."""
+    import source_directory
+    if not args.file:
+        raise SystemExit("the directory channel needs --file (a register to import)")
+    with open(args.file, encoding="utf-8", errors="replace") as f:
+        records = source_directory.parse(f.read(), source_ref=os.path.basename(args.file))
+    stats = source_directory.census(records)
+    cands = sd.gate(records, reg, admissible=sd.always_admissible, channel="directory")
+    return cands, [f"register           : {args.file}",
+                   f"  hosts parsed     : {stats['hosts']:,}",
+                   f"  with a country   : {stats['withCountry']:,} "
+                   f"across {stats['countries']} countries",
+                   f"  with a language  : {stats['withLanguage']:,}"]
+
+
+def _seed_web(st, reg, args):
+    """Gap-driven web discovery. **Offline here by construction** — `source_web.discover` has no
+    default search callable, so this reports the queries it would ask and seeds nothing."""
+    import source_web
+    found = source_web.gaps(source_web.corpus_gap_counts(st), floor=args.floor or 5)
+    plan = source_web.discover(found, per_gap=args.per_gap, max_hosts=args.limit)
+    cands = sd.gate(plan["records"], reg, admissible=sd.always_admissible, channel="web")
+    notes = [f"gaps below {args.floor or 5} outlets : {len(found):,}",
+             f"  queries planned  : {len(plan['queries']):,}",
+             f"  searches made    : {plan['searched']:,}"]
+    if plan["offline"]:
+        notes += ["", "  NO SEARCH WAS MADE. source_web.discover has no default search callable, so",
+                  "  this channel cannot reach the network. It planned the queries above and seeded",
+                  "  nothing. Supplying a fetcher is the ToS review's attachment point."]
+    return cands, notes
+
+
+_CHANNELS = {"catalogue": _seed_catalogue, "directory": _seed_directory, "web": _seed_web}
+
+
 def cmd_seed(args) -> int:
     st = _store(args)
     reg = outlet_registry.default_registry()
-    rows = st.list_discovery_rows(exclude_publishers=corpus.sql_exclusions())
-    cands = sd.candidates(rows, reg, floor=args.floor)
+    channel = args.channel
+    if channel not in _CHANNELS:
+        print(f"unknown channel {channel!r} — one of {', '.join(sorted(_CHANNELS))}")
+        return 2
+    cands, notes = _CHANNELS[channel](st, reg, args)
     stats = sd.census(cands)
     counts = st.record_admission_candidates(cands)
 
-    print(f"catalogue          : {len(rows):,} articles")
+    print(f"channel            : {channel}")
+    for line in notes:
+        print(line)
     print(f"hosts seen         : {stats.get('total', 0):,}")
     print(f"  already tracked  : {stats.get('tracked', 0):,}")
     print(f"  aggregator/proxy : {stats.get('proxy', 0):,}")
-    print(f"  below the {args.floor}-article floor : {stats.get('belowFloor', 0):,}")
     print(f"  ELIGIBLE         : {stats.get('eligible', 0):,}")
     print(f"\n=== seeding ===")
     print("    Idempotent: a state is never downgraded and probe accounting is never reset, so")
@@ -116,6 +165,20 @@ def _print_status(st, args) -> None:
     print(f"\n  probes made so far      : {census.get('probes', 0):,}")
     print(f"  requests spent on publishers: {census.get('requests', 0):,}")
     print("    From the record, not an estimate. This is the number a ToS review is asking about.")
+
+    yields = st.admission_channel_yield()
+    if yields:
+        print(f"\n=== supply, per acquisition channel ===")
+        print("    No single channel plausibly supplies the ~45,000 outlets Tier B needs, so this")
+        print("    is the number that decides where to invest. `(unrecorded)` is everything seeded")
+        print("    before the channel column existed — not backfilled, because a guess here would")
+        print("    make the first comparison a fiction.")
+        print(f"  {'channel':<14} {'candidates':>11} {'admitted':>9} {'requests':>9} "
+              f"{'req/admitted':>13}")
+        for r in yields:
+            per = "—" if r["requestsPerAdmitted"] is None else f"{r['requestsPerAdmitted']:.1f}"
+            print(f"  {r['channel']:<14} {r['total']:>11,} {r['admitted']:>9,} "
+                  f"{r['requests']:>9,} {per:>13}")
 
     queue = _queue(st, args, limit=0)
     print(f"\n=== what a probe run would do now ===")
@@ -458,6 +521,16 @@ def main(argv=None) -> int:
                             "in flight (default: %(default)s). 0 disables the in-flight guard — "
                             "only correct when nothing else is running.")
         p.add_argument("--floor", type=int, default=sd.VOLUME_FLOOR)
+        # Which acquisition channel supplies this seed. Defaults to `catalogue` so every existing
+        # invocation is unchanged — and worth knowing that the default is the ONE channel that
+        # cannot add an outlet: it mines hosts we already ingest, so admitting one reclassifies.
+        p.add_argument("--channel", default="catalogue",
+                       help=f"acquisition channel: {', '.join(sorted(_CHANNELS))} "
+                            f"(default catalogue). `directory` needs --file; `web` plans queries "
+                            f"but cannot search — it has no default fetcher.")
+        p.add_argument("--file", default="", help="directory channel: the register to import")
+        p.add_argument("--per-gap", type=int, default=1,
+                       help="web channel: queries per coverage gap (default 1)")
         p.add_argument("--interval", type=float, default=crawler.DEFAULT_MIN_INTERVAL)
         p.add_argument("--dry-run", action="store_true")
         p.add_argument("--publisher", default="")
