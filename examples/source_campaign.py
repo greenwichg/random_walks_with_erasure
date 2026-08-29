@@ -110,6 +110,12 @@ def _seed_web(st, reg, args):
     # same as authorising a run: an operator who set the env vars last week should still be able to
     # plan a campaign without querying anyone, and the flag is where "actually ask" lives.
     search = source_web.search_adapter() if args.search else None
+    if search is not None:
+        # The budget is enforced HERE, on the path the hourly cron takes, with the store as the
+        # meter — durable across the fresh container each pass runs in. The bare `source_web.py
+        # --search` probe stays unmetered: it sends a handful of queries for one gap, by hand.
+        search = source_web.budgeted_search(search, spent=st.web_search_spent,
+                                            note=st.note_web_search)
     warning = source_web.search_config_warning()
     found = source_web.gaps(source_web.corpus_gap_counts(st), floor=args.floor or 5)
     plan = source_web.discover(found, search=search, per_gap=args.per_gap, max_hosts=args.limit)
@@ -130,7 +136,14 @@ def _seed_web(st, reg, args):
     else:
         notes += ["", f"  Searched via provider: {getattr(search, 'provider', '?')}. Every request "
                       f"this made was a SEARCH request;",
-                  "  no publisher was contacted — that is the probe, and it is a separate command."]
+                  "  no publisher was contacted — that is the probe, and it is a separate command.",
+                  f"  search spend today : {st.web_search_spent()} of "
+                  f"{getattr(search, 'budget', source_web.search_daily_budget())} "
+                  f"(RWE_WEB_SEARCH_DAILY_BUDGET; day rolls at UTC midnight)"]
+        exhausted = [q for q in plan["queries"] if "budget exhausted" in (q.get("error") or "")]
+        if exhausted:
+            notes += [f"  *** {len(exhausted)} quer(ies) were SKIPPED by the daily search budget —",
+                      "      no request was made for them. They will be re-planned next pass."]
     return cands, notes
 
 

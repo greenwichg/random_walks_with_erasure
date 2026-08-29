@@ -478,6 +478,24 @@ class SourceAdmission(Base):
     reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
 
+class WebSearchSpend(Base):
+    """Search requests spent per UTC day — the meter behind ``RWE_WEB_SEARCH_DAILY_BUDGET``.
+
+    A TABLE, not the in-memory counter `KeyedJSONAdapter` uses, and the difference is the whole
+    point. That counter lives in a long-running poller process, where "per process" and "per day"
+    mostly coincide. The web-search channel runs in a fresh ``dc run --rm`` container every cron
+    pass, so an in-memory day counter resets to zero each hour and a "daily" budget silently becomes
+    an hourly one — 24x the spend an operator authorised, reported as under budget every time.
+
+    One row per day, monotonically incremented in its own transaction. Old rows are a few bytes and
+    double as a spend history; nothing prunes them and nothing needs to."""
+
+    __tablename__ = "web_search_spend"
+
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)   # UTC, YYYY-MM-DD
+    requests: Mapped[int] = mapped_column(default=0)
+
+
 class ApiToken(Base):
     """A per-user API token for non-browser clients (the browser extension; RSS later).
 
@@ -1724,6 +1742,32 @@ class Store:
             return [{"canonicalUrl": r[0], "url": r[1], "publisher": r[2] or "",
                      "language": r[3] or "", "publishedAt": r[4], "sourceType": r[5]}
                     for r in s.execute(stmt)]
+
+    @staticmethod
+    def _utc_day() -> str:
+        return _utcnow().strftime("%Y-%m-%d")
+
+    def web_search_spent(self, day: "str | None" = None) -> int:
+        """Search requests already spent on ``day`` (UTC, default today). 0 for an unknown day."""
+        with self.session() as s:
+            row = s.get(WebSearchSpend, day or self._utc_day())
+            return int(row.requests or 0) if row else 0
+
+    def note_web_search(self, day: "str | None" = None) -> int:
+        """Record one search request against ``day`` and return the new total.
+
+        Called BEFORE the request is made, not after it succeeds: a provider bills a failed request
+        as readily as a successful one, and a meter that only counts successes under-reports exactly
+        when a flaky provider is inflating the bill."""
+        key = day or self._utc_day()
+        with self.session() as s:
+            row = s.get(WebSearchSpend, key)
+            if row is None:
+                row = WebSearchSpend(day=key, requests=0)
+                s.add(row)
+            row.requests = int(row.requests or 0) + 1
+            s.flush()
+            return int(row.requests)
 
     def list_coverage_rows(self) -> list:
         """``(canonicalUrl, country, language)`` for the whole catalogue — the COVERAGE projection.

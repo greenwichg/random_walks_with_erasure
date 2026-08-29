@@ -103,6 +103,11 @@ services:
       RWE_WEB_SEARCH_URL_FIELD: ${RWE_WEB_SEARCH_URL_FIELD:-}
       RWE_WEB_SEARCH_TITLE_FIELD: ${RWE_WEB_SEARCH_TITLE_FIELD:-}
       RWE_WEB_SEARCH_COUNT: ${RWE_WEB_SEARCH_COUNT:-}
+      # Search requests per UTC day, all runs combined, metered DURABLY in the database
+      # (web_search_spend) because each cron pass runs in a fresh container. Bounded by
+      # default (200) — unlike the free-feed adapters, search bills per request and the
+      # hourly cron re-sends its gap queries every pass. There is no unlimited spelling.
+      RWE_WEB_SEARCH_DAILY_BUDGET: ${RWE_WEB_SEARCH_DAILY_BUDGET:-}
       # Minimum seconds between catalog-wide post-cycle passes (retention + the hot refresh).
       # Default 600, matching RWE_POLL_INTERVAL. Production measured 87.8% lock occupancy because
       # each of ~11 adapter threads ran its own full pass whenever it found a single article, at a
@@ -836,6 +841,11 @@ services:
       RWE_WEB_SEARCH_URL_FIELD: ${RWE_WEB_SEARCH_URL_FIELD:-}
       RWE_WEB_SEARCH_TITLE_FIELD: ${RWE_WEB_SEARCH_TITLE_FIELD:-}
       RWE_WEB_SEARCH_COUNT: ${RWE_WEB_SEARCH_COUNT:-}
+      # Search requests per UTC day, all runs combined, metered DURABLY in the database
+      # (web_search_spend) because each cron pass runs in a fresh container. Bounded by
+      # default (200) — unlike the free-feed adapters, search bills per request and the
+      # hourly cron re-sends its gap queries every pass. There is no unlimited spelling.
+      RWE_WEB_SEARCH_DAILY_BUDGET: ${RWE_WEB_SEARCH_DAILY_BUDGET:-}
       # Minimum seconds between catalog-wide post-cycle passes (retention + the hot refresh).
       # Default 600, matching RWE_POLL_INTERVAL. Production measured 87.8% lock occupancy because
       # each of ~11 adapter threads ran its own full pass whenever it found a single article, at a

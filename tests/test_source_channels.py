@@ -526,3 +526,99 @@ def test_a_run_reports_the_gaps_it_could_not_phrase():
                           {"country": "ZA", "language": "en", "outlets": 0}], per_gap=1)
     assert plan["unqueryableGaps"] == 1
     assert len(plan["queries"]) == 1
+
+
+# --------------------------------------------------------------------------- the search budget
+def test_the_search_budget_refuses_before_the_request_not_after():
+    """`note` runs before `search`, and an exhausted budget never reaches the provider at all —
+    providers bill failures too, and a meter that counts only successes under-reports exactly when
+    a flaky provider is inflating the bill."""
+    calls, meter = [], {"n": 0}
+    wrapped = sweb.budgeted_search(lambda q: calls.append(q) or [],
+                                   spent=lambda: meter["n"],
+                                   note=lambda: meter.__setitem__("n", meter["n"] + 1) or meter["n"],
+                                   budget=2)
+    wrapped("one"); wrapped("two")
+    with pytest.raises(sweb.SearchBudgetExhausted):
+        wrapped("three")
+    assert calls == ["one", "two"], "the provider was contacted past the budget"
+    assert meter["n"] == 2, "a refused call was metered, or a made call was not"
+
+
+def test_a_failed_search_still_counts_against_the_budget():
+    meter = {"n": 0}
+
+    def _search(q):
+        raise RuntimeError("provider 500")
+
+    wrapped = sweb.budgeted_search(_search, spent=lambda: meter["n"],
+                                   note=lambda: meter.__setitem__("n", meter["n"] + 1) or meter["n"],
+                                   budget=5)
+    with pytest.raises(RuntimeError):
+        wrapped("q")
+    assert meter["n"] == 1, "a billed failure was not metered"
+
+
+def test_the_budget_default_is_bounded_and_zero_is_not_unlimited(monkeypatch):
+    """Deliberately unlike the keyed adapters' daily_budget(), where 0 means unlimited: those poll
+    free feeds, this spends money, and the hourly cron re-sends its gap queries every pass."""
+    monkeypatch.delenv("RWE_WEB_SEARCH_DAILY_BUDGET", raising=False)
+    assert sweb.search_daily_budget() == sweb.DEFAULT_SEARCH_DAILY_BUDGET > 0
+    monkeypatch.setenv("RWE_WEB_SEARCH_DAILY_BUDGET", "0")
+    assert sweb.search_daily_budget() == sweb.DEFAULT_SEARCH_DAILY_BUDGET
+    monkeypatch.setenv("RWE_WEB_SEARCH_DAILY_BUDGET", "50")
+    assert sweb.search_daily_budget() == 50
+
+
+def test_the_spend_meter_is_durable_across_processes(st):
+    """The whole reason it is a table: each cron pass runs in a fresh `dc run --rm` container, so an
+    in-memory day counter resets hourly and a daily budget silently becomes an hourly one."""
+    assert st.web_search_spent() == 0
+    assert st.note_web_search() == 1
+    assert st.note_web_search() == 2
+    reopened = store_mod.Store(st.url)                  # a second process, same database
+    assert reopened.web_search_spent() == 2
+    assert reopened.note_web_search() == 3
+    assert st.web_search_spent() == 3
+
+
+def test_the_meter_is_per_utc_day(st):
+    assert st.note_web_search(day="2026-08-28") == 1
+    assert st.note_web_search(day="2026-08-29") == 1
+    assert st.web_search_spent(day="2026-08-28") == 1
+    assert st.web_search_spent(day="2026-08-30") == 0
+
+
+def test_seed_web_enforces_the_budget_and_reports_the_skips(tmp_path, monkeypatch):
+    """End to end through the cron's own path: queries past the budget are skipped with the budget
+    named in the plan, the run does not fail, and the spend lands in the durable meter."""
+    monkeypatch.setenv("RWE_WEB_SEARCH_DAILY_BUDGET", "1")
+    monkeypatch.setattr(sweb, "search_adapter",
+                        lambda **kw: (lambda q: [{"url": f"https://found-{len(q)}.example/a",
+                                                  "title": "Found"}]))
+    db = f"sqlite:///{tmp_path / 'b.db'}"
+    st2 = store_mod.Store(db)
+    _seed_coverage(st2, [("a.example", "en", "ZA"), ("b.example", "el", "GR")])
+    st2.engine.dispose()
+
+    out = _run(db, "seed", "--channel", "web", "--search", "--floor", "5")
+    assert "search spend today : 1 of 1" in out
+    assert "SKIPPED by the daily search budget" in out
+    assert store_mod.Store(db).web_search_spent() == 1, "the meter and the report disagree"
+
+
+def test_the_search_request_does_not_retry(monkeypatch):
+    """The shared retry discipline was tuned for free feeds. Search providers bill errors, so one
+    query must be at most one billed request — the next cron pass is the retry."""
+    monkeypatch.setenv("RWE_WEB_SEARCH_PROVIDER", "brave")
+    monkeypatch.setenv("RWE_WEB_SEARCH_API_KEY", "K")
+    seen = {}
+
+    def _get_json(url, headers=None, **kw):
+        seen.update(kw)
+        return {"web": {"results": []}}
+
+    search = sweb.search_adapter(get_json=_get_json)
+    search("q")
+    assert seen.get("retries") == 0, \
+        f"the search request inherits the feed retry policy (retries={seen.get('retries')!r})"

@@ -266,7 +266,14 @@ def search_adapter(*, get_json=None):
         headers = {"Accept": "application/json"}
         if header and key:
             headers[header] = key
-        payload = get_json(url, headers=headers)
+        # retries=0, overriding the shared default of 3. That discipline was tuned for FREE news
+        # feeds, where a retried 5xx costs nothing but time. Search providers bill errors as
+        # readily as successes and rate-limit at ~1 req/s on free tiers, so a flaky hour turns one
+        # query into four billed requests — and with retries=0 a 429 raises immediately instead of
+        # honouring a Retry-After sleep against a quota that will still be exhausted afterwards.
+        # The failure is recorded per query by `discover` and the run continues; the next cron pass
+        # is the retry, and it is a better one because the quota may have reset by then.
+        payload = get_json(url, headers=headers, retries=0)
         out = []
         for item in _dig(payload, results_path):
             if not isinstance(item, dict):
@@ -277,6 +284,57 @@ def search_adapter(*, get_json=None):
 
     search.provider = name or "custom"
     return search
+
+
+#: Search requests per UTC day, all runs combined, unless the operator sets
+#: ``RWE_WEB_SEARCH_DAILY_BUDGET``. Bounded BY DEFAULT, deliberately unlike the keyed adapters'
+#: ``daily_budget()`` where 0 means unlimited: those poll free feeds, this spends money against a
+#: quota, and the hourly cron re-sends its gap queries every pass — dedup is per run, so 24 passes
+#: over ~100 gap countries is ~2,400 requests/day if nothing bounds it. 200 lets a handful of
+#: passes run and then stops the day. 0 here means "use the default", never "unlimited"; there is
+#: no unlimited spelling, which is the point.
+DEFAULT_SEARCH_DAILY_BUDGET = 200
+
+
+def search_daily_budget() -> int:
+    try:
+        v = int(os.environ.get("RWE_WEB_SEARCH_DAILY_BUDGET") or 0)
+    except ValueError:
+        v = 0
+    return v if v > 0 else DEFAULT_SEARCH_DAILY_BUDGET
+
+
+class SearchBudgetExhausted(RuntimeError):
+    """Raised by :func:`budgeted_search` instead of making the request. Distinct so `discover`'s
+    per-query error record names the budget rather than a generic failure — "budget exhausted" and
+    "provider down" call for opposite responses."""
+
+
+def budgeted_search(search, *, spent, note, budget: "int | None" = None):
+    """Wrap ``search`` so every call is counted DURABLY and refused once ``budget`` is spent.
+
+    Pure: ``spent() -> int`` and ``note() -> int`` are supplied by the caller — in production
+    `store.web_search_spent` / `store.note_web_search`, so the meter survives the fresh container
+    each cron pass runs in. An in-memory counter here would reset hourly and turn a daily budget
+    into an hourly one, 24x what the operator authorised.
+
+    ``note`` runs BEFORE the request: providers bill failures too, and a meter that counts only
+    successes under-reports exactly when a flaky provider is inflating the bill."""
+    limit = budget if budget and budget > 0 else search_daily_budget()
+
+    def wrapped(query: str):
+        used = spent()
+        if used >= limit:
+            raise SearchBudgetExhausted(
+                f"search budget exhausted: {used} of {limit} requests spent today "
+                f"(RWE_WEB_SEARCH_DAILY_BUDGET). No request was made; the day rolls at UTC "
+                f"midnight.")
+        note()
+        return search(query)
+
+    wrapped.provider = getattr(search, "provider", "?")
+    wrapped.budget = limit
+    return wrapped
 
 
 def search_config_warning() -> "str | None":
