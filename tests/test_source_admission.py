@@ -1023,3 +1023,50 @@ def test_emit_config_reports_the_table_as_the_configuration_it_replaces(campaign
     body = json.loads(out[out.index("{"):])
     assert body["publishers"][0]["domains"] == ["alpha.example"]
     assert body["publishers"][0]["max_age_days"] == sa.ADMITTED_MAX_AGE_DAYS
+
+
+def test_a_tier_b_admission_gets_a_crawl_config(_wired):
+    """The gap between "registered" and "carrying articles", closed.
+
+    `admitted_configs` filtered through `corpus.is_shadow`, which was right while shadow was the
+    only tier an admission could assign. Once Tier B existed, a Tier B source was registered,
+    validated, admitted — and then got no crawl config at all, so it could never carry an article,
+    while every step reported success. That is the shape of defect this repository keeps finding:
+    not an error, an absence."""
+    st = _wired
+    st.record_admission_candidates([_cand("alpha.example")])
+    st.claim_admission_probe("alpha.example")
+    st.record_admission_probe("alpha.example", verdict="ADMIT", feed_url="https://alpha.example/f")
+    st.admit_source("alpha.example", tier="B")
+    corpus.wire_tier_b_admissions(st.admitted_tier_b_hosts)
+
+    assert corpus.tier_of("alpha.example", "https://alpha.example/a") == "B"
+    cfgs = crawler.admitted_configs(st)
+    assert [c.publisher for c in cfgs] == ["alpha.example"], \
+        "a Tier B source got no crawl config — registered, and unable to carry an article"
+    assert crawler.CrawlAdapter(cfgs[0]).in_shadow() is True
+
+
+def test_an_unassigned_host_still_gets_no_crawl_config(_wired):
+    """The guard that widened must not have opened. Tier A is the default, so a host nobody has
+    assigned is one whose articles would go straight into the clustering corpus — promotion by
+    omission, which is the whole reason this precondition exists."""
+    st = _wired
+    st.record_admission_candidates([_cand("alpha.example")])
+    st.claim_admission_probe("alpha.example")
+    st.record_admission_probe("alpha.example", verdict="ADMIT", feed_url="https://alpha.example/f")
+    st.admit_source("alpha.example", tier="B")
+    corpus.wire_tier_b_admissions(lambda: frozenset())      # corpus has not caught up
+    corpus.admitted_tier_b_hosts(refresh=True)
+
+    assert corpus.tier_of("alpha.example", "https://alpha.example/a") == "A"
+    assert crawler.admitted_configs(st) == [], \
+        "an unassigned host reached the crawl set — cache skew must fail toward NOT crawling"
+    warn = crawler.CrawlAdapter(crawler.PublisherCrawlConfig(
+        publisher="alpha.example", domains=("alpha.example",))).shadow_warning
+    import os
+    os.environ["RWE_CRAWL_ENABLED"] = "1"
+    try:
+        assert "assigned to NO tier" in (warn() or "")
+    finally:
+        os.environ.pop("RWE_CRAWL_ENABLED", None)

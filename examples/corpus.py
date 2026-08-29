@@ -543,6 +543,20 @@ def is_shadow(publisher: "str | None", url: "str | None" = None) -> bool:
     return tier_of(publisher, url) == "shadow"
 
 
+def is_assigned(publisher: "str | None", url: "str | None" = None) -> bool:
+    """Whether this outlet has been **explicitly assigned away from Tier A**, to either lane.
+
+    :data:`DEFAULT_TIER` is ``"A"``, so an outlet nobody has said anything about is in the
+    clustering corpus. That is the fact every guard in this system is really about: the danger is
+    never "which of the two quiet lanes is it in", it is "has anyone decided at all".
+
+    Both ``shadow`` and ``B`` are decisions, and neither can reach the story builder. So a caller
+    asking *"is it safe to ingest from this outlet without promoting it by omission"* should ask
+    this, not :func:`is_shadow` — which was the right question only while shadow was the only
+    destination an admission could assign."""
+    return tier_of(publisher, url) != DEFAULT_TIER
+
+
 # --------------------------------------------------------------------------- #
 # The selector
 # --------------------------------------------------------------------------- #

@@ -171,14 +171,19 @@ def load_config(path: "str | None" = None, *, store_=None) -> "list[PublisherCra
 
 
 def admitted_configs(store_, *, exclude=frozenset()) -> "list[PublisherCrawlConfig]":
-    """M11-admitted sources as crawl configs. **Every one is re-checked against the shadow lane.**
+    """M11-admitted sources as crawl configs. **Every one is re-checked against its assigned tier.**
 
     That re-check is the point, not a formality. `CrawlAdapter.in_shadow` already refuses to run an
-    unshadowed publisher, but it reads `corpus`, which caches its admitted-host snapshot for a
+    unassigned publisher, but it reads `corpus`, which caches its admitted-host snapshot for a
     minute. Filtering the config list through the same predicate means the crawl set is always a
-    subset of the shadow set *as corpus currently sees it* — so cache skew can only ever remove a
-    source from the crawl, never add one that is not shadowed. Any disagreement resolves to "do not
+    subset of the assigned set *as corpus currently sees it* — so cache skew can only ever remove a
+    source from the crawl, never add one that is unassigned. Any disagreement resolves to "do not
     crawl", which is the fail-safe direction and the one `corpus.DEFAULT_TIER == "A"` demands.
+
+    Both admissible lanes pass. This asked `corpus.is_shadow`, which was correct while shadow was
+    the only tier an admission could assign and became a silent hole the moment Tier B existed: a
+    Tier B source would be registered, validated and admitted, and then get no crawl config at all —
+    carrying no articles, while every step reported success.
 
     Failures return what was built so far rather than raising: `sources._crawl_adapters` already
     treats a broken crawl config as "no crawling" rather than as "no ingestion", and a store that is
@@ -192,7 +197,7 @@ def admitted_configs(store_, *, exclude=frozenset()) -> "list[PublisherCrawlConf
         return configs
     for row in rows:
         host = row["host"]
-        if not corpus.is_shadow(row.get("publisher") or host, f"https://{host}/"):
+        if not corpus.is_assigned(row.get("publisher") or host, f"https://{host}/"):
             continue
         fields = source_admission.crawl_config_fields(row)
         if fields["publisher"] in exclude:
@@ -789,31 +794,37 @@ class CrawlAdapter(sources.SourceAdapter):
         return self.in_shadow()
 
     def in_shadow(self) -> bool:
-        """Whether this publisher is in the shadow lane — **a hard precondition for crawling it.**
+        """Whether this publisher sits in an assigned lane — **a hard precondition for crawling it.**
 
-        `corpus.DEFAULT_TIER` is ``"A"``. So an outlet we crawl that nobody put in
-        ``RWE_CORPUS_SHADOW`` does not land somewhere neutral: its articles go straight into the
-        clustering corpus and start forming and voting in stories. That is *promotion*, arrived at
-        by omission rather than by decision.
+        `corpus.DEFAULT_TIER` is ``"A"``. So an outlet we crawl that nobody has assigned does not
+        land somewhere neutral: its articles go straight into the clustering corpus and start
+        forming and voting in stories. That is *promotion*, arrived at by omission rather than by
+        decision, and it is the one failure this wiring could cause that nobody would notice until a
+        crawled outlet turned up in a blindspot claim.
 
-        The roadmap's Stage 3 says a discovered source is ``tier = 'shadow'`` — stored, deduped,
-        attributed, surfaced nowhere — for a minimum of 14 days, and M8 measures it there before M9
-        proposes anything. Enforcing that here rather than documenting it means the wiring cannot
-        promote a source by accident, which is the one failure this change could cause that nobody
-        would notice until a crawled outlet turned up in a blindspot claim."""
+        **The question is "has anyone decided", not "which lane".** This asked `corpus.is_shadow`
+        while shadow was the only tier an admission could assign. Now that admission also assigns
+        Tier B — the searchable lane a 50,000-outlet corpus is mostly made of — a Tier B source
+        would have been registered, validated, and then never crawled, so it could carry no
+        articles. `corpus.is_assigned` is the same guard against the same danger, over both lanes;
+        neither can reach the story builder, and Tier A is still refused.
+
+        The name is kept because `sources.config_warnings` and the wiring tests reach for it, and a
+        rename would be churn against a method whose meaning widened rather than changed."""
         import corpus
         host = self.config.domains[0] if self.config.domains else self.config.publisher
-        return corpus.is_shadow(self.config.publisher, f"https://{host}/")
+        return corpus.is_assigned(self.config.publisher, f"https://{host}/")
 
     def shadow_warning(self) -> "str | None":
-        """Why this publisher is configured but not crawling, when the reason is the shadow lane."""
+        """Why this publisher is configured but not crawling, when the reason is its tier."""
         if not (sources._bool_env("RWE_CRAWL_ENABLED") and bool(self.config.enabled)):
             return None
         if self.in_shadow():
             return None
-        return (f"{self.config.publisher} is enabled for crawling but is NOT in RWE_CORPUS_SHADOW. "
-                f"Tier A is the default, so crawling it would put its articles straight into the "
-                f"clustering corpus — promotion by omission. Add it to RWE_CORPUS_SHADOW first.")
+        return (f"{self.config.publisher} is enabled for crawling but is assigned to NO tier — not "
+                f"RWE_CORPUS_SHADOW, not RWE_CORPUS_TIER_B, and not the admission table. Tier A is "
+                f"the default, so crawling it would put its articles straight into the clustering "
+                f"corpus — promotion by omission. Assign it to a lane first.")
 
     def interval(self) -> float:
         return sources._float_env("RWE_CRAWL_INTERVAL", 900.0)
