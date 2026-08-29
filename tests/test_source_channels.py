@@ -449,3 +449,80 @@ def test_every_declared_channel_has_an_implementation():
     assert not missing, f"declared channels with no seed implementation: {sorted(missing)}"
     extra = set(sc._CHANNELS) - set(sd.CHANNELS)
     assert not extra, f"seedable channels missing from CHANNELS: {sorted(extra)}"
+
+
+# --------------------------------------------------------------------------- query generation
+def _seed_coverage(st, rows):
+    import json as _json
+    FA = store_mod.FeedArticle
+    with st.session() as s:
+        for i, (host, lang, cc) in enumerate(rows):
+            s.add(FA(canonical_url=f"https://{host}/{i}", url=f"https://{host}/{i}",
+                     publisher=host, scored=_json.dumps({}), language=lang, country=cc,
+                     published_at="2026-08-28T00:00:00+00:00"))
+        s.commit()
+
+
+def test_gap_counts_carry_the_country(st):
+    """The defect this replaced: `corpus_gap_counts` read a projection with no `country` column, so
+    it hardcoded an empty one — every gap was country-less and every query built from one was too.
+    A projection that cannot supply half of what a gap IS produces half a gap, silently."""
+    _seed_coverage(st, [("a.example", "en", "US"), ("b.example", "el", "GR")])
+    counts = sweb.corpus_gap_counts(st)
+    assert ("US", "en") in counts and ("GR", "el") in counts
+    assert not any(cc == "" for cc, _ in counts), "the country came back empty again"
+
+
+def test_a_host_is_counted_under_the_pair_it_most_often_carries(st):
+    """Row order is arbitrary, so first-seen made the coverage map depend on how SQLite happened to
+    return rows. Two runs over one catalogue have to agree."""
+    # The MINORITY pair is seeded FIRST. With it last, "first seen" and "most common" are the same
+    # row and the fixture cannot see its own mutation — which is how this test passed against a
+    # first-seen implementation on its first run.
+    _seed_coverage(st, [("a.example", "es", "MX"),
+                        ("a.example", "en", "US"), ("a.example", "en", "US")])
+    counts = sweb.corpus_gap_counts(st)
+    assert counts == {("US", "en"): 1}, "a host counted under its minority pair, or counted twice"
+
+
+def test_queries_use_country_NAMES_not_codes():
+    """Nobody searches for "local news websites in ZA"."""
+    qs = sweb.queries({"country": "ZA", "language": "el"})
+    assert "local news websites in South Africa" in qs
+    assert not any("ZA" in q for q in qs), f"a raw country code reached a query: {qs}"
+    assert "Greek language news site South Africa" in qs, "the language code was not resolved"
+
+
+def test_a_gap_with_no_usable_country_yields_no_query_at_all():
+    """Every template is country-shaped. Formatting one with an empty country produced 'local news
+    websites in' — a dangling preposition that asks nothing and returns global listicles, rendered
+    IDENTICALLY for every country-less gap. Returning nothing is the honest answer."""
+    assert sweb.queries({"country": "", "language": "en"}) == []
+    assert sweb.queries({"country": "XX", "language": "en"}) == [], "an unknown code was rendered raw"
+    assert sweb.queries({"country": None, "language": None}) == []
+
+
+def test_an_unknown_language_does_not_produce_a_language_query():
+    qs = sweb.queries({"country": "ZA", "language": "af"})     # af is not in the language map
+    assert qs and not any("language news site" in q for q in qs)
+    assert not any("af" == w for q in qs for w in q.split())
+
+
+def test_identical_queries_are_sent_once_across_gaps():
+    """Two gaps in the same country render the same string, and a provider charges for each. With
+    every gap country-less this was measured at one identical send per gap."""
+    gaps = [{"country": "ZA", "language": "en", "outlets": 0},
+            {"country": "ZA", "language": "zu", "outlets": 1},
+            {"country": "ZA", "language": "", "outlets": 2}]
+    plan = sweb.discover(gaps, per_gap=1)
+    sent = [q["query"] for q in plan["queries"]]
+    assert sent == ["local news websites in South Africa"], f"duplicate queries planned: {sent}"
+
+
+def test_a_run_reports_the_gaps_it_could_not_phrase():
+    """A run producing few queries must say whether the corpus is well covered or the country codes
+    were simply missing. Those are opposite conclusions from the same small number."""
+    plan = sweb.discover([{"country": "", "language": "de", "outlets": 0},
+                          {"country": "ZA", "language": "en", "outlets": 0}], per_gap=1)
+    assert plan["unqueryableGaps"] == 1
+    assert len(plan["queries"]) == 1

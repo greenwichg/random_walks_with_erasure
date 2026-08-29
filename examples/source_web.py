@@ -103,14 +103,28 @@ def gaps(counts: dict, *, floor: int = 5) -> "list[dict]":
 
 def queries(gap: dict, *, templates=QUERY_TEMPLATES) -> "list[str]":
     """The search strings for one gap. Reported before they are asked, so a run can be reviewed as
-    a set of questions rather than after the fact as a set of requests."""
-    country = (gap.get("country") or "").strip()
-    language = (gap.get("language") or "").strip()
+    a set of questions rather than after the fact as a set of requests.
+
+    **Names, not codes**, via `location.country_name` / `location.language_name`: nobody searches
+    for "local news websites in ZA", and "af language news site" is not a phrase. An unknown code
+    resolves to empty and its templates are skipped rather than rendered with the raw code.
+
+    **A country-less gap yields NO queries.** Every template is country-shaped, and formatting one
+    with an empty country produced "local news websites in" — a dangling preposition that asks the
+    open web nothing in particular and returns global listicles. Worse, it rendered *identically*
+    for every country-less gap, so a run would send the same meaningless string once per gap and
+    spend the provider quota discovering nothing. Returning nothing is the honest answer: the gap is
+    real, we just cannot phrase a question for it, and `discover` reports it as unqueryable."""
+    import location
+    country = location.country_name(gap.get("country"))
+    language = location.language_name(gap.get("language"))
+    if not country:
+        return []
     out = []
     for t in templates:
         if "{language}" in t and not language:
             continue
-        q = t.format(country=country, language=language).strip()
+        q = " ".join(t.format(country=country, language=language).split())
         if q and q not in out:
             out.append(q)
     return out
@@ -296,8 +310,22 @@ def discover(gap_list, *, search=None, per_gap: int = 1, max_hosts: int = 0) -> 
     Returns ``{"records", "queries", "searched", "gaps", "offline"}`` — the plan and the result in
     one object, so a caller reports what it asked as readily as what it got."""
     planned, records, searched = [], {}, 0
+    asked: set = set()
+    unqueryable = 0
     for gap in gap_list or ():
-        for q in queries(gap)[:max(0, per_gap)]:
+        qs = queries(gap)
+        if not qs:
+            # A gap we cannot phrase a question for — an unknown or absent country code. Counted so
+            # a run that produced few queries says WHY, rather than looking like a quiet corpus.
+            unqueryable += 1
+            continue
+        for q in qs[:max(0, per_gap)]:
+            # Deduplicated ACROSS gaps, not just within one. Two gaps in the same country render the
+            # same string, and a provider charges for each — this was measured at 200 identical
+            # sends when every gap was country-less.
+            if q in asked:
+                continue
+            asked.add(q)
             planned.append({"query": q, "gap": gap})
             if search is None:
                 continue
@@ -315,7 +343,10 @@ def discover(gap_list, *, search=None, per_gap: int = 1, max_hosts: int = 0) -> 
     if max_hosts:
         out = out[:max_hosts]
     return {"records": out, "queries": planned, "searched": searched,
-            "gaps": list(gap_list or ()), "offline": search is None}
+            "gaps": list(gap_list or ()), "offline": search is None,
+            # Gaps we could not phrase a question for. A run reporting few queries must say whether
+            # the corpus is well covered or whether the country codes were simply missing.
+            "unqueryableGaps": unqueryable}
 
 
 def evidence(gap_list, *, search=None, per_gap: int = 1, max_hosts: int = 0) -> "list[dict]":
@@ -333,18 +364,32 @@ def corpus_gap_counts(store_, reg=None) -> dict:
     Counted per HOST rather than per article, because the question is how many outlets serve a
     place, not how loud the ones we have are. A single prolific outlet is not coverage — that is the
     same distinction `source_evaluation` draws between volume and breadth.
+
+    Reads `store.list_coverage_rows`, which carries ``country``. It used to read
+    `list_discovery_rows`, which does not — so it hardcoded an empty country, every gap came out
+    country-less, and every query built from one came out as "local news websites in". The queries
+    were malformed at the source, and nothing downstream could tell.
+
+    A host is counted under the (country, language) pair it MOST OFTEN carries, not the first one
+    seen: row order is arbitrary, so first-seen made the whole coverage map depend on how SQLite
+    happened to return rows.
     """
-    counts: dict = {}
-    seen: dict = {}
-    for r in store_.list_discovery_rows():
-        host = outlet_registry._host_of(r.get("canonicalUrl") or r.get("url") or "")
+    from collections import Counter
+    per_host: dict = {}
+    for r in store_.list_coverage_rows():
+        host = outlet_registry._host_of(r.get("canonicalUrl") or "")
         if not host:
             continue
+        cc = (r.get("country") or "").strip().upper()[:2]
         lang = (r.get("language") or "").strip().lower()[:2]
-        key = seen.get(host)
-        if key is None:
-            seen[host] = key = ("", lang)
-            counts[key] = counts.get(key, 0) + 1
+        per_host.setdefault(host, Counter())[(cc, lang)] += 1
+
+    counts: dict = {}
+    for host, pairs in per_host.items():
+        # Deterministic: most articles wins, ties broken on the pair itself rather than on
+        # insertion order, so two runs over the same catalogue agree.
+        key = max(pairs.items(), key=lambda kv: (kv[1], kv[0]))[0]
+        counts[key] = counts.get(key, 0) + 1
     return counts
 
 

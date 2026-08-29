@@ -1725,6 +1725,24 @@ class Store:
                      "language": r[3] or "", "publishedAt": r[4], "sourceType": r[5]}
                     for r in s.execute(stmt)]
 
+    def list_coverage_rows(self) -> list:
+        """``(canonicalUrl, country, language)`` for the whole catalogue — the COVERAGE projection.
+
+        Separate from :meth:`list_discovery_rows` on purpose. That one is a measured six-field
+        projection (0.54 s / 46.9 MB against 7.77 s / 888.9 MB for the full rows) whose field list
+        is documented and whose cost every caller inherits; widening it to carry ``country`` for one
+        consumer would make every other caller pay for a column it never reads.
+
+        And the absence of that column was a real defect, not a nicety: `source_web.corpus_gap_counts`
+        was written against `list_discovery_rows`, which has no ``country``, so it hardcoded an empty
+        one — and every gap it produced was country-less, which made every search query it generated
+        country-less too ("local news websites in"). A projection that cannot supply half of what a
+        gap IS will produce half a gap, silently."""
+        stmt = select(FeedArticle.canonical_url, FeedArticle.country, FeedArticle.language)
+        with self.session() as s:
+            return [{"canonicalUrl": r[0], "country": r[1] or "", "language": r[2] or ""}
+                    for r in s.execute(stmt)]
+
     def prune_tier_articles_older_than(self, publishers, max_age_days: float, *,
                                        limit: int = 5000, now=None) -> int:
         """Delete up to ``limit`` catalogue rows whose publisher is in ``publishers`` and whose

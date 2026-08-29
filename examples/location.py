@@ -247,6 +247,44 @@ _LANGUAGE_NAMES = {
 SCOPES = ("international", "national", "regional", "local", "hyperlocal")
 
 
+#: Code -> display name, INVERTED from the name maps above rather than typed out a second time.
+#:
+#: The maps are many-to-one (``republic of south africa`` and ``south africa`` both give ``ZA``), so
+#: the shortest spelling wins — which is the everyday name in every case tested: ZA -> South Africa,
+#: GB -> United Kingdom, DE -> Germany, GR -> Greece. A second hand-written table would be a
+#: duplicate definition of a fact this module already holds, and this repository has had to correct
+#: four of those.
+def _invert(mapping: dict) -> dict:
+    out: dict = {}
+    for name, code in mapping.items():
+        prev = out.get(code)
+        if prev is None or (len(name), name) < (len(prev), prev):
+            out[code] = name
+    return out
+
+
+_CODE_TO_COUNTRY = {**_invert(_COUNTRY_NAMES_FULL), **{}}
+for _code, _name in _invert(_COUNTRY_NAMES).items():
+    _CODE_TO_COUNTRY.setdefault(_code, _name)
+_CODE_TO_LANGUAGE = _invert(_LANGUAGE_NAMES)
+
+
+def country_name(code: "str | None") -> str:
+    """``"ZA"`` -> ``"South Africa"``, or ``""`` when the code is unknown.
+
+    Title-cased, because the caller is building a phrase a person would type into a search box and
+    ``south africa`` is not that. Empty rather than the bare code for an unknown one: a query reading
+    "local news websites in XK" is worse than no query, and the caller can then skip it."""
+    name = _CODE_TO_COUNTRY.get((code or "").strip().upper())
+    return name.title() if name else ""
+
+
+def language_name(code: "str | None") -> str:
+    """``"el"`` -> ``"Greek"``, or ``""`` when unknown. Same reasoning as :func:`country_name`."""
+    name = _CODE_TO_LANGUAGE.get((code or "").strip().lower())
+    return name.title() if name else ""
+
+
 def normalize_country(raw: "str | None") -> Optional[str]:
     """Any provider country form -> ISO 3166-1 alpha-2 (upper), or None. Never guesses."""
     if not raw or not str(raw).strip():
