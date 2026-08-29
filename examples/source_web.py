@@ -160,6 +160,127 @@ def hosts_from_results(results, *, gap: "dict | None" = None) -> "list[dict]":
     return list(out.values())
 
 
+# --------------------------------------------------------------------------- #
+# The search adapter. Configured, never assumed — and it returns None until it is.
+# --------------------------------------------------------------------------- #
+#: Known search APIs, as ``{endpoint template, key header, results path, url field, title field}``.
+#:
+#: **These are documented JSON APIs, not results-page scrapers.** Parsing a search engine's HTML is
+#: the thing that actually breaches most search providers' terms, and building one here would bake a
+#: policy decision into code that an operator cannot change. An endpoint template plus a JSON path
+#: keeps the choice of provider — and its terms — with the person who signed up for it.
+#:
+#: ``results`` is a dotted path into the payload. ``{query}`` is URL-encoded on substitution.
+SEARCH_PROVIDERS = {
+    "brave": {
+        "endpoint": "https://api.search.brave.com/res/v1/web/search?q={query}&count={count}",
+        "header": "X-Subscription-Token", "results": "web.results",
+        "url_field": "url", "title_field": "title",
+    },
+    "google_cse": {
+        # Needs both a key and a search-engine id; the id goes in the endpoint via RWE_WEB_SEARCH_CX.
+        "endpoint": ("https://www.googleapis.com/customsearch/v1"
+                     "?q={query}&num={count}&key={key}&cx={cx}"),
+        "header": "", "results": "items", "url_field": "link", "title_field": "title",
+    },
+    "serpapi": {
+        "endpoint": "https://serpapi.com/search.json?q={query}&num={count}&api_key={key}",
+        "header": "", "results": "organic_results", "url_field": "link", "title_field": "title",
+    },
+}
+
+
+def _dig(payload, path: str):
+    """Follow a dotted path into a decoded payload, returning ``[]`` rather than raising."""
+    cur = payload
+    for part in (path or "").split("."):
+        if not part:
+            continue
+        if not isinstance(cur, dict):
+            return []
+        cur = cur.get(part)
+    return cur if isinstance(cur, list) else []
+
+
+def search_adapter(*, get_json=None):
+    """A ``search(query) -> [{"url", "title"}]`` callable from the environment, or **None**.
+
+    ``None`` when nothing is configured, and that is the load-bearing default: :func:`discover`
+    treats a missing callable as "plan, do not ask", so an unconfigured deployment cannot make a
+    search request no matter what else is switched on. Configuring one is a deliberate act by an
+    operator who has decided the provider's terms are acceptable.
+
+    Env surface::
+
+        RWE_WEB_SEARCH_PROVIDER   brave | google_cse | serpapi   (or leave unset and give ENDPOINT)
+        RWE_WEB_SEARCH_API_KEY    the provider's key
+        RWE_WEB_SEARCH_CX         google_cse only: the search-engine id
+        RWE_WEB_SEARCH_ENDPOINT   override the template; {query} {count} {key} {cx} substituted
+        RWE_WEB_SEARCH_RESULTS    dotted path to the results array
+        RWE_WEB_SEARCH_URL_FIELD / RWE_WEB_SEARCH_TITLE_FIELD
+        RWE_WEB_SEARCH_COUNT      results per query (default 20)
+
+    Requests go through ``sources._get_json``, so this inherits the 429/5xx retry budget the source
+    adapters already have rather than growing a second one.
+    """
+    name = (os.environ.get("RWE_WEB_SEARCH_PROVIDER") or "").strip().lower()
+    preset = dict(SEARCH_PROVIDERS.get(name) or {})
+    endpoint = (os.environ.get("RWE_WEB_SEARCH_ENDPOINT") or preset.get("endpoint") or "").strip()
+    if not endpoint:
+        return None
+    key = (os.environ.get("RWE_WEB_SEARCH_API_KEY") or "").strip()
+    cx = (os.environ.get("RWE_WEB_SEARCH_CX") or "").strip()
+    header = (os.environ.get("RWE_WEB_SEARCH_HEADER") or preset.get("header") or "").strip()
+    results_path = (os.environ.get("RWE_WEB_SEARCH_RESULTS")
+                    or preset.get("results") or "results").strip()
+    url_field = (os.environ.get("RWE_WEB_SEARCH_URL_FIELD")
+                 or preset.get("url_field") or "url").strip()
+    title_field = (os.environ.get("RWE_WEB_SEARCH_TITLE_FIELD")
+                   or preset.get("title_field") or "title").strip()
+    try:
+        count = max(1, int(os.environ.get("RWE_WEB_SEARCH_COUNT") or 20))
+    except ValueError:
+        count = 20
+
+    if get_json is None:                                # imported lazily: keeps this module pure
+        import sources                                  # for every caller that never configures one
+        get_json = sources._get_json
+
+    def search(query: str):
+        url = endpoint.format(query=urllib.parse.quote_plus(query), count=count,
+                              key=urllib.parse.quote_plus(key), cx=urllib.parse.quote_plus(cx))
+        headers = {"Accept": "application/json"}
+        if header and key:
+            headers[header] = key
+        payload = get_json(url, headers=headers)
+        out = []
+        for item in _dig(payload, results_path):
+            if not isinstance(item, dict):
+                continue
+            out.append({"url": (item.get(url_field) or "").strip(),
+                        "title": (item.get(title_field) or "").strip()})
+        return out
+
+    search.provider = name or "custom"
+    return search
+
+
+def search_config_warning() -> "str | None":
+    """Why a configured-looking search is still disabled. Surfaced so a half-set provider reads as a
+    misconfiguration rather than as "the channel found nothing"."""
+    name = (os.environ.get("RWE_WEB_SEARCH_PROVIDER") or "").strip().lower()
+    if not name and not (os.environ.get("RWE_WEB_SEARCH_ENDPOINT") or "").strip():
+        return None
+    if name and name not in SEARCH_PROVIDERS and not os.environ.get("RWE_WEB_SEARCH_ENDPOINT"):
+        return (f"RWE_WEB_SEARCH_PROVIDER={name!r} is not one of "
+                f"{', '.join(sorted(SEARCH_PROVIDERS))} and no RWE_WEB_SEARCH_ENDPOINT is set")
+    if not (os.environ.get("RWE_WEB_SEARCH_API_KEY") or "").strip():
+        return "RWE_WEB_SEARCH_PROVIDER is set but RWE_WEB_SEARCH_API_KEY is missing/empty"
+    if name == "google_cse" and not (os.environ.get("RWE_WEB_SEARCH_CX") or "").strip():
+        return "google_cse needs RWE_WEB_SEARCH_CX (the search-engine id) as well as a key"
+    return None
+
+
 def discover(gap_list, *, search=None, per_gap: int = 1, max_hosts: int = 0) -> dict:
     """Run the channel over ``gap_list``. **Returns nothing useful without a ``search`` callable.**
 
@@ -234,6 +355,10 @@ def main(argv=None) -> int:
     ap.add_argument("--country", default="")
     ap.add_argument("--language", default="")
     ap.add_argument("--floor", type=int, default=5)
+    ap.add_argument("--per-gap", type=int, default=1)
+    ap.add_argument("--search", action="store_true",
+                    help="run ONE gap's queries against the configured provider and print what "
+                         "comes back. Writes nothing; contacts no publisher.")
     ap.add_argument("--db", default=os.environ.get("RWE_DB_URL"))
     args = ap.parse_args(argv)
 
@@ -255,6 +380,39 @@ def main(argv=None) -> int:
         for g in found[:40]:
             print(f"  {g['country'] or '--':<3} {g['language'] or '--':<3}  {g['outlets']:>5} outlets")
         print(f"\n  {len(found)} gap(s). Read-only: no request was made and nothing was written.")
+        return 0
+
+    if args.search:
+        warning = search_config_warning()
+        if warning:
+            print(f"SEARCH IS MISCONFIGURED: {warning}")
+            return 2
+        search = search_adapter()
+        if search is None:
+            print("No search provider configured. Set RWE_WEB_SEARCH_PROVIDER "
+                  f"({', '.join(sorted(SEARCH_PROVIDERS))}) and RWE_WEB_SEARCH_API_KEY, or give "
+                  "RWE_WEB_SEARCH_ENDPOINT directly. Nothing was asked.")
+            return 2
+        gap = {"country": args.country, "language": args.language, "outlets": 0}
+        qs = queries(gap)[:max(1, args.per_gap)]
+        print(f"=== one search, provider {getattr(search, 'provider', '?')} ===")
+        results = []
+        for q in qs:
+            print(f"  query: {q}")
+            try:
+                r = search(q)
+            except Exception as exc:
+                print(f"    FAILED: {type(exc).__name__}: {exc}")
+                continue
+            print(f"    {len(r)} result(s)")
+            results.extend(r)
+        recs = hosts_from_results(results, gap=gap)
+        print(f"\n  {len(results)} raw result(s) -> {len(recs)} candidate host(s) after "
+              f"dedup, platform and aggregator filtering:")
+        for rec in recs[:25]:
+            print(f"    {rec['host']:<40} {(rec['publishers'][0] if rec['publishers'] else '')[:34]}")
+        print("\n  NOTHING WAS WRITTEN and no publisher was contacted — these were search requests")
+        print("  only. Seed them with:  source_campaign.py seed --channel web --search")
         return 0
 
     ap.print_help()

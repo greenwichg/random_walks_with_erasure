@@ -80,6 +80,29 @@ services:
       #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
       RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
       RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
+      # Phase 2 web-discovery channel (`source_web.py`). ALL EMPTY BY DEFAULT, and the emptiness is
+      # the safety property: `search_adapter()` returns None without an endpoint, and `discover`
+      # treats None as "plan the queries, ask nobody". So an unconfigured deployment cannot make a
+      # search request however many other switches are on.
+      #
+      # Listed here even while empty for the reason this block repeats throughout: `environment:` is
+      # an explicit allowlist with no `env_file:`, so a variable absent from it never reaches the
+      # container — and a search provider set in deploy/.env that silently did nothing would read as
+      # "the web has no outlets for these gaps".
+      #
+      # Querying a search API is the one act in this pipeline that is genuinely new; the probe's
+      # robots/landing/feed requests are what the existing channels already do. Whose API, and on
+      # what terms, is an operator decision — which is why this is an endpoint template rather than
+      # a provider baked into code.
+      RWE_WEB_SEARCH_PROVIDER: ${RWE_WEB_SEARCH_PROVIDER:-}
+      RWE_WEB_SEARCH_API_KEY: ${RWE_WEB_SEARCH_API_KEY:-}
+      RWE_WEB_SEARCH_CX: ${RWE_WEB_SEARCH_CX:-}
+      RWE_WEB_SEARCH_ENDPOINT: ${RWE_WEB_SEARCH_ENDPOINT:-}
+      RWE_WEB_SEARCH_HEADER: ${RWE_WEB_SEARCH_HEADER:-}
+      RWE_WEB_SEARCH_RESULTS: ${RWE_WEB_SEARCH_RESULTS:-}
+      RWE_WEB_SEARCH_URL_FIELD: ${RWE_WEB_SEARCH_URL_FIELD:-}
+      RWE_WEB_SEARCH_TITLE_FIELD: ${RWE_WEB_SEARCH_TITLE_FIELD:-}
+      RWE_WEB_SEARCH_COUNT: ${RWE_WEB_SEARCH_COUNT:-}
       # Minimum seconds between catalog-wide post-cycle passes (retention + the hot refresh).
       # Default 600, matching RWE_POLL_INTERVAL. Production measured 87.8% lock occupancy because
       # each of ~11 adapter threads ran its own full pass whenever it found a single article, at a
@@ -790,6 +813,29 @@ services:
       #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
       RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
       RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
+      # Phase 2 web-discovery channel (`source_web.py`). ALL EMPTY BY DEFAULT, and the emptiness is
+      # the safety property: `search_adapter()` returns None without an endpoint, and `discover`
+      # treats None as "plan the queries, ask nobody". So an unconfigured deployment cannot make a
+      # search request however many other switches are on.
+      #
+      # Listed here even while empty for the reason this block repeats throughout: `environment:` is
+      # an explicit allowlist with no `env_file:`, so a variable absent from it never reaches the
+      # container — and a search provider set in deploy/.env that silently did nothing would read as
+      # "the web has no outlets for these gaps".
+      #
+      # Querying a search API is the one act in this pipeline that is genuinely new; the probe's
+      # robots/landing/feed requests are what the existing channels already do. Whose API, and on
+      # what terms, is an operator decision — which is why this is an endpoint template rather than
+      # a provider baked into code.
+      RWE_WEB_SEARCH_PROVIDER: ${RWE_WEB_SEARCH_PROVIDER:-}
+      RWE_WEB_SEARCH_API_KEY: ${RWE_WEB_SEARCH_API_KEY:-}
+      RWE_WEB_SEARCH_CX: ${RWE_WEB_SEARCH_CX:-}
+      RWE_WEB_SEARCH_ENDPOINT: ${RWE_WEB_SEARCH_ENDPOINT:-}
+      RWE_WEB_SEARCH_HEADER: ${RWE_WEB_SEARCH_HEADER:-}
+      RWE_WEB_SEARCH_RESULTS: ${RWE_WEB_SEARCH_RESULTS:-}
+      RWE_WEB_SEARCH_URL_FIELD: ${RWE_WEB_SEARCH_URL_FIELD:-}
+      RWE_WEB_SEARCH_TITLE_FIELD: ${RWE_WEB_SEARCH_TITLE_FIELD:-}
+      RWE_WEB_SEARCH_COUNT: ${RWE_WEB_SEARCH_COUNT:-}
       # Minimum seconds between catalog-wide post-cycle passes (retention + the hot refresh).
       # Default 600, matching RWE_POLL_INTERVAL. Production measured 87.8% lock occupancy because
       # each of ~11 adapter threads ran its own full pass whenever it found a single article, at a

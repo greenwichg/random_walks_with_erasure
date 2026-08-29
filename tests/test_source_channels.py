@@ -253,3 +253,91 @@ def test_an_unknown_channel_is_refused(tmp_path):
     with contextlib.redirect_stdout(out):
         rc = sc.main(["seed", "--channel", "nope", "--db", db])
     assert rc == 2 and "unknown channel" in out.getvalue()
+
+
+# --------------------------------------------------------------------------- the search adapter
+@pytest.fixture(autouse=True)
+def _clean_search_env(monkeypatch):
+    for k in ("RWE_WEB_SEARCH_PROVIDER", "RWE_WEB_SEARCH_API_KEY", "RWE_WEB_SEARCH_CX",
+              "RWE_WEB_SEARCH_ENDPOINT", "RWE_WEB_SEARCH_RESULTS", "RWE_WEB_SEARCH_URL_FIELD",
+              "RWE_WEB_SEARCH_TITLE_FIELD", "RWE_WEB_SEARCH_COUNT", "RWE_WEB_SEARCH_HEADER"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_an_unconfigured_environment_yields_no_adapter():
+    """The default that keeps an unreviewed deployment silent. `discover` treats None as
+    "plan, do not ask", so no combination of other switches can produce a request."""
+    assert sweb.search_adapter() is None
+    assert sweb.search_config_warning() is None
+
+
+def test_a_configured_provider_builds_a_working_search(monkeypatch):
+    monkeypatch.setenv("RWE_WEB_SEARCH_PROVIDER", "brave")
+    monkeypatch.setenv("RWE_WEB_SEARCH_API_KEY", "SECRET")
+    seen = {}
+
+    def _get_json(url, headers=None, **kw):
+        seen["url"], seen["headers"] = url, headers or {}
+        return {"web": {"results": [{"url": "https://mg.co.za/a", "title": "M&G"},
+                                    {"url": "https://ewn.co.za/b", "title": "EWN"}]}}
+
+    search = sweb.search_adapter(get_json=_get_json)
+    assert search is not None
+    out = search("local news websites in South Africa")
+    assert out == [{"url": "https://mg.co.za/a", "title": "M&G"},
+                   {"url": "https://ewn.co.za/b", "title": "EWN"}]
+    assert "local+news+websites+in+South+Africa" in seen["url"], "the query must be URL-encoded"
+    assert seen["headers"]["X-Subscription-Token"] == "SECRET"
+
+
+def test_each_preset_reads_its_own_payload_shape(monkeypatch):
+    """A provider preset that pointed at the wrong JSON path would return zero results and read as
+    'the web has no outlets for this gap'."""
+    payloads = {
+        "brave": {"web": {"results": [{"url": "https://a.example", "title": "A"}]}},
+        "google_cse": {"items": [{"link": "https://a.example", "title": "A"}]},
+        "serpapi": {"organic_results": [{"link": "https://a.example", "title": "A"}]},
+    }
+    for name, payload in payloads.items():
+        monkeypatch.setenv("RWE_WEB_SEARCH_PROVIDER", name)
+        monkeypatch.setenv("RWE_WEB_SEARCH_API_KEY", "K")
+        monkeypatch.setenv("RWE_WEB_SEARCH_CX", "CX")
+        search = sweb.search_adapter(get_json=lambda url, headers=None, **kw: payload)
+        assert search("q") == [{"url": "https://a.example", "title": "A"}], f"{name} preset"
+
+
+def test_a_half_configured_provider_is_a_misconfiguration_not_an_empty_result(monkeypatch):
+    monkeypatch.setenv("RWE_WEB_SEARCH_PROVIDER", "brave")
+    assert "API_KEY" in (sweb.search_config_warning() or "")
+
+    monkeypatch.setenv("RWE_WEB_SEARCH_API_KEY", "K")
+    monkeypatch.setenv("RWE_WEB_SEARCH_PROVIDER", "google_cse")
+    assert "RWE_WEB_SEARCH_CX" in (sweb.search_config_warning() or "")
+
+    monkeypatch.setenv("RWE_WEB_SEARCH_PROVIDER", "notaprovider")
+    assert "not one of" in (sweb.search_config_warning() or "")
+
+
+def test_a_malformed_payload_yields_no_hosts_rather_than_raising():
+    assert sweb._dig({"web": "not a list"}, "web.results") == []
+    assert sweb._dig(None, "a.b") == []
+    assert sweb._dig({"items": [1, 2]}, "items") == [1, 2]
+    # The case that matters: the path RESOLVES, to something that is not a list. Returning it
+    # unchanged would have the caller iterate a string character by character and build a candidate
+    # host out of every letter.
+    assert sweb._dig({"web": {"results": "oops"}}, "web.results") == []
+    assert sweb._dig({"web": {"results": {"a": 1}}}, "web.results") == []
+
+
+def test_seed_web_asks_nobody_unless_search_is_passed(tmp_path, monkeypatch):
+    """Configuring a provider is not the same as authorising a run. An operator who set the env
+    vars last week must still be able to PLAN a campaign without querying anyone."""
+    monkeypatch.setenv("RWE_WEB_SEARCH_PROVIDER", "brave")
+    monkeypatch.setenv("RWE_WEB_SEARCH_API_KEY", "K")
+    calls = []
+    monkeypatch.setattr(sweb, "search_adapter",
+                        lambda **kw: (lambda q: calls.append(q) or []))
+    db = f"sqlite:///{tmp_path / 'c.db'}"
+    out = _run(db, "seed", "--channel", "web")
+    assert calls == [], "the channel searched without --search"
+    assert "Pass --search to actually query" in out

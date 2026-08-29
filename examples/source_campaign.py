@@ -106,16 +106,31 @@ def _seed_web(st, reg, args):
     """Gap-driven web discovery. **Offline here by construction** — `source_web.discover` has no
     default search callable, so this reports the queries it would ask and seeds nothing."""
     import source_web
+    # The search callable is built ONLY when --search is passed. Configuring a provider is not the
+    # same as authorising a run: an operator who set the env vars last week should still be able to
+    # plan a campaign without querying anyone, and the flag is where "actually ask" lives.
+    search = source_web.search_adapter() if args.search else None
+    warning = source_web.search_config_warning()
     found = source_web.gaps(source_web.corpus_gap_counts(st), floor=args.floor or 5)
-    plan = source_web.discover(found, per_gap=args.per_gap, max_hosts=args.limit)
+    plan = source_web.discover(found, search=search, per_gap=args.per_gap, max_hosts=args.limit)
     cands = sd.gate(plan["records"], reg, admissible=sd.always_admissible, channel="web")
     notes = [f"gaps below {args.floor or 5} outlets : {len(found):,}",
              f"  queries planned  : {len(plan['queries']):,}",
              f"  searches made    : {plan['searched']:,}"]
+    if warning:
+        notes += ["", f"  *** SEARCH IS MISCONFIGURED: {warning}",
+                  "      A half-configured provider must read as a misconfiguration, not as a",
+                  "      channel that found nothing."]
     if plan["offline"]:
-        notes += ["", "  NO SEARCH WAS MADE. source_web.discover has no default search callable, so",
-                  "  this channel cannot reach the network. It planned the queries above and seeded",
-                  "  nothing. Supplying a fetcher is the ToS review's attachment point."]
+        notes += ["", "  NO SEARCH WAS MADE. `discover` has no default search callable, so this",
+                  "  channel cannot reach the network unless one is supplied. It planned the",
+                  "  queries above and seeded nothing."]
+        if not args.search:
+            notes += ["  Pass --search to actually query the configured provider."]
+    else:
+        notes += ["", f"  Searched via provider: {getattr(search, 'provider', '?')}. Every request "
+                      f"this made was a SEARCH request;",
+                  "  no publisher was contacted — that is the probe, and it is a separate command."]
     return cands, notes
 
 
@@ -531,6 +546,10 @@ def main(argv=None) -> int:
         p.add_argument("--file", default="", help="directory channel: the register to import")
         p.add_argument("--per-gap", type=int, default=1,
                        help="web channel: queries per coverage gap (default 1)")
+        p.add_argument("--search", action="store_true",
+                       help=("web channel: ACTUALLY query the configured search provider. Without "
+                             "it the channel plans its queries and asks nobody. Configuring a "
+                             "provider is not the same as authorising a run."))
         p.add_argument("--interval", type=float, default=crawler.DEFAULT_MIN_INTERVAL)
         p.add_argument("--dry-run", action="store_true")
         p.add_argument("--publisher", default="")
