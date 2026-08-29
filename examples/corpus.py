@@ -513,6 +513,30 @@ def shadow_exclusions() -> "frozenset[str]":
     return frozenset({c.lower() for c in canonicals} | {h.lower() for h in hosts})
 
 
+def tier_b_exclusions() -> "frozenset[str]":
+    """The TIER B half of :func:`sql_exclusions` — publisher strings the story builder must not see.
+
+    The complement of :func:`shadow_exclusions`, and deliberately **not** a reader-surface exclusion:
+    Tier B is searchable. Nothing in the query path should call this; it exists for the retention
+    arm, which needs to act on one tier at a time because the two carry different horizons
+    (``RWE_RETENTION_MAX_AGE_DAYS_TIER_B`` against ``..._SHADOW``).
+
+    ## Why this may be used to DELETE and :func:`sql_exclusions` may not
+
+    `sql_exclusions` is documented as *"an optimization, never the policy"*, one-directional: it may
+    miss rows because the Python pass is the authority. That contract is safe for a **query** and
+    unsafe for a **delete**, where missing a row is harmless but including a wrong one is
+    irreversible. This function inherits the safe direction: it is built from `tier_index()["B"]`,
+    the same index :func:`tier_of` decides with, so a publisher string it returns is one `tier_of`
+    calls Tier B. `_tier_with` tests shadow first, so a host in both lands in shadow — and this set,
+    read from the B half alone, can therefore name a host that resolves to shadow. The retention arm
+    handles that by acting on the tiers in the same order, never by widening this set."""
+    canonicals, hosts = tier_index()["B"]
+    if not (canonicals or hosts):
+        return frozenset()
+    return frozenset({c.lower() for c in canonicals} | {h.lower() for h in hosts})
+
+
 def is_shadow(publisher: "str | None", url: "str | None" = None) -> bool:
     """The Python contract for shadow membership — what :func:`shadow_exclusions` approximates in
     SQL, and the authority when the two disagree."""

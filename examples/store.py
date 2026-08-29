@@ -1711,6 +1711,67 @@ class Store:
                      "language": r[3] or "", "publishedAt": r[4], "sourceType": r[5]}
                     for r in s.execute(stmt)]
 
+    def prune_tier_articles_older_than(self, publishers, max_age_days: float, *,
+                                       limit: int = 5000, now=None) -> int:
+        """Delete up to ``limit`` catalogue rows whose publisher is in ``publishers`` and whose
+        ``published_at`` is older than ``max_age_days``. Returns the number deleted.
+
+        **The SQL arm of retention (M3's D1 stage 2), and it exists because the Python planner does
+        not scale.** That planner loads the whole catalogue to guarantee the serving floors —
+        measured at 35,367 ms and +2,343 MB of RSS on a 400,000-row catalogue *in the steady state
+        where it deletes nothing*, and it exhausts a 4 GiB box at roughly 730,000 rows. This is an
+        indexed delete: `ix_feed_published_at` serves the cutoff and the primary key serves the
+        delete.
+
+        ## Why the floors are not consulted here, which is an argument rather than a shortcut
+
+        `corpus_health.plan_retention`'s floors — minimum total, publishers, per-political-bucket,
+        fresh — protect **the serving corpus**, and the serving corpus is Tier A. Shadow is surfaced
+        nowhere, so a per-bucket or freshness floor over it protects nothing a reader can see. Tier B
+        is searchable but never forms a story, so the bucket and freshness floors — which exist to
+        keep *story formation* honest — are not about it either. **This method must therefore never
+        be handed Tier A publishers**, and its only caller derives ``publishers`` from
+        `corpus.tier_b_exclusions` / `corpus.shadow_exclusions`.
+
+        ## Two shapes deliberately not used
+
+        `DELETE ... LIMIT` needs ``SQLITE_ENABLE_UPDATE_DELETE_LIMIT`` at compile time, and this
+        repository has already been caught once assuming a SQLite build option
+        (`STRESS_50K_PLAN.md` §3.5, on ``SQLITE_MAX_VARIABLE_NUMBER``). The bounded subselect works
+        on every build. And the publisher match is a lower-cased ``IN``, the same NULL-safe shape
+        `search_feed_articles` uses — a row with no publisher is never in the set, so it is never
+        deleted by this arm.
+
+        An empty ``publishers`` deletes **nothing** and returns 0. That is the load-bearing default:
+        the tier lists are empty on a stock deployment, and a predicate that fell through to "every
+        row" would turn an unconfigured tier into a catalogue wipe."""
+        names = frozenset(p.strip().lower() for p in (publishers or ()) if p and p.strip())
+        if not names or max_age_days <= 0:
+            return 0
+        cutoff = ((now or _utcnow()) - timedelta(days=max_age_days)).isoformat()
+        deleted = 0
+        with self.session() as s:
+            # Chunked over the publisher set for SQLITE_MAX_VARIABLE_NUMBER, the same bound
+            # `delete_feed_articles` respects. Each chunk carries its own LIMIT, so the batch cap is
+            # per chunk rather than global — deliberately: the cap exists to keep the write lock
+            # short, and a chunk is one statement.
+            ordered = sorted(names)
+            for i in range(0, len(ordered), 400):
+                urls = [u for (u,) in s.execute(
+                    select(FeedArticle.canonical_url)
+                    .where(func.lower(FeedArticle.publisher).in_(ordered[i:i + 400]))
+                    .where(FeedArticle.published_at.is_not(None))
+                    .where(FeedArticle.published_at < cutoff)
+                    .limit(limit)).all()]
+                if not urls:
+                    continue
+                res = s.execute(delete(FeedArticle)
+                                .where(FeedArticle.canonical_url.in_(urls)))
+                deleted += res.rowcount or 0
+            if deleted:
+                s.commit()
+        return deleted
+
     def delete_feed_articles(self, canonical_urls) -> int:
         """Delete FeedArticle rows by canonical URL (retention). Chunked to stay under SQLite's bound
         parameter limit. Returns the number deleted. Touches ONLY the ``feed_articles`` table — reads,

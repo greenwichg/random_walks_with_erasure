@@ -169,3 +169,144 @@ def test_the_policy_object_answers_which_rule_a_tier_is_under(monkeypatch):
     assert p.age_days_for_tier("shadow") == 90, "an unset tier falls back to the global rule"
     assert p.any_age_policy() is True
     assert p.catalog_enabled() is True
+
+
+# --------------------------------------------------------------------------- #
+# D1 stage 2 — the SQL arm. A DELETE path, so the tests lead with what it must NEVER do.
+# --------------------------------------------------------------------------- #
+def _store(tmp_path):
+    return store_mod.Store(f"sqlite:///{tmp_path / 'ret.db'}")
+
+
+def _urls(st):
+    return {a["canonicalUrl"] for a in st.list_retention_rows()}
+
+
+def test_the_sql_arm_never_deletes_a_row_outside_the_publisher_set(tmp_path):
+    """The one property that matters. Everything else about this method is performance; this is
+    correctness, and it is irreversible when wrong."""
+    st = _store(tmp_path)
+    _seed_store(st, [_art("https://npr.org/old", "NPR", 90),
+                     _art("https://tierb.example/old", "tierb.example", 90),
+                     _art("https://tierb.example/new", "tierb.example", 1)])
+
+    n = st.prune_tier_articles_older_than({"tierb.example"}, 30, now=NOW)
+    assert n == 1
+    assert _urls(st) == {"https://npr.org/old", "https://tierb.example/new"}, \
+        "the SQL arm deleted outside its publisher set, or missed inside it"
+
+
+def test_an_empty_publisher_set_deletes_nothing(tmp_path):
+    """The load-bearing default. Tier lists are empty on a stock deployment, and a predicate that
+    fell through to "every row" would turn an unconfigured tier into a catalogue wipe."""
+    st = _store(tmp_path)
+    _seed_store(st, [_art("https://npr.org/old", "NPR", 900)])
+    assert st.prune_tier_articles_older_than(frozenset(), 1, now=NOW) == 0
+    assert st.prune_tier_articles_older_than({"", "   "}, 1, now=NOW) == 0
+    assert st.prune_tier_articles_older_than({"npr"}, 0, now=NOW) == 0, "age 0 means keep forever"
+    assert _urls(st) == {"https://npr.org/old"}
+
+
+def test_a_row_with_no_publication_date_is_never_aged_out(tmp_path):
+    """An age rule cannot act on a date it does not have, and guessing would delete the newest
+    rows as readily as the oldest. The same fail-closed reading the crawler's age filter takes."""
+    st = _store(tmp_path)
+    _seed_store(st, [_art("https://tierb.example/dated", "tierb.example", 90)])
+    st.upsert_feed_article(canonical_url="https://tierb.example/undated",
+                           url="https://tierb.example/undated", publisher="tierb.example",
+                           source_publisher="tierb.example", title="t", description="",
+                           body=None, published_at=None, source_feed="feed://x", scored={})
+    assert st.prune_tier_articles_older_than({"tierb.example"}, 30, now=NOW) == 1
+    assert _urls(st) == {"https://tierb.example/undated"}
+
+
+def test_the_batch_limit_bounds_one_pass(tmp_path):
+    """`RWE_RETENTION_BATCH_LIMIT` keeps the write lock short. A pass that ignored it would hold
+    the global ingest lock for the length of the backlog."""
+    st = _store(tmp_path)
+    _seed_store(st, [_art(f"https://tierb.example/{i}", "tierb.example", 90) for i in range(12)])
+    assert st.prune_tier_articles_older_than({"tierb.example"}, 30, limit=5, now=NOW) == 5
+    assert len(_urls(st)) == 7
+    assert st.prune_tier_articles_older_than({"tierb.example"}, 30, limit=5, now=NOW) == 5
+    assert len(_urls(st)) == 2
+
+
+def test_run_retention_uses_the_sql_arm_and_leaves_tier_a_to_the_planner(tmp_path, monkeypatch):
+    """End-to-end: the per-tier age is served by the indexed delete, the Tier A rows are untouched,
+    and the pass reports what it removed.
+
+    The `mid` rows sit BETWEEN the two horizons (20 days, against shadow's 14 and Tier B's 30) and
+    they are what makes this test able to fail. With every tier row outside both horizons — the
+    first version of this fixture — a mutation that gave Tier B shadow's age, or built Tier B's
+    predicate from the shadow publisher set, produced an identical catalogue and the test passed
+    on it."""
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+    monkeypatch.setenv("RWE_CORPUS_SHADOW", "shadowy.example")
+    monkeypatch.setenv("RWE_RETENTION_MAX_AGE_DAYS_TIER_B", "30")
+    monkeypatch.setenv("RWE_RETENTION_MAX_AGE_DAYS_SHADOW", "14")
+    st = _store(tmp_path)
+    _seed_store(st, [_art("https://npr.org/ancient", "NPR", 900),
+                     _art("https://tierb.example/old", "tierb.example", 90),
+                     _art("https://tierb.example/mid", "tierb.example", 20),   # < 30: survives
+                     _art("https://tierb.example/new", "tierb.example", 1),
+                     _art("https://shadowy.example/mid", "shadowy.example", 20),  # > 14: pruned
+                     _art("https://shadowy.example/new", "shadowy.example", 1)])
+
+    res = corpus_health.run_retention(st, thresholds=_no_floors(), now=NOW)
+    assert res["pruned"] == 2, f"expected the two aged tier rows, got {res['pruned']}"
+    assert _urls(st) == {"https://npr.org/ancient",          # Tier A: no global age configured
+                         "https://tierb.example/mid",        # 20d survives Tier B's 30-day rule
+                         "https://tierb.example/new",
+                         "https://shadowy.example/new"}
+
+
+def test_the_sql_arm_stays_off_until_a_per_tier_age_is_configured(tmp_path, monkeypatch):
+    """A deployment that has not asked for a per-tier horizon must run exactly the pass it ran
+    before this existed — including on tier-assigned publishers.
+
+    Asserted by making the exclusion lookups **explode**, not by checking that nothing was deleted.
+    An unguarded arm still deletes nothing when both ages are zero, so a row-count assertion passes
+    on the mutation that removes the guard — and the guard's whole job is to keep an unconfigured
+    pass from paying for `import corpus` and two tier-index builds on every cycle."""
+    import corpus
+
+    def _boom():
+        raise AssertionError("the SQL arm consulted corpus with no per-tier age configured")
+
+    monkeypatch.setattr(corpus, "shadow_exclusions", _boom)
+    monkeypatch.setattr(corpus, "tier_b_exclusions", _boom)
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+    monkeypatch.setenv("RWE_RETENTION_MAX_COUNT", "10")
+    st = _store(tmp_path)
+    _seed_store(st, [_art("https://tierb.example/old", "tierb.example", 900)])
+    res = corpus_health.run_retention(st, thresholds=_no_floors(), now=NOW)
+    assert res["pruned"] == 0
+    assert _urls(st) == {"https://tierb.example/old"}
+
+
+def test_the_planner_stops_applying_a_tier_age_the_sql_arm_owns(tmp_path, monkeypatch):
+    """The SQL arm exists to take Tier B and shadow OUT of the Python planner. If the planner keeps
+    its per-tier resolver, both arms act, the O(n) walk still happens, and stage 2 has bought a
+    second deletion path and nothing else.
+
+    Asserted on the argument rather than the outcome, because the outcome is identical either way:
+    the SQL arm runs first, so the planner simply finds nothing left to prune. That is exactly how
+    this shipped wrong the first time and was only caught by mutation."""
+    seen = {}
+    real = corpus_health.plan_retention
+
+    def _spy(articles, **kw):
+        seen.update(kw)
+        return real(articles, **kw)
+
+    monkeypatch.setattr(corpus_health, "plan_retention", _spy)
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb.example")
+    monkeypatch.setenv("RWE_RETENTION_MAX_AGE_DAYS_TIER_B", "30")
+    st = _store(tmp_path)
+    _seed_store(st, [_art("https://tierb.example/old", "tierb.example", 90)])
+
+    corpus_health.run_retention(st, thresholds=_no_floors(), now=NOW)
+    assert seen["age_days_for"] is None, (
+        "the planner was handed a per-tier age resolver while the SQL arm was also applying it — "
+        "both arms are pruning the same tiers and the O(n) walk was not removed")
+    assert _urls(st) == set(), "the SQL arm should have taken the aged Tier B row"

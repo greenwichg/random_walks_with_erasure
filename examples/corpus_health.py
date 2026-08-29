@@ -578,10 +578,44 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
     # 58-140 rows, holding the global ingest lock the entire time, because a count cap sitting at
     # 150,076 against a 150,000 limit puts `run_retention` past its cheap pre-gate on every single
     # cycle — and then the expensive part was loading columns nobody was going to look at.
+    # -- the SQL arm (M3 D1 stage 2) -------------------------------------------------------- #
+    #
+    # Tier B and shadow are pruned by an indexed DELETE before the catalogue is loaded, so their
+    # rows never enter the Python planner's memory. The floors that planner guarantees are about the
+    # SERVING corpus, and the serving corpus is Tier A — `store.prune_tier_articles_older_than`
+    # carries that argument in full. Nothing here can touch a Tier A row: the predicate is built
+    # from the tier index, and the tiers are handled in `_tier_with`'s own order so a host named in
+    # both is pruned on shadow's horizon rather than twice.
+    #
+    # Runs only when a per-tier age is configured, so a deployment that has not asked for one is
+    # byte-identical to before this existed.
+    sql_pruned = 0
+    if policy.article_max_age_days_shadow or policy.article_max_age_days_tier_b:
+        import corpus
+        for tier, age, names in (("shadow", policy.article_max_age_days_shadow,
+                                  corpus.shadow_exclusions),
+                                 ("B", policy.article_max_age_days_tier_b,
+                                  corpus.tier_b_exclusions)):
+            if not age:
+                continue
+            n = store_.prune_tier_articles_older_than(names(), age,
+                                                      limit=policy.batch_limit, now=now)
+            sql_pruned += n
+            if n:
+                log(logging.INFO, "feed_retention_tier", tier=tier, pruned=n, ageDays=age)
+        # The SQL arm OWNS the per-tier ages now, so the planner must stop applying them — or the
+        # two arms overlap, the Python pass still walks every Tier B and shadow row, and stage 2
+        # buys nothing but a second deletion path. (Caught by mutation: with the resolver still
+        # active, breaking the Tier B predicate changed no outcome, because the planner quietly
+        # pruned what the SQL arm had missed.) The planner keeps the global age, the count cap and
+        # the floors — which are about Tier A, the serving corpus.
+        age_days_for = None
+
     articles = store_.list_retention_rows()
     plan = plan_retention(articles, max_age_days=max_age_days, max_count=max_count,
                           thresholds=thresholds, now=now, age_days_for=age_days_for)
     deleted = store_.delete_feed_articles(plan["prune"]) if plan["prune"] else 0
+    deleted += sql_pruned
     # The set is built ONCE. It used to be constructed inside the comprehension's condition, where
     # Python re-evaluates it for every article — a 27,000-element set rebuilt 27,000 times, ~729
     # million insertions, on a pass that usually deletes nothing.
