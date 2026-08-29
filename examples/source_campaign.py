@@ -134,7 +134,35 @@ def _seed_web(st, reg, args):
     return cands, notes
 
 
-_CHANNELS = {"catalogue": _seed_catalogue, "directory": _seed_directory, "web": _seed_web}
+def _seed_link(st, reg, args):
+    """Link mining: outbound hosts seen while planning a crawl of the publishers we already carry.
+
+    Fetches the same discovery documents a crawl cycle fetches, under the same robots gate and rate
+    limiter. Yields nothing from a sitemap-only configuration — only the `section` rung reads HTML
+    and sees anchors — which is why the census reports the rungs actually used."""
+    import source_web
+    configs = [c for c in crawler.load_config(store_=st) if c.enabled]
+    rows = crawler.link_evidence(configs)
+    stats = crawler.link_census(configs, rows)
+    # Platforms and reference sites, dropped before the shared gates for the same reason the web
+    # channel drops them: every one that reaches the probe is three requests spent proving something
+    # already known. `gate` applies the aggregator and tracked rules after this.
+    kept = [r for r in rows if not source_web.is_non_outlet(r["host"])]
+    cands = sd.gate(kept, reg, admissible=sd.always_admissible, channel="link")
+    notes = [f"publishers crawled : {stats['publishers']:,}",
+             f"  rungs configured : {', '.join(stats['rungs']) or '(none)'}",
+             f"  outbound hosts   : {stats['hosts']:,} over {stats['links']:,} link(s)",
+             f"  dropped as platform/reference : {len(rows) - len(kept):,}"]
+    if not stats["sectionRungs"]:
+        notes += ["", "  NOTE: no publisher has a `section` rung, and only that rung reads HTML and",
+                  "  sees anchors. A news sitemap is almost entirely the publisher's own URLs, so",
+                  "  this channel LOOKED and found nothing — it is not misconfigured, there is",
+                  "  nothing outbound in a sitemap to mine."]
+    return cands, notes
+
+
+_CHANNELS = {"catalogue": _seed_catalogue, "directory": _seed_directory, "web": _seed_web,
+             "link": _seed_link}
 
 
 def cmd_seed(args) -> int:

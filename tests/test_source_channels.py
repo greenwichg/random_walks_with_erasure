@@ -341,3 +341,111 @@ def test_seed_web_asks_nobody_unless_search_is_passed(tmp_path, monkeypatch):
     out = _run(db, "seed", "--channel", "web")
     assert calls == [], "the channel searched without --search"
     assert "Pass --search to actually query" in out
+
+
+# --------------------------------------------------------------------------- link mining
+import crawler  # noqa: E402
+
+
+SECTION_HTML = """<html><body>
+  <a href="/news/local-story-1">Local story</a>
+  <a href="https://www.WIRE.example/report/9">Wire report</a>
+  <a href="https://wire.example/report/10">Wire again</a>
+  <a href="https://partner.example/x">Partner title</a>
+  <a href="https://en.wikipedia.org/wiki/Thing">Background</a>
+  <a href="https://news.google.com/rss/y">Via Google News</a>
+  <a href="/news/local-story-2">Another local</a>
+</body></html>"""
+
+
+def _section_config():
+    return crawler.PublisherCrawlConfig(
+        publisher="Local Paper", domains=("localpaper.example",),
+        sources=(crawler.DiscoverySource(kind="section",
+                                         url="https://localpaper.example/news"),),
+        article_pattern=r"/news/")
+
+
+class _AllowAll:
+    def check(self, url):
+        return crawler.RobotsDecision(allowed=True, reason="test", crawl_delay=None)
+
+
+def _plan_one(cfg, body=SECTION_HTML):
+    return crawler.plan([cfg], robots=_AllowAll(), limiter=crawler.RateLimiter(0, sleep=lambda s: None),
+                        fetch=lambda url: body)
+
+
+def test_the_crawler_keeps_the_off_domain_host_not_just_the_tally():
+    """`_filter` dropped every off-domain URL and discarded the host on the line after counting it.
+    That host is an outlet a newsroom thought worth citing — the one signal a search query cannot
+    produce."""
+    row = _plan_one(_section_config())[0]
+    assert row["off_domain"] >= 3, "the fixture no longer exercises the off-domain path"
+    hosts = row["off_domain_hosts"]
+    assert hosts["wire.example"] == 2, "www. and bare host must canonicalise to one entry"
+    assert "partner.example" in hosts
+    assert "localpaper.example" not in hosts, "the publisher's own host is not outbound"
+
+
+def test_the_recorded_hosts_are_bounded(monkeypatch):
+    """A page linking to hundreds of domains is a link farm, and an unbounded tally on a hostile
+    page is a memory bug rather than a discovery channel."""
+    monkeypatch.setattr(crawler, "MAX_OFF_DOMAIN_HOSTS", 5)
+    body = "<html><body>" + "".join(
+        f'<a href="https://out{i}.example/a">o{i}</a>' for i in range(50)) + "</body></html>"
+    row = _plan_one(_section_config(), body=body)[0]
+    assert len(row["off_domain_hosts"]) == 5
+    assert row["off_domain"] == 50, "the TALLY must stay complete even when the host list is capped"
+
+
+def test_link_evidence_ranks_by_how_often_a_host_is_linked(reg):
+    rows = crawler.link_evidence([_section_config()], robots=_AllowAll(),
+                                 limiter=crawler.RateLimiter(0, sleep=lambda s: None),
+                                 fetch=lambda url: SECTION_HTML)
+    assert rows[0]["host"] == "wire.example" and rows[0]["links"] == 2, \
+        "a host two pages point at should outrank one mentioned once"
+    assert rows[0]["linkedFrom"] == {"Local Paper": 2}, "a candidate must be auditable to its source"
+    assert all(r["articles"] == 0 for r in rows)
+
+
+def test_a_sitemap_only_publisher_mines_nothing_and_the_census_says_why():
+    """0 hosts has two very different causes — looked and found nothing, or never looked. A channel
+    that cannot tell them apart is one nobody can act on."""
+    cfg = crawler.PublisherCrawlConfig(
+        publisher="Sitemap Only", domains=("s.example",),
+        sources=(crawler.DiscoverySource(kind="sitemap", url="https://s.example/sm.xml"),))
+    census = crawler.link_census([cfg], [])
+    assert census["sectionRungs"] == 0 and census["rungs"] == ["sitemap"]
+
+
+def test_the_link_channel_drops_platforms_before_spending_a_probe(tmp_path, monkeypatch, reg):
+    """Every encyclopaedia or aggregator that reaches the probe is three requests spent proving
+    something already known."""
+    real_link_evidence = crawler.link_evidence      # captured BEFORE patching, or it recurses
+    monkeypatch.setattr(crawler, "load_config", lambda **kw: [_section_config()])
+    monkeypatch.setattr(crawler, "link_evidence",
+                        lambda cfgs, **kw: real_link_evidence(
+                            cfgs, robots=_AllowAll(),
+                            limiter=crawler.RateLimiter(0, sleep=lambda s: None),
+                            fetch=lambda url: SECTION_HTML))
+    db = f"sqlite:///{tmp_path / 'link.db'}"
+    out = _run(db, "seed", "--channel", "link")
+    assert "channel            : link" in out
+
+    st = store_mod.Store(db)
+    hosts = {r["host"] for r in st.admission_rows(states=["candidate"])}
+    assert "wire.example" in hosts and "partner.example" in hosts
+    assert "en.wikipedia.org" not in hosts, "an encyclopaedia reached the probe queue"
+    assert "news.google.com" not in hosts, "an aggregator reached the probe queue"
+    assert all(r["channel"] == "link" for r in st.admission_rows(states=["candidate"]))
+
+
+def test_every_declared_channel_has_an_implementation():
+    """`source_discovery.CHANNELS` is the provenance vocabulary and `_CHANNELS` is what `seed` can
+    actually run. A name in one and not the other is a capability that does not exist — which is
+    exactly what `link` was between being declared and being built."""
+    missing = set(sd.CHANNELS) - set(sc._CHANNELS)
+    assert not missing, f"declared channels with no seed implementation: {sorted(missing)}"
+    extra = set(sc._CHANNELS) - set(sd.CHANNELS)
+    assert not extra, f"seedable channels missing from CHANNELS: {sorted(extra)}"

@@ -57,6 +57,7 @@ import urllib.parse
 import urllib.request
 import urllib.robotparser
 import xml.etree.ElementTree as ET
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
@@ -77,6 +78,11 @@ USER_AGENT = robots.user_agent("Crawler")
 #: Conservative floor between two requests to the SAME host, in seconds. Overridden upward (never
 #: downward) by a publisher's own ``Crawl-delay``.
 DEFAULT_MIN_INTERVAL = 2.0
+
+#: Distinct off-domain hosts recorded per publisher per cycle (link mining). A newsroom index links
+#: outward a handful of times; a page linking to hundreds of domains is a link farm, and an
+#: unbounded tally on a hostile page is a memory bug rather than a discovery channel.
+MAX_OFF_DOMAIN_HOSTS = 200
 
 #: Ceiling on discovery documents fetched per publisher per cycle. The ladder stops early on
 #: success, so this bounds the pathological case (a sitemap index pointing at 400 child sitemaps).
@@ -520,6 +526,19 @@ class CrawlReport:
     rung_used: Optional[str] = None
     discovered: int = 0
     off_domain: int = 0
+    #: The off-domain HOSTS, not just how many there were. **This is the link-mining channel.**
+    #:
+    #: A newsroom's index page links outward — to a wire service, to a local paper it cited, to a
+    #: partner title — and those hosts are outlets, some of which we have never seen. Until this
+    #: existed the host string was discarded on the line after it was counted, so the one signal
+    #: here that a search query cannot produce (who a newsroom thinks is worth citing) was thrown
+    #: away every cycle.
+    #:
+    #: Recorded, never acted on: these are candidates for `source_discovery.gate`, which still
+    #: applies the tracked and aggregator gates, and then the full network probe decides. Bounded by
+    #: :data:`MAX_OFF_DOMAIN_HOSTS` because a page linking to hundreds of domains is a link farm
+    #: rather than a newsroom, and an unbounded counter on a hostile page is a memory bug.
+    off_domain_hosts: "Counter" = field(default_factory=Counter)
     pattern_rejected: int = 0
     duplicate_in_cycle: int = 0
     #: Unique on-domain article URLs this cycle — the denominator of the shadow-mode question
@@ -566,6 +585,9 @@ class CrawlReport:
         d = dict(self.__dict__)
         d["waited_seconds"] = round(self.waited_seconds, 2)
         d["latency_ms"] = round(self.latency_ms, 1)
+        # A plain dict, most-linked first, so a JSON dump of a report carries the mined hosts and a
+        # reader can see WHICH outlets this publisher points at rather than only how many.
+        d["off_domain_hosts"] = dict(self.off_domain_hosts.most_common())
         return d
 
 
@@ -700,6 +722,13 @@ class PublisherCrawler:
             host = urllib.parse.urlsplit(url).hostname or ""
             if not _host_allowed(host, self.config.domains):
                 report.off_domain += 1
+                # Link mining: keep the host, not just the tally. Normalised through the registry's
+                # own rule so `https://WWW.Example.com/x` and `example.com` are one host here, the
+                # same canonicalisation every other acquisition channel gets.
+                h = outlet_registry._host_of(host)
+                if h and (h in report.off_domain_hosts
+                          or len(report.off_domain_hosts) < MAX_OFF_DOMAIN_HOSTS):
+                    report.off_domain_hosts[h] += 1
                 continue
             if pattern is not None and not pattern.search(url):
                 report.pattern_rejected += 1
@@ -881,6 +910,68 @@ def plan(configs, *, robots=None, limiter=None, fetch=None, store_=None,
                          for e in entries[:5]]
         out.append(row)
     return out
+
+
+def link_evidence(configs, *, robots=None, limiter=None, fetch=None, store_=None,
+                  now=None) -> "list[dict]":
+    """Outbound hosts seen while planning a crawl, as `source_discovery` evidence records.
+
+    **The link-mining acquisition channel.** A newsroom's index page links outward — to a wire
+    service, to a local paper it cited, to a partner title — and those hosts are outlets we may not
+    carry. `_filter` drops every one of them from the crawl (they are not this publisher's articles,
+    and `domains` is the security boundary that keeps a publisher's lean off a URL it did not
+    publish), and until :attr:`CrawlReport.off_domain_hosts` existed it discarded the host string on
+    the line after counting it.
+
+    ## What this costs, and what it does not do
+
+    It runs :func:`plan`, so it fetches the same discovery documents a crawl cycle already fetches,
+    under the same robots gate and the same per-host rate limiter, bounded by ``max_fetches``. It
+    ingests nothing and admits nothing: the records go to `source_discovery.gate`, which still
+    applies the tracked and aggregator gates, and then the network probe decides.
+
+    ## Where the yield comes from, and why it may be zero
+
+    Only the ``section`` rung reads HTML and sees anchors at all. A news sitemap is almost entirely
+    the publisher's own URLs, so a sitemap-only configuration mines nothing — which is the shipped
+    state for both enabled publishers. That is a configuration fact rather than a defect in this
+    function, and it is why the census below reports the rungs actually used: a channel returning
+    zero has to say whether it looked and found nothing, or never looked.
+
+    ``linkedFrom`` carries which publisher pointed at the host and how many times. That is the
+    signal a search query cannot produce — a newsroom citing an outlet is evidence about the outlet
+    — and it is also what makes a candidate auditable back to the page it came from."""
+    by_host: dict = {}
+    for row in plan(configs, robots=robots, limiter=limiter, fetch=fetch, store_=store_, now=now):
+        publisher = row.get("publisher") or ""
+        for host, n in (row.get("off_domain_hosts") or {}).items():
+            rec = by_host.get(host)
+            if rec is None:
+                by_host[host] = rec = {
+                    "host": host,
+                    "articles": 0,                  # this channel has no volume evidence, by nature
+                    "publishers": [],
+                    "language": "",
+                    "sampleUrls": [f"https://{host}/"],
+                    "linkedFrom": {},
+                    "links": 0,
+                }
+            rec["linkedFrom"][publisher] = rec["linkedFrom"].get(publisher, 0) + int(n or 0)
+            rec["links"] += int(n or 0)
+    # Most-linked first: a host three newsrooms point at is better evidence than one a single page
+    # mentions once, and the probe budget is spent from the top of this list.
+    return sorted(by_host.values(), key=lambda r: (-r["links"], r["host"]))
+
+
+def link_census(configs, rows: list) -> dict:
+    """Whether the channel LOOKED, not only what it found.
+
+    A sitemap-only configuration mines nothing however healthy it is, so "0 hosts" has two very
+    different causes and a channel that cannot tell them apart is a channel nobody can act on."""
+    kinds = sorted({s.kind for c in configs for s in c.sources})
+    return {"publishers": len(configs), "rungs": kinds,
+            "sectionRungs": sum(1 for c in configs for s in c.sources if s.kind == "section"),
+            "hosts": len(rows), "links": sum(r["links"] for r in rows)}
 
 
 def _why_empty(r: dict) -> str:
