@@ -204,6 +204,7 @@ def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
     for r in rows:
         by_id[_identity(reg, r)].append(r)
 
+    resolve = corpus.tier_resolver()        # once per pass, not once per outlet — see `tier_resolver`
     out = {}
     for key, arts in by_id.items():
         o = reg.resolve(key)
@@ -231,7 +232,7 @@ def outlet_stats(rows: list, reg, carriers: dict, index: tuple, *, now=None,
             "canonical": (o.canonical if o else key),
             # Where the outlet is TODAY, so a verdict can be read as a direction rather than as an
             # instruction whose sign depends on an assumption the reader may not share.
-            "tier": corpus.tier_of(arts[0].get("publisher"), arts[0].get("url")),
+            "tier": resolve(arts[0].get("publisher"), arts[0].get("url")),
         }
     return out
 

@@ -106,9 +106,17 @@ def main(argv=None) -> int:
         print("  Tiering is not configured, so every row is Tier A and a per-tier age has nothing")
         print("  to separate. RWE_RETENTION_MAX_AGE_DAYS_TIER_B would prune nothing today.")
     else:
+        # ONE resolver for the whole pass. `tier_of` re-reads the settings on every call, which is
+        # linear in the number of configured sources — and since admission gained a Tier B table
+        # (~45,000 hosts at the design size) that read also composes two large frozensets per call.
+        # Measured on this loop's shape at a 50,000-host assignment: 1,032 µs per `tier_of` against
+        # 3.1 µs per resolved call plus a 2.5 ms one-time build — 103 s versus 0.31 s over 100,000
+        # articles. `corpus_health._tier_age_resolver` hoists for the same reason; this instrument
+        # runs over the WHOLE catalogue, so it is where the cost was largest.
+        resolve = corpus.tier_resolver()
         counts: Counter = Counter()
         for a in st.list_feed_articles(limit=10_000_000):
-            counts[corpus.tier_of(a.get("publisher"), a.get("canonicalUrl") or a.get("url"))] += 1
+            counts[resolve(a.get("publisher"), a.get("canonicalUrl") or a.get("url"))] += 1
         for tier in corpus.TIERS:
             n = counts.get(tier, 0)
             print(f"  tier {tier:<7}: {n:>9,}  ({n / max(1, catalog) * 100:5.1f}% of the catalog)"

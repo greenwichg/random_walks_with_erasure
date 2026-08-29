@@ -20,9 +20,11 @@ Low-cost by design: behavioral tests proving each contract end-to-end, plus sour
 checks that the surfaces stay on their own dataset.
 """
 import csv
+import importlib
 import inspect
 import pathlib
 import sys
+import time
 from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -265,3 +267,64 @@ def test_the_clustering_corpus_is_selected_not_merely_fetched():
     assert "rows, total = " in src, (
         "the pre-pagination total must be kept, not discarded as `_total`: it is the only thing "
         "that makes a truncated clustering window detectable.")
+
+
+#: Modules that walk a whole catalogue or cohort and ask for each row's tier. Every one of them must
+#: hoist `corpus.tier_resolver()` out of its loop rather than calling `corpus.tier_of` per row.
+_PER_ROW_TIER_CALLERS = ("audit_retention_horizon", "audit_shadow_cohort",
+                         "select_asif_population", "stress_50k", "corpus_health", "story_service")
+
+
+def test_no_row_loop_calls_tier_of_per_row():
+    """`tier_of` re-reads the settings on every call; `tier_resolver()` reads them once.
+
+    The gap is not stylistic. `tier_of` is linear in the number of configured sources, and since
+    admission gained a Tier B table it also composes two frozensets per call. **Measured at a
+    50,000-host assignment: 1,032 us per `tier_of` against 3.1 us per resolved call plus a 2.5 ms
+    one-time build — 103 s versus 0.31 s over 100,000 articles.**
+
+    This is a structural check because the defect is invisible at today's size and only appears at
+    the size the whole 50,000-source programme is aiming at. `corpus_health._tier_age_resolver`
+    already carries the comment "ONE resolver for the whole pass, not a `tier_of` per article"; this
+    is that comment made enforceable, for the modules that walk a catalogue.
+
+    Not a ban on `tier_of` — it is the right call for a handful of lookups, which is why
+    `source_campaign` and the API surfaces are not listed here. The rule is about row LOOPS."""
+    offenders = []
+    for name in _PER_ROW_TIER_CALLERS:
+        mod = importlib.import_module(name)
+        src = inspect.getsource(mod)
+        if "corpus.tier_of(" in src or "\ntier_of(" in src:
+            offenders.append(name)
+    assert not offenders, (
+        "these modules walk rows and call corpus.tier_of per row — hoist corpus.tier_resolver() out "
+        f"of the loop instead: {offenders}. See corpus.tier_resolver for the measurement.")
+
+
+def test_the_resolver_is_flat_in_the_number_of_configured_sources():
+    """The property the hoist buys, asserted rather than assumed.
+
+    A resolver that re-read the settings internally would satisfy the structural check above while
+    changing nothing — so this measures the thing the check is a proxy for."""
+    import corpus as corpus_mod
+    small = frozenset(f"h{i}.example" for i in range(50))
+    large = frozenset(f"h{i}.example" for i in range(20_000))
+
+    def _time(hosts):
+        corpus_mod.wire_tier_b_admissions(lambda: hosts)
+        corpus_mod.admitted_tier_b_hosts(refresh=True)
+        resolve = corpus_mod.tier_resolver()
+        resolve("target.example", "https://target.example/a")       # warm
+        t0 = time.perf_counter()
+        for _ in range(2000):
+            resolve("target.example", "https://target.example/a")
+        return (time.perf_counter() - t0) / 2000
+
+    try:
+        per_small, per_large = _time(small), _time(large)
+        assert per_large < per_small * 5, (
+            f"resolved lookups are supposed to be independent of the assignment size, but 20,000 "
+            f"hosts cost {per_large * 1e6:.1f} us against {per_small * 1e6:.1f} us for 50 — the "
+            f"resolver is reading the settings per call again")
+    finally:
+        corpus_mod.wire_tier_b_admissions(None)

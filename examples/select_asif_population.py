@@ -117,6 +117,7 @@ def profile(tier_a: list, reg) -> list:
     Syndication uses `audit_shadow_cohort.carrier_index` rather than a local duplicate-title
     count, so "syndicated" means here exactly what it means in the audit this feeds."""
     carriers = asc.carrier_index(tier_a)
+    resolve = corpus.tier_resolver()        # once per pass, not once per outlet — see `tier_resolver`
     by_id = defaultdict(list)
     for r in tier_a:
         by_id[asc._identity(reg, r)].append(r)
@@ -143,7 +144,7 @@ def profile(tier_a: list, reg) -> list:
             "ownHosts": len(hosts),
             "proxied": len(all_hosts) - sum(hosts.values()),
             "tracked": reg.resolve(key) is not None,
-            "tier": corpus.tier_of(arts[0].get("publisher"), arts[0].get("url")),
+            "tier": resolve(arts[0].get("publisher"), arts[0].get("url")),
             # Every spelling in the window — see the module docstring on why raw strings.
             "spellings": sorted({(a.get("publisher") or "").strip().lower()
                                  for a in arts if (a.get("publisher") or "").strip()}),

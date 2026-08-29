@@ -363,16 +363,24 @@ def run_cohort(n: int, *, seconds: float, workers: int, interval_s: float, fail_
 def _tier_census(st, corpus) -> "tuple[int, int]":
     """Tier A rows, and how many of them came from a source that must be in shadow.
 
-    The second number is the whole premise of the design. It is computed through `corpus.tier_of`
-    — the documented authority — rather than through the SQL prefilter, so a disagreement between
-    the two shows up as a leak rather than being hidden by the optimisation.
+    The second number is the whole premise of the design. It is computed through `corpus`'s own tier
+    rule — the documented authority — rather than through the SQL prefilter, so a disagreement
+    between the two shows up as a leak rather than being hidden by the optimisation.
+
+    Through `tier_resolver()` rather than `tier_of()`, which is the same rule read once instead of
+    per row. That matters most HERE, of all places: this harness exists to characterise behaviour at
+    50,000 sources, and `tier_of` is the one call whose cost is linear in exactly that number — 1,032
+    µs per call against 3.1 µs resolved, measured at a 50,000-host assignment. Left as it was, the
+    instrument's own overhead would have grown with the variable under test and been reported as the
+    system's.
     """
     from store import FeedArticle
     from sqlalchemy import select
+    resolve = corpus.tier_resolver()
     tier_a = leak = 0
     with st.session() as s:
         for pub, url in s.execute(select(FeedArticle.publisher, FeedArticle.url)).all():
-            if corpus.tier_of(pub, url) == "A":
+            if resolve(pub, url) == "A":
                 tier_a += 1
                 if ".stress.example" in str(url or ""):
                     leak += 1
