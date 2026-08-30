@@ -18,6 +18,7 @@ import re
 from typing import Optional
 
 import api_server as engine   # reuse the serializer helpers _prettify / _lean_bucket (no algorithm)
+import outlet_registry        # curated source identity — supplies the news/research/community type
 import media                  # centralised image + publisher-logo selection (additive, presentation-only)
 import store as store_mod     # _register_bucket — the ONE numeric/label register bucketing (L2.2 family)
 
@@ -175,6 +176,7 @@ def _wire_slug(title: str) -> bool:
 
 def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[str] = None,
                   lean: Optional[str] = None, country: Optional[str] = None,
+                  story_type: Optional[str] = None,
                   limit: int = 60, max_scan: int = 2000) -> dict:
     """Latest FeedArticles as Article dicts, newest first, with optional facet filters. Returns
     ``{"articles": [...], "topics": [...], "publishers": [...], "countryFacets": {...}}`` — facets
@@ -187,6 +189,12 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
     lists (non-provisional), so the picker offers only countries with content — honestly empty
     until event geography flows.
 
+    ``story_type`` is the curated SOURCE type — news / research / community, projected from the
+    outlet registry's ``kind`` column by :func:`outlet_registry.source_type`. An article has ONE
+    publisher, so it simply is or is not that type (unlike the Stories lens, where a cluster of many
+    publishers matches on ANY member). A publisher the registry does not carry is unclassified and
+    matches no type.
+
     Backed by the **shared** ``store.search_feed_articles`` path (one filtering implementation for
     Discover and Search — no duplicated filter/sort code). Facets come from the store's distinct
     publisher/category values, prettified exactly as before. ``max_scan`` is retained for backward
@@ -196,12 +204,20 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
     def _f(v):     # drop the sentinel "all" and empties
         return v if v and v != "all" else None
 
+    # The curated SOURCE type is not a column and cannot be a SQL term: the registry's `kind` lives
+    # beside the catalogue, not in it. So it is post-filtered — and the row request is widened to
+    # `max_scan` first, so the cap bounds the MATCHES rather than the rows looked at. Without that,
+    # asking for 200 articles and finding no journal among the newest 200 would report an empty lens
+    # for a type the catalogue genuinely carries. Every other path asks for exactly `limit` rows as
+    # before, so nothing else moves.
+    kind = _f(story_type) if _f(story_type) in outlet_registry.SOURCE_TYPES else None
+    scan = max(limit, max_scan) if kind else limit
     # Discover is the one surface that hides *provisional* (extension-created, not yet corroborated)
     # articles — Stories/Search/the corpus include them (Commit 18 lifecycle). Same shared SQL path.
     rows, _total = store_.search_feed_articles(
         publisher=_f(publisher), topic=_f(topic), lean=_f(lean), country=_f(country),
         sort="newest",
-        pagination=OffsetPagination.from_params(limit, 0), include_provisional=False)
+        pagination=OffsetPagination.from_params(scan, 0), include_provisional=False)
     articles = [feed_article_to_article(r) for r in rows]
     # Display-title hygiene, THIS surface only (see _display_title/_wire_slug): masthead
     # suffixes come off, and rows whose entire title is a wire routing slug are skipped —
@@ -216,6 +232,13 @@ def list_discover(store_, *, topic: Optional[str] = None, publisher: Optional[st
             a = {**a, "headline": t}
         cleaned.append(a)
     articles = cleaned
+    if kind:
+        # One article, one publisher — so unlike the Stories lens ("has coverage from"), an article
+        # simply IS or is not that type. An uncurated publisher matches nothing rather than
+        # defaulting to news; see `outlet_registry.source_type`. Trimmed to `limit` after filtering,
+        # which is what the widened scan above is for.
+        articles = [a for a in articles
+                    if outlet_registry.source_type(a["publisher"]) == kind][:limit]
     facets = store_.feed_article_facets(include_provisional=False)
     topics = sorted({engine._prettify(t) for t in facets["topics"] if t})
     publishers = sorted({engine._prettify(p) for p in facets["publishers"] if p})

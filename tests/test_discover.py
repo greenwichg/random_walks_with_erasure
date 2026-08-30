@@ -387,3 +387,66 @@ def test_display_title_hygiene_and_wire_slug_gate_are_discover_only():
     raw = {discover.feed_article_to_article(r)["headline"] for r in st.list_feed_articles(limit=10)}
     assert "USA-TRUMP/ - Buffalo News" in raw and "Sabres sign veteran goalie - Buffalo News" in raw, \
         "the serializer (clustering's input) is byte-identical — hygiene never leaks upstream"
+
+
+# --------------------------------------------------------------------------- #
+# Curated SOURCE type — the Discover "Type" filter.
+# --------------------------------------------------------------------------- #
+def _mixed_sources(st):
+    """Real registry names, because the filter reads the curated `kind` column and nothing else:
+    invented outlets resolve to nothing and every arm below would pass against a filter that never
+    ran. Nature is `kind = research`, Reddit `kind = forum`, BBC/NPR plain news outlets."""
+    _add(st, "https://nature.com/x1", "Nature", 0.0, "Telescope array resolves a distant exoplanet",
+         category="Science")
+    _add(st, "https://reddit.com/x2", "Reddit", 0.0, "Readers debate the ferry terminal contract",
+         category="Business")
+    _add(st, "https://bbc.com/x3", "BBC News", 0.0, "Harbour authority publishes dredging schedule")
+    _add(st, "https://npr.org/x4", "NPR", -1.0, "Senate confirms the transport secretary")
+
+
+def test_discover_type_filters_by_curated_source_type():
+    st = store.Store("sqlite://"); _mixed_sources(st)
+    assert len(discover.list_discover(st, limit=50)["articles"]) == 4
+
+    def pubs(kind):
+        return {a["publisher"] for a in discover.list_discover(st, story_type=kind, limit=50)["articles"]}
+
+    # One article, one publisher — so unlike the Stories lens these ARE a partition of the curated
+    # rows, and News does not also contain the journal.
+    assert pubs("research") == {"Nature"}
+    assert pubs("community") == {"Reddit"}
+    assert pubs("news") == {"BBC News", "NPR"}
+
+
+def test_discover_type_never_invents_a_classification():
+    st = store.Store("sqlite://"); _event(st)
+    before = len(discover.list_discover(st, limit=50)["articles"])
+    assert before > 0
+    # None of these publishers is curated research or forum: both lenses are empty rather than
+    # falling back to the whole feed or bucketing strangers.
+    assert discover.list_discover(st, story_type="research", limit=50)["articles"] == []
+    assert discover.list_discover(st, story_type="community", limit=50)["articles"] == []
+    # An unrecognised value is not a filter; "all" is the sentinel for no filter.
+    for value in ("wire", "nonsense", "all", None, ""):
+        assert len(discover.list_discover(st, story_type=value, limit=50)["articles"]) == before, value
+
+
+def test_discover_type_cap_bounds_the_matches_not_the_rows_scanned():
+    """The reason the row request widens when a type is selected.
+
+    The type is not a column, so it cannot be a SQL term — it is post-filtered. With the SQL LIMIT
+    left at `limit`, asking for 2 articles would look at the newest 2, find no journal among them,
+    and report an empty lens for a type the catalogue plainly carries.
+    """
+    st = store.Store("sqlite://")
+    # 30 newer news articles ahead of the one journal piece, so a naive `limit` never reaches it.
+    for i in range(30):
+        _add(st, f"https://bbc.com/n{i}", "BBC News", 0.0, f"Council approves measure number {i}",
+             when="2026-07-20T10:00:00+00:00")
+    _add(st, "https://nature.com/deep", "Nature", 0.0, "Buried journal paper on plasma confinement",
+         category="Science", when="2026-07-05T10:00:00+00:00")
+
+    got = discover.list_discover(st, story_type="research", limit=2)["articles"]
+    assert [a["publisher"] for a in got] == ["Nature"], "the cap must bound matches, not rows read"
+    # …and the cap still applies to the matches themselves.
+    assert len(discover.list_discover(st, story_type="news", limit=2)["articles"]) == 2

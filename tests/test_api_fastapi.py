@@ -1340,6 +1340,35 @@ def test_search_endpoint(client):
         st.delete_feed_articles(urls)
 
 
+def test_discover_type_filter_reaches_the_service(client):
+    """`?type=` on /api/discover is wired end to end, not merely accepted — the same check the
+    Stories endpoint gets, because a declared-but-unforwarded param 200s with the full feed."""
+    st = api_fastapi.state.store
+    urls = []
+    try:
+        for cu, pub, title in [
+            ("https://dt-nature.example/1", "Nature", "Plasma confinement record stands after review"),
+            ("https://dt-bbc.example/1", "BBC News", "Council approves the harbour dredging budget"),
+        ]:
+            urls.append(cu)
+            st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub,
+                                   title=title, description="d", body=None,
+                                   published_at="2026-07-06T12:00:00+00:00", source_feed="f",
+                                   scored={"article_id": cu, "outlet": pub, "lean": 0.0,
+                                           "category": "Science"})
+
+        def pubs(params):
+            return {a["publisher"] for a in client.get("/api/discover", params=params).json()["articles"]}
+
+        unfiltered = pubs({"limit": 200})
+        assert {"Nature", "BBC News"} <= unfiltered
+        research = pubs({"type": "research", "limit": 200})
+        assert research == {"Nature"}, "?type= did not narrow; is it forwarded to the service?"
+        assert client.get("/api/discover", params={"type": "community"}).status_code == 200
+    finally:
+        st.delete_feed_articles(urls)
+
+
 def test_stories_type_filter_reaches_the_service(client):
     """`?type=` is wired end to end, not merely accepted.
 

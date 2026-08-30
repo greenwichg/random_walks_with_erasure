@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import type { DiscoverResponse } from "@ih/core/domain/types";
 import { backendGet, engineUnavailable } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
+import { DISCOVER_WIRE_KEYS } from "@ih/core/logic/discover-params";
 
-// Discover — the latest FeedArticles with topic/publisher/lean filters, from the engine
+// Discover — the latest FeedArticles with topic/publisher/lean/type filters, from the engine
 // (examples/discover.py). Passes the filter query params straight through.
+// The forwarded-key list lives in logic/discover-params.ts and is RATCHETED by its test against
+// Required<DiscoverFilters> — a filter field missing there fails the suite instead of being
+// silently dropped on the way to the engine.
 export const dynamic = "force-dynamic";
 
-const FILTER_KEYS = ["topic", "publisher", "lean", "country", "limit"] as const;
+const FILTER_KEYS = DISCOVER_WIRE_KEYS;
 
 export async function GET(request: Request) {
   const src = new URL(request.url).searchParams;

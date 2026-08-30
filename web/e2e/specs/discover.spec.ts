@@ -55,6 +55,48 @@ for slug, pub, mins, lean, img in rows:
   execFileSync("python", ["-c", py], { cwd: REPO_ROOT, stdio: "pipe" });
 }
 
+let seededResearch = false;
+
+/**
+ * One article from a curated RESEARCH source, added for the Type filter.
+ *
+ * Separate from `seedDiscover` on purpose: this file's other tests assert on the interleave of a
+ * specific publisher burst, and a sixth publisher in that fixture could move what they measure.
+ * Seeding it here is safe because Discover queries SQL live on every request — it has no cached
+ * build, unlike Stories, where a fixture added after the first page load is simply invisible.
+ *
+ * Nature, because the filter reads the outlet registry's curated `kind` and nothing else; the
+ * invented publishers in `seedDiscover` resolve to nothing, so they are the "uncurated" case.
+ */
+function seedResearchArticle(): void {
+  if (seededResearch) return;
+  seededResearch = true;
+  const py = `
+import sys
+from datetime import datetime, timedelta, timezone
+sys.path.insert(0, ${JSON.stringify(path.join(REPO_ROOT, "examples"))})
+import ingest
+import store as store_mod
+
+st = store_mod.Store("sqlite:///" + ${JSON.stringify(DB)})
+url = "https://nature-discover.example.com/a"
+st.upsert_feed_article(
+    canonical_url=ingest.canonical_url(url), url=url, publisher="Nature", source_publisher=None,
+    title="Story about plasma confinement unfolds", description="A deterministic dek.",
+    body=None, published_at=(datetime.now(timezone.utc) - timedelta(minutes=7)).isoformat(),
+    source_feed="e2e",
+    scored={"article_id": url, "outlet": "Nature", "category": "Science",
+            "title": "plasma", "lean": 0.0})
+`;
+  execFileSync("python", ["-c", py], { cwd: REPO_ROOT, stdio: "pipe" });
+}
+
+/** Open a FilterSelect by its visible label and choose an option (tolerates a trailing count). */
+async function pick(page: import("@playwright/test").Page, label: string, option: string) {
+  await page.getByRole("button", { name: new RegExp(`^${label}`) }).click();
+  await page.getByRole("menuitemradio", { name: new RegExp(`^${option}(\\s+\\d+)?$`) }).click();
+}
+
 test.describe("Discover (reverted layout, kept fixes)", () => {
   test.beforeEach(async ({ authedPage: page }) => {
     seedDiscover();
@@ -117,5 +159,27 @@ test.describe("Discover (reverted layout, kept fixes)", () => {
     await save.click();
     await expect(save).toHaveAttribute("aria-pressed", "true");
     expect(popups, "saving must never open the article").toBe(0);
+  });
+
+  test("the Type filter narrows to a curated source type", async ({ authedPage: page }) => {
+    seedResearchArticle();
+    await page.reload();                      // the row was added after beforeEach navigated
+    await expect(page.getByText("Story about plasma confinement unfolds")).toBeVisible();
+    await expect(page.getByText("Story about burst one unfolds")).toBeVisible();
+
+    await pick(page, "Type", "Research");
+
+    // Nature is curated `kind = research`; every other seeded publisher is invented and therefore
+    // uncurated, which must match NO type rather than defaulting into news.
+    await expect(page.getByText("Story about plasma confinement unfolds")).toBeVisible();
+    await expect(page.getByText("Story about burst one unfolds")).toHaveCount(0);
+
+    // News is the complement here, not a superset: on Discover one article has one publisher, so
+    // the lenses partition the curated rows instead of overlapping the way story coverage does.
+    await pick(page, "Type", "News");
+    await expect(page.getByText("Story about plasma confinement unfolds")).toHaveCount(0);
+
+    await pick(page, "Type", "All");
+    await expect(page.getByText("Story about burst one unfolds")).toBeVisible();
   });
 });

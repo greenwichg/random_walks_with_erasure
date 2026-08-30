@@ -2745,10 +2745,16 @@ def discover_feed(
     lean: Optional[str] = Query(None, description="left | center | right"),
     country: Optional[str] = Query(None, description="articles about events in this ISO 3166-1 "
                                    "alpha-2 country (event geography; publisher home is provenance, not a filter)"),
+    # Named `type` for the same reason as on /api/stories: FastAPI takes the query-string name from
+    # the parameter name. It shadows the builtin for this function, which never calls it.
+    type: Optional[str] = Query(None, description="news | research | community — articles from a "
+                                                  "publisher CURATED as that type (outlet registry "
+                                                  "`kind`); a publisher the registry does not carry "
+                                                  "matches no type"),
     limit: int = Query(60, ge=1, le=200),
 ) -> dict:
     return discover.list_discover(_require_store(), topic=topic, publisher=publisher,
-                                  lean=lean, country=country, limit=limit)
+                                  lean=lean, country=country, story_type=type, limit=limit)
 
 
 @app.get("/api/stories", response_model=StoriesResponseModel, response_model_exclude_none=True,

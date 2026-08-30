@@ -22,6 +22,10 @@ const LEAN_OPTIONS: FilterOption[] = [
   { value: "center", label: "Center" },
   { value: "right", label: "Right" },
 ];
+/** Curated SOURCE type, from the outlet registry's `kind` column — see outlet_registry.source_type.
+ *  A fixed vocabulary, so a fixed list like LEAN_OPTIONS rather than a data-derived one. On this
+ *  surface an article has ONE publisher, so it simply is or is not that type. */
+const TYPE_VALUES = ["news", "research", "community"] as const;
 const opt = (values: string[]): FilterOption[] => values.map((v) => ({ value: v, label: v }));
 const asFilter = (v: string) => (v === "all" ? undefined : v);
 const PAGE = 24;
@@ -36,6 +40,7 @@ export default function DiscoverPage() {
   const [lean, setLean] = React.useState("all");
   // Default "all" = Global: the request carries no country param and behaves exactly as before.
   const [country, setCountry] = React.useState("all");
+  const [type, setType] = React.useState("all");
   // "Load More", not pages and not infinite scroll: the browse stream reads continuously, but
   // continuing is the READER'S deliberate act — an information-diet product doesn't autoload
   // the bottomless feed it exists to push back against. The whole capped set is already
@@ -45,13 +50,14 @@ export default function DiscoverPage() {
   // Any filter change resets to the first batch.
   React.useEffect(() => {
     setVisible(PAGE);
-  }, [topic, publisher, lean, country]);
+  }, [topic, publisher, lean, country, type]);
 
   const { data, isLoading, isError, refetch } = useDiscover({
     topic: asFilter(topic),
     publisher: asFilter(publisher),
     lean: asFilter(lean),
     country: asFilter(country),
+    type: asFilter(type),
     limit: FETCH,
   });
 
@@ -67,6 +73,11 @@ export default function DiscoverPage() {
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .map(([code]) => ({ value: code, label: <CountryBadge code={code} /> })),
     [countryFacets],
+  );
+
+  const typeOptions = React.useMemo(
+    () => TYPE_VALUES.map((v) => ({ value: v, label: t(`filter.type.${v}`) })),
+    [t],
   );
 
   const articles = data?.articles ?? [];
@@ -96,6 +107,8 @@ export default function DiscoverPage() {
         />
         <FilterSelect label={t("filter.coveredBy")} description={t("filter.coveredByHint")}
           value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.type")} description={t("filter.typeHint")}
+          value={type} options={typeOptions} onChange={setType} />
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}
