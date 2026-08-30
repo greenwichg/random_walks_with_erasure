@@ -37,6 +37,12 @@ TIER2_FLAGS = (
     "RWE_REC_BLINDSPOT_SLOTS",
     "RWE_REC_EXPERIMENT",
     "RWE_REC_SHADOW",
+    # The corpus subsample's recency half-life. Same invariant, and it earns its line here for the
+    # same reason the others do: the engine reads it in `simulate_users.recency_halflife_days`, so
+    # a compose allowlist that omits it makes the knob unreachable from deploy/.env — the flag
+    # would read 0 in the container no matter what an operator set, and the feed would stay as old
+    # as it was while every check said the feature had shipped.
+    "RWE_REC_RECENCY_HALFLIFE_DAYS",
 )
 
 
@@ -77,3 +83,26 @@ def test_every_tier2_flag_defaults_dark_in_compose():
     for flag in ("RWE_REC_EXPERIMENT", "RWE_REC_SHADOW"):
         assert defaults.get(flag) == "", (
             f"{flag} compose default is {defaults.get(flag)!r} — must be empty (nothing declared)")
+
+
+def test_the_recency_half_life_ships_at_seven_days():
+    """The one rec flag that is deliberately ON by default, so the number is pinned.
+
+    Every other flag here is dark-by-default because it changes what the reader is shown in a way
+    somebody must opt into. This one is different: OFF is not a neutral state, it is the uniform
+    draw over the whole retention window that served 5-14+ day-old articles in the first place.
+    Leaving it off ships the reported bug; the value is therefore part of the contract.
+
+    Seven days is the middle of the measured range (median served age 15.1d -> 7.5d on a 30-day
+    fixture), chosen over 3d because this product exists to widen a reading diet and a harder
+    concentration buys currency with pool breadth. Change it from the live measurement
+    (deploy/ops/rec-age-probe.py), not from taste — and if you do, change it here too, which is
+    the point of pinning it.
+    """
+    compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
+    m = re.search(r"^\s+RWE_REC_RECENCY_HALFLIFE_DAYS:\s*\$\{RWE_REC_RECENCY_HALFLIFE_DAYS:-([^}]*)\}",
+                  compose, re.M)
+    assert m, "the recency half-life must stay an overridable ${VAR:-default}, not a literal"
+    assert m.group(1) == "7", (
+        f"shipped recency half-life is {m.group(1)!r}, expected '7'. 0 would restore the uniform "
+        f"draw over the whole retention window — the behaviour this flag exists to fix.")

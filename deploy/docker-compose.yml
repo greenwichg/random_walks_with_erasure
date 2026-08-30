@@ -377,10 +377,20 @@ services:
       RWE_REC_STORY_SOURCE: ${RWE_REC_STORY_SOURCE:-0}
       RWE_REC_EMERGING: ${RWE_REC_EMERGING:-0}
       # Recency weighting for the recommendation corpus subsample, half-life in DAYS.
-      # 0 = OFF = the uniform draw, byte-identical to before. The recommender has no time
-      # feature, so this is the only place article age can reach a served feed. Measure with
-      # deploy/ops/rec-age-probe.py before changing it.
-      RWE_REC_RECENCY_HALFLIFE_DAYS: ${RWE_REC_RECENCY_HALFLIFE_DAYS:-0}
+      # 0 = OFF = a uniform draw over the whole retention window, which is what served articles
+      # 5-14+ days old: the recommender has no time feature, so this is the ONLY place article
+      # age can reach a served feed.
+      #
+      # 7 days chosen as the shipped default. On a 30-day fixture it moves the median served age
+      # 15.1d -> 7.5d and the under-a-week share 22% -> 47%, while publisher count and the
+      # left/centre/right split hold (recency weights ARTICLES, not publishers, so a prolific
+      # outlet's old items are discounted exactly as much as a rare outlet's). It is the middle
+      # of the measured range, not the aggressive end — 3d reaches 4.3d median but concentrates
+      # the pool much harder for a product whose point is a WIDE reading diet.
+      #
+      # Verify on the live catalogue with deploy/ops/rec-age-probe.py after deploying, and raise
+      # this number if distinct publishers or the lean split move materially there.
+      RWE_REC_RECENCY_HALFLIFE_DAYS: ${RWE_REC_RECENCY_HALFLIFE_DAYS:-7}
       RWE_REC_BLINDSPOT_SLOTS: ${RWE_REC_BLINDSPOT_SLOTS:-0}
       RWE_REC_EXPERIMENT: ${RWE_REC_EXPERIMENT:-}
       RWE_REC_SHADOW: ${RWE_REC_SHADOW:-}
