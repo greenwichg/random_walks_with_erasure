@@ -696,6 +696,11 @@ export interface StoryCoverage {
   emotion?: EmotionShare | null;
   url?: string;
   publishedAt: string;
+  /** M4 — an ATTACHED Tier B row: coverage that never voted. The engine appends these after the
+   *  member rows (the member list is a strict prefix), and every member-derived fact the client
+   *  recomputes (publisher counts, register splits, framing) must exclude them — that is what
+   *  `logic/story-attached.splitCoverage` is for. Absent on member rows, never false. */
+  tierB?: boolean;
 }
 
 export interface Story {
@@ -725,6 +730,8 @@ export interface Story {
   timeSpanHours?: number;
   distribution: ViewpointDistribution;
   coverage: StoryCoverage[];
+  /** M4 — how many of the coverage rows are attached Tier B addenda (present only when > 0). */
+  attachedCoverage?: number;
   timeline: { date: string; label: string }[];
   blindspotSide?: LeanBucket;
   /** Lightweight Story Intelligence badge attached by /api/stories (Commit 10) — no extra request. */

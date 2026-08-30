@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import type { LeanBucket, Register, StoryCoverage } from "@ih/core/domain/types";
+import { splitCoverage } from "@ih/core/logic/story-attached";
 import { SectionHeader } from "@/components/shared/section-header";
 import { LeanBadge, RegisterBadge } from "@/components/shared/article-badges";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";
@@ -31,6 +32,12 @@ const PAGE = 40;
  * Rows follow the home page's list language (dense hover rows in a divide-y run, not a stack of
  * shadowed cards): provenance line → headline → actions. Read/Save reuse the existing pipeline
  * components, so recording a read here is byte-identical to every other surface.
+ *
+ * Attached Tier B rows (M4) render as their own labeled group BELOW the panel rows — "from beyond
+ * the panel": outlets we carry but whose articles never voted in this story. They stay out of the
+ * filter counts and the N/M line (those describe the panel), and the group only appears with the
+ * filters at rest — an attached row carries no lean, so a lean chip that surfaced it would be
+ * fabricating the very fact the row honestly lacks.
  */
 export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
   const { t, timeAgo, formatCompact } = useTranslation();
@@ -38,21 +45,23 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
   const [register, setRegister] = React.useState<"all" | Register>("all");
   const [oldestFirst, setOldestFirst] = React.useState(false);
 
+  const { panel, attached } = React.useMemo(() => splitCoverage(coverage), [coverage]);
+
   const leanCounts = React.useMemo(() => {
     const counts: Record<string, number> = { left: 0, center: 0, right: 0 };
-    for (const row of coverage) if (row.leanBucket) counts[row.leanBucket] = (counts[row.leanBucket] ?? 0) + 1;
+    for (const row of panel) if (row.leanBucket) counts[row.leanBucket] = (counts[row.leanBucket] ?? 0) + 1;
     return counts;
-  }, [coverage]);
+  }, [panel]);
 
   /** Registers actually present in this cluster — a filter for a value with zero rows is noise. */
   const registers = React.useMemo(() => {
     const present = new Set<Register>();
-    for (const row of coverage) if (row.register) present.add(row.register);
+    for (const row of panel) if (row.register) present.add(row.register);
     return (["reporting", "opinion", "mixed"] as Register[]).filter((r) => present.has(r));
-  }, [coverage]);
+  }, [panel]);
 
   const rows = React.useMemo(() => {
-    const filtered = coverage.filter(
+    const filtered = panel.filter(
       (row) =>
         (lean === "all" || row.leanBucket === lean) &&
         (register === "all" || row.register === register),
@@ -62,7 +71,18 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
         ? (a.publishedAt ?? "").localeCompare(b.publishedAt ?? "")
         : (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""),
     );
-  }, [coverage, lean, register, oldestFirst]);
+  }, [panel, lean, register, oldestFirst]);
+
+  const attachedRows = React.useMemo(
+    () =>
+      [...attached].sort((a, b) =>
+        oldestFirst
+          ? (a.publishedAt ?? "").localeCompare(b.publishedAt ?? "")
+          : (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""),
+      ),
+    [attached, oldestFirst],
+  );
+  const showAttached = attachedRows.length > 0 && lean === "all" && register === "all";
 
   // Any filter or order change starts the batch over — otherwise "Load more" would carry a
   // previous filter's depth into a shorter result set.
@@ -94,7 +114,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
             active={lean === value}
             onClick={() => setLean(value)}
             label={value === "all" ? t("rec.filter.all") : t(`filter.${value}`)}
-            count={value === "all" ? coverage.length : leanCounts[value]}
+            count={value === "all" ? panel.length : leanCounts[value]}
           />
         ))}
 
@@ -180,7 +200,58 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
           </Button>
         </div>
       )}
-      <p className="mt-2 text-xs text-muted-foreground">{formatCompact(rows.length)} / {formatCompact(coverage.length)}</p>
+      <p className="mt-2 text-xs text-muted-foreground">{formatCompact(rows.length)} / {formatCompact(panel.length)}</p>
+
+      {/* Attached Tier B coverage — the addendum the engine appended after the members. Its own
+          labeled group, never mixed into the panel rows above: the divider IS the tier boundary,
+          drawn where the data draws it. Dashed border + no lean badge = "carried, not rated". */}
+      {showAttached && (
+        <div className="mt-5 rounded-lg border border-dashed bg-card/40 px-4 py-3">
+          <h3 className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("story.beyondPanel", { n: formatCompact(attachedRows.length) })}
+          </h3>
+          <p className="mt-1 text-xs text-muted-foreground">{t("story.beyondPanelNote")}</p>
+          <ul className="mt-1 divide-y">
+            {attachedRows.map((row, i) => (
+              <li key={`${row.publisher}-${row.publishedAt}-${i}`} className="group">
+                <div className="-mx-2 flex flex-col gap-3 rounded-md px-2 py-3 transition-colors hover:bg-accent/40 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <Link
+                        href={`/publishers/${encodeURIComponent(row.publisher)}`}
+                        className="font-medium text-foreground hover:text-primary hover:underline"
+                      >
+                        {row.publisher}
+                      </Link>
+                      <span className="inline-flex items-center rounded-full border border-dashed px-2 py-0.5 text-[0.65rem] font-medium text-muted-foreground">
+                        {t("story.beyondPanelBadge")}
+                      </span>
+                      {row.publishedAt && <span>{timeAgo(row.publishedAt)}</span>}
+                    </div>
+                    <h4 className="mt-1 line-clamp-2 text-sm font-semibold leading-snug tracking-tight">
+                      {row.headline}
+                    </h4>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 self-start sm:self-center">
+                    <ReadArticleButton article={{ url: row.url, headline: row.headline }} openedFrom="stories" />
+                    {row.url && (
+                      <SaveButton
+                        article={{
+                          id: row.url,
+                          url: row.url,
+                          headline: row.headline,
+                          publisher: row.publisher,
+                          publishedAt: row.publishedAt,
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

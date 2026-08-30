@@ -23,6 +23,7 @@ import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
 import { LEAN_META } from "@ih/core/logic/metrics";
+import { splitCoverage } from "@ih/core/logic/story-attached";
 import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
 import { formatDate } from "@ih/core/i18n/core";
@@ -157,10 +158,15 @@ export default function StoryDetailPage() {
     );
   }
 
-  const publisherCount = story.publisherCount ?? new Set(story.coverage.map((c) => c.publisher)).size;
+  // MEMBER rows only for every fact this page derives itself (M4 containment, client half):
+  // attached Tier B rows are coverage that never voted, and counting them into publisher stats,
+  // the register split or framing would undo engine-side containment one .map() at a time. The
+  // full list — members THEN the labeled addenda — belongs to CoverageList alone.
+  const { panel: panelCoverage } = splitCoverage(story.coverage);
+  const publisherCount = story.publisherCount ?? new Set(panelCoverage.map((c) => c.publisher)).size;
   const publisherCounts = (() => {
     const counts = new Map<string, number>();
-    for (const row of story.coverage) counts.set(row.publisher, (counts.get(row.publisher) ?? 0) + 1);
+    for (const row of panelCoverage) counts.set(row.publisher, (counts.get(row.publisher) ?? 0) + 1);
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8)
@@ -183,7 +189,7 @@ export default function StoryDetailPage() {
              40-row article list, at a scroll depth almost nobody reached. */
           <>
             <StoryIntelligencePanel storyId={story.id} />
-            <StoryCoveragePanel distribution={story.distribution} coverage={story.coverage} />
+            <StoryCoveragePanel distribution={story.distribution} coverage={panelCoverage} />
             <PublisherSpotlight
               publishers={publisherCounts}
               titleKey="story.publishersTitle"
@@ -273,7 +279,7 @@ export default function StoryDetailPage() {
 
           {/* Same event, side by side — the juxtaposition the filterable list below can never show.
               Renders nothing unless at least two rated sides actually wrote (lib/framing.ts). */}
-          <FramingComparison coverage={story.coverage} />
+          <FramingComparison coverage={panelCoverage} />
 
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
