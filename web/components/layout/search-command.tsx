@@ -11,6 +11,41 @@ import type { Article } from "@ih/core/domain/types";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
+/**
+ * The height the reader can actually SEE, tracked while the overlay is open.
+ *
+ * `vh` is the largest the viewport ever gets — the URL bar retracted — so on a phone it over-reports
+ * from the moment the page loads. `dvh` fixes that much, but neither knows about the software
+ * keyboard: on iOS Safari the layout viewport does not shrink when the keys come up, so a panel
+ * sized in either unit keeps its full height and its lower half — the results, and the scrolling
+ * needed to reach them — sits underneath the keyboard.
+ *
+ * `visualViewport` is the only API that reports what is genuinely on screen, and it fires `resize`
+ * as the keyboard opens and closes. Null until measured, and null where the API is missing (older
+ * browsers, SSR), so the caller can fall back to `dvh` rather than render nothing.
+ */
+function useVisibleHeight(open: boolean): number | null {
+  const [height, setHeight] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    const vv = typeof window === "undefined" ? null : window.visualViewport;
+    if (!open || !vv) return;
+    const sync = () => setHeight(vv.height);
+    sync();
+    // `scroll` as well as `resize`: iOS reports the keyboard partly as a scroll of the visual
+    // viewport, and a resize alone would miss the settled height.
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+      setHeight(null);            // never leave a stale height to size the NEXT opening
+    };
+  }, [open]);
+
+  return height;
+}
+
 /** ⌘K / global search — a quick launcher over the live FeedArticle catalog, backed by /api/search. */
 export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t } = useTranslation();
@@ -19,6 +54,7 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
   const active = q.trim().length > 1;
   const { data, isFetching } = useSearch({ query: q.trim(), limit: 7 }, active);
   const results = data?.results ?? [];
+  const visibleHeight = useVisibleHeight(open);
 
   React.useEffect(() => {
     if (!open) setQ("");
@@ -96,9 +132,20 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
             if (e.target === e.currentTarget) onOpenChange(false);
           }}
         >
-        <div className="mx-auto mt-4 w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-2xl border bg-popover shadow-card sm:mt-[10vh] sm:w-full">
+        {/* A COLUMN, bounded by what is on screen, so the results take every pixel the header does
+            not. `--search-max-h` prefers the measured visual viewport (the only figure that accounts
+            for the keyboard) and falls back to `dvh`, which at least tracks the URL bar. The 1.5rem
+            both arms subtract is the panel's own `mt-3` plus an equal gap below it, so it never
+            reaches the very edge. Both are dropped at `sm`, where the panel stays content-height
+            under its 10vh offset exactly as before. */}
+        <div
+          style={{
+            "--search-max-h": visibleHeight ? `${visibleHeight - 24}px` : "calc(100dvh - 1.5rem)",
+          } as React.CSSProperties}
+          className="mx-auto mt-3 flex max-h-[var(--search-max-h)] w-[calc(100%-1.5rem)] max-w-xl flex-col overflow-hidden rounded-2xl border bg-popover shadow-card sm:mt-[10vh] sm:max-h-none sm:w-full"
+        >
           <form
-            className="flex items-center gap-3 border-b px-4"
+            className="flex shrink-0 items-center gap-2 border-b px-3 sm:gap-3 sm:px-4"
             onSubmit={(e) => {
               e.preventDefault();
               if (active) seeAll();
@@ -109,12 +156,22 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
             ) : (
               <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             )}
+            {/* `text-base` on mobile is not a type choice, it is the iOS zoom threshold: Safari
+                magnifies the whole page when a focused field is under 16px, and does not undo it
+                when the field blurs. `Input`'s base is `text-sm` (14px), so opening search zoomed
+                the page and left it zoomed — which is what an "oversized" field and a cramped panel
+                look like afterwards. Desktop keeps 14px and the 3rem row it always had. */}
             <Input
               autoFocus
+              inputMode="search"
+              enterKeyHint="search"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder={t("searchCmd.placeholder")}
-              className="h-12 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+              className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0 sm:h-12 sm:text-sm"
             />
             {/* Dismiss. It sits in the INPUT'S OWN ROW, which is what keeps it reachable when the
                 keyboard is up: the browser scrolls the focused field into view, and this rides
@@ -134,7 +191,15 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
             </kbd>
           </form>
 
-          <div className="max-h-[50vh] overflow-y-auto p-2">
+          {/* `flex-1 min-h-0` is what hands the results everything the header leaves: the column is
+              bounded above, so the list takes the remainder and scrolls inside it — and shrinks with
+              the visible height as the keyboard opens, instead of extending underneath it.
+              `min-h-0` is load-bearing; a flex child's default `min-height: auto` refuses to shrink
+              below its content and the panel would grow past the screen instead of scrolling.
+              Desktop opts back out to the fixed 50vh box it has always had.
+              `overscroll-contain` keeps a flick at the end of the list from scrolling the page
+              behind the overlay. */}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 sm:max-h-[50vh] sm:flex-none">
             {!active && (
               <p className="px-3 py-8 text-center text-sm text-muted-foreground">{t("searchCmd.hint")}</p>
             )}
