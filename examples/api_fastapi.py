@@ -233,8 +233,14 @@ def _configure_recs_source(st) -> "str | None":
         return None
     feed_csv = feed_source.prepare(st)
     if not feed_csv:
+        # Two gates can produce this, and `articles` alone distinguishes them: a count below the
+        # threshold is a catalog that is too small, while a healthy count means the rows exist but
+        # were filtered out of candidacy — almost always the RWE_FEED_MAX_AGE_DAYS window over a
+        # catalog that has stopped being refreshed.
         _log(logging.WARNING, "recs_source_fallback", source="feed",
-             reason="catalog below RWE_FEED_MIN_ARTICLES", articles=st.count_feed_articles())
+             reason="too few recommendation candidates: below RWE_FEED_MIN_ARTICLES, "
+                    "or filtered out of candidacy (RWE_FEED_MAX_AGE_DAYS)",
+             articles=st.count_feed_articles())
         return None
     os.environ["RWE_QBIAS"] = feed_csv
     os.environ["RWE_PROFILE"] = "qbias"   # authoritative: the feed catalog is now the corpus

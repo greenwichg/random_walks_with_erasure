@@ -8,6 +8,7 @@ the most recent one — plus the wording variants, strict never-combine, the cla
 ``validate()`` failure modes, a real-clustering index round-trip, and the endpoint regression:
 every served explanation must validate clean against its own evidence (the 21d pipeline hook).
 """
+import datetime as _dt
 import pathlib
 import sys
 
@@ -18,6 +19,19 @@ sys.path.insert(0, str(ROOT / "examples"))
 
 import api_server as engine  # noqa: E402
 import evidence_resolver as er  # noqa: E402
+
+
+def _seeded_at() -> str:
+    """A day old, computed rather than pinned.
+
+    Seeded articles have to clear the recommendation-candidate freshness window
+    (``RWE_FEED_MAX_AGE_DAYS``, default 60 days) or ``feed_source`` exports an empty corpus and the
+    engine is handed nothing to recommend. The literal that used to sit here — 2026-07-01 — aged out
+    of that window on 2026-08-30 and took this test with it. A fixed date inside a rolling window is
+    a fuse, not a fixture.
+    """
+    return (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).isoformat()
+
 
 FOX = "https://foxnews.example.com/story/fusion-1"
 CNN = "https://cnn.example.com/story/fusion-2"
@@ -371,7 +385,7 @@ def test_every_served_explanation_validates(tmp_path, monkeypatch):
             st.upsert_feed_article(
                 canonical_url=u, url=u, publisher=pub, source_publisher=pub,
                 title=f"{pub} covers the vote and the economy, item {k}", description="d",
-                body=None, published_at="2026-07-01T00:00:00+00:00", source_feed="seed",
+                body=None, published_at=_seeded_at(), source_feed="seed",
                 source_type="rss",
                 scored={"article_id": u, "outlet": pub, "category": "Politics", "lean": lean,
                         "political": True, "title": f"{pub} story {k}"})

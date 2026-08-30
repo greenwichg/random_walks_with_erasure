@@ -9,6 +9,7 @@ Two guarantees are pinned here:
   with scores, match bands from ranks, cross-cutting equal to the serving flag, familiarity from
   the reader's measured outlet shares, and reason templates that claim only what was computed.
 """
+import datetime as _dt
 import pathlib
 import sys
 import urllib.parse
@@ -23,6 +24,18 @@ import api_server  # noqa: E402
 import rec_explain  # noqa: E402
 
 STRATEGIES = ("rwe-b", "rwe-d", "adaptive")
+
+
+def _seeded_at() -> str:
+    """A day old, computed rather than pinned.
+
+    Seeded articles have to clear the recommendation-candidate freshness window
+    (``RWE_FEED_MAX_AGE_DAYS``, default 60 days) or ``feed_source`` exports an empty corpus and the
+    engine is handed nothing to recommend. The literal that used to sit here — 2026-07-01 — aged out
+    of that window on 2026-08-30 and took this test with it. A fixed date inside a rolling window is
+    a fuse, not a fixture.
+    """
+    return (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).isoformat()
 
 
 @pytest.fixture(scope="module")
@@ -263,7 +276,7 @@ def test_measured_reader_explain_endpoint(tmp_path, monkeypatch):
             st.upsert_feed_article(
                 canonical_url=u, url=u, publisher=pub, source_publisher=pub,
                 title=f"{pub} covers the vote and the economy, item {k}", description="d",
-                body=None, published_at="2026-07-01T00:00:00+00:00", source_feed="seed",
+                body=None, published_at=_seeded_at(), source_feed="seed",
                 source_type="rss",
                 scored={"article_id": u, "outlet": pub, "category": "Politics", "lean": lean,
                         "political": True, "title": f"{pub} story {k}"})

@@ -23,7 +23,15 @@ import corpus_validation as cv  # noqa: E402
 import feed_source              # noqa: E402
 import store as store_mod       # noqa: E402
 
-NOW = datetime(2026, 7, 11, 12, 0, 0, tzinfo=timezone.utc)
+# The anchor every fixture is dated relative to. It must be the REAL now, not a literal.
+#
+# Half the tests below pass `now=NOW` into the pure filter, where any anchor is self-consistent. The
+# other half seed a store and let `export_catalog_csv` / `prepare` filter against the wall clock —
+# and there a literal anchor slides: pinned at 2026-07-11, a fixture written as `days_ago=2` was
+# genuinely 52 days old by 2026-08-30 and would have crossed the 60-day window ten days later,
+# failing tests that assert freshness. No test here asserts a calendar date, only relative ages, so
+# the anchor moving with the clock is exactly what the fixtures mean.
+NOW = datetime.now(timezone.utc)
 
 
 def _art(url, days_ago=0.0, publisher="Pub", published=True, fetched_days_ago=None):
@@ -39,6 +47,16 @@ def _art(url, days_ago=0.0, publisher="Pub", published=True, fetched_days_ago=No
 # --------------------------------------------------------------------------- #
 # The env window.
 # --------------------------------------------------------------------------- #
+def test_the_freshness_anchor_tracks_the_clock():
+    """Re-pinning NOW to a literal must fail here rather than a month later, somewhere else.
+
+    That is how this arrived: a sibling suite seeded articles at a hard-coded 2026-07-01, which was
+    fine for 60 days and then silently emptied the exported corpus. A fixed anchor inside a rolling
+    window does not fail when it is written — it fails on a date nobody chose.
+    """
+    assert abs((datetime.now(timezone.utc) - NOW).total_seconds()) < 3600
+
+
 def test_window_defaults_to_60_days(monkeypatch):
     monkeypatch.delenv("RWE_FEED_MAX_AGE_DAYS", raising=False)
     assert ch.feed_max_age_days() == 60.0
@@ -163,6 +181,47 @@ def test_export_catalog_csv_drops_stale_keeps_read(tmp_path, monkeypatch):
     assert "https://ex.com/stale" not in urls                      # stale: never a candidate
     assert "https://ex.com/stale-read" in urls                     # read-demand exemption
     assert st.count_feed_articles() == 3                           # storage untouched
+
+
+def test_prepare_refuses_a_catalog_that_is_all_stale(tmp_path, monkeypatch):
+    """A stored count above the threshold is not a corpus — the EXPORTED count is.
+
+    `prepare` used to gate on `count_feed_articles()` only, so a catalog that was large enough but
+    entirely outside the freshness window returned a path to a header-only CSV. The engine built a
+    zero-item corpus from it and the population sampler died on `rng.choice` — "probabilities do not
+    sum to 1" — a corpus too small to simulate arriving as a crash instead of the fallback this
+    function exists to provide.
+    """
+    monkeypatch.delenv("RWE_FEED_MAX_AGE_DAYS", raising=False)      # default 60
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'stale.db'}")
+    for i in range(8):
+        _seed(st, f"https://ex.com/stale-{i}", days_ago=120)
+    out = tmp_path / "corpus.csv"
+
+    assert st.count_feed_articles() == 8                # the stored count clears the threshold...
+    assert feed_source.export_catalog_csv(st, str(out)) == 0        # ...and nothing is exportable
+    assert feed_source.prepare(st, str(out), min_articles=5) is None
+
+    # A fresh article among them and the same call succeeds — the refusal is about candidacy, not
+    # about the store being unreadable.
+    _seed(st, "https://ex.com/fresh-0", days_ago=1)
+    assert feed_source.prepare(st, str(out), min_articles=1) == str(out)
+
+
+def test_prepare_refuses_when_the_window_leaves_too_few(tmp_path, monkeypatch):
+    """The threshold is applied to the exported rows, not merely to "more than zero"."""
+    monkeypatch.delenv("RWE_FEED_MAX_AGE_DAYS", raising=False)      # default 60
+    st = store_mod.Store(f"sqlite:///{tmp_path / 'thin.db'}")
+    for i in range(8):
+        _seed(st, f"https://ex.com/old-{i}", days_ago=120)
+    for i in range(2):
+        _seed(st, f"https://ex.com/new-{i}", days_ago=1)
+    out = tmp_path / "corpus.csv"
+
+    assert st.count_feed_articles() == 10               # stored: clears a threshold of 5
+    assert feed_source.export_catalog_csv(st, str(out)) == 2        # exportable: does not
+    assert feed_source.prepare(st, str(out), min_articles=5) is None
+    assert feed_source.prepare(st, str(out), min_articles=2) == str(out)
 
 
 def test_export_catalog_csv_gate_disabled(tmp_path, monkeypatch):

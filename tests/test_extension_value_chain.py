@@ -7,6 +7,7 @@ Runs the real engine in feed mode (in-process TestClient over a prepopulated cat
 drives the real ``RefreshManager`` cycle — no recommender internals are touched or mocked.
 """
 
+import datetime as _dt
 import importlib.util
 import os
 import pathlib
@@ -30,6 +31,18 @@ NEW = "https://www.wsj.com/articles/value-chain-fusion-milestone"
 OUTLETS = [("The Guardian", -1.5), ("NPR", -1.0), ("Associated Press", 0.0), ("Fox News", 1.6)]
 
 
+def _seeded_at() -> str:
+    """A day old, computed rather than pinned.
+
+    Seeded articles have to clear the recommendation-candidate freshness window
+    (``RWE_FEED_MAX_AGE_DAYS``, default 60 days) or ``feed_source`` exports an empty corpus and the
+    engine is handed nothing to recommend. The literal that used to sit here — 2026-07-01 — aged out
+    of that window on 2026-08-30 and took this test with it. A fixed date inside a rolling window is
+    a fuse, not a fixture.
+    """
+    return (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).isoformat()
+
+
 def _seed_catalog(db_url, per_outlet=3):
     st = store_mod.Store(db_url)
     for pub, lean in OUTLETS:
@@ -39,7 +52,7 @@ def _seed_catalog(db_url, per_outlet=3):
             st.upsert_feed_article(
                 canonical_url=u, url=u, publisher=pub, source_publisher=pub,
                 title=f"{pub} covers the vote and the economy, item {k}", description="d",
-                body=None, published_at="2026-07-01T00:00:00+00:00", source_feed="seed",
+                body=None, published_at=_seeded_at(), source_feed="seed",
                 source_type="rss",
                 scored={"article_id": u, "outlet": pub, "category": "Politics", "lean": lean,
                         "political": True, "title": f"{pub} story {k}"})

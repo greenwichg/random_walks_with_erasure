@@ -345,18 +345,27 @@ def prepare(store_, path: Optional[str] = None, *, min_articles: Optional[int] =
     the catalog is too small (fewer than ``min_articles``), so the caller keeps the existing corpus.
 
     Path resolution: explicit ``path`` > ``RWE_FEED_CORPUS_CSV`` > ``<repo>/data/feed_corpus.csv``.
-    Threshold: ``min_articles`` > ``RWE_FEED_MIN_ARTICLES`` > :data:`DEFAULT_MIN_ARTICLES`."""
-    total = store_.count_feed_articles()
+    Threshold: ``min_articles`` > ``RWE_FEED_MIN_ARTICLES`` > :data:`DEFAULT_MIN_ARTICLES`.
+
+    The threshold is checked TWICE, against two different numbers, because they can disagree by the
+    whole catalog. ``count_feed_articles()`` counts what is stored; what becomes the corpus is what
+    :func:`export_catalog_csv` writes, which is the stored rows minus the freshness window
+    (``RWE_FEED_MAX_AGE_DAYS``), the per-outlet cap and ``max_items``. A catalog that is entirely
+    outside the window — an ingest that stopped 60 days ago, a clock skew, a test seeded at a date
+    that has since aged out — passes the stored check and exports nothing. Returning a path to that
+    empty CSV used to hand the engine a zero-item catalog, and the population sampler then died on
+    ``rng.choice`` with "probabilities do not sum to 1": a corpus too small to simulate, which is
+    the exact condition this function exists to refuse, arriving as a crash instead of a fallback."""
     threshold = (min_articles if min_articles is not None
                  else _int_env("RWE_FEED_MIN_ARTICLES", DEFAULT_MIN_ARTICLES))
-    if total < threshold:
+    if store_.count_feed_articles() < threshold:
         return None
     out = path or os.environ.get("RWE_FEED_CORPUS_CSV") or os.path.join(_data_dir(), "feed_corpus.csv")
     # Optional per-outlet cap (RWE_FEED_MAX_PER_OUTLET, 0/unset = no cap) so one firehose feed can't
     # dominate the recommendation corpus. Applied to the corpus export only; the full catalog is kept.
-    export_catalog_csv(store_, out, max_items=max_items,
-                       max_per_outlet=_int_env("RWE_FEED_MAX_PER_OUTLET", 0) or None)
-    return out
+    written = export_catalog_csv(store_, out, max_items=max_items,
+                                 max_per_outlet=_int_env("RWE_FEED_MAX_PER_OUTLET", 0) or None)
+    return out if written >= threshold else None
 
 
 def load_url_map(csv_path: str) -> dict:
