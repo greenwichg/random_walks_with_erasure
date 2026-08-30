@@ -128,9 +128,12 @@ def build(fixture: dict, *, keep_env: bool = False) -> Case:
         # -- production recommender build (Backend + live-feed resolver + Personalizer) -----
         feed_csv = feed_source.prepare(st)
         assert feed_csv, "catalog below the feed minimum — add articles or lower RWE_FEED_MIN_ARTICLES"
-        os.environ["RWE_QBIAS"] = feed_csv
-        os.environ["RWE_PROFILE"] = "qbias"
-        ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
+        # The feed catalog becomes the corpus by ARGUMENT, which `resolve_profile` ranks above the
+        # environment — not by writing RWE_QBIAS/RWE_PROFILE, which also reconfigured every later
+        # reader in the process. (api_fastapi._profile_for is the serving path's version.) The other
+        # env this function sets is deliberate and is what `keep_env` is about; these two were not.
+        ns = SimpleNamespace(profile="qbias", npz=None, qbias=feed_csv,
+                             register_csv=None, emotion_csv=None,
                              behaviors=None, lean_tau=None, domain=None,
                              n_users=int(_ENV["RWE_N_USERS"]), max_items=int(_ENV["RWE_MAX_ITEMS"]),
                              seed=int(_ENV["RWE_SEED"]))

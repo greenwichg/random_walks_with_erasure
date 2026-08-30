@@ -59,12 +59,10 @@ def module_env():
     Use it exactly like ``monkeypatch`` (``module_env.setenv`` / ``.delenv``); everything is restored
     when the module's fixtures tear down. ``_no_env_leaks_between_modules`` below enforces the rule.
 
-    It restores the whole ``RWE_*`` space rather than only the names it was told about, because the
-    engine writes some of its own: ``api_fastapi._configure_recs_source`` sets ``RWE_QBIAS`` and
-    ``RWE_PROFILE`` deliberately, so that the feed catalog becomes the authoritative corpus. A fixture
-    cannot be expected to predict that, and monkeypatch alone would not undo it — ``delenv`` on a name
-    that is absent records nothing, so a value the app creates afterwards has no recorded original to
-    be rolled back to. Snapshotting the namespace needs no such prediction.
+    It restores the whole ``RWE_*`` space rather than only the names it was told about, because a
+    fixture cannot always predict what the code it drives will set. monkeypatch alone would not undo
+    those: ``delenv`` on a name that is absent records nothing, so a value created afterwards has no
+    recorded original to be rolled back to. Snapshotting the namespace needs no such prediction.
     """
     before = _engine_config()
     with pytest.MonkeyPatch.context() as mp:
@@ -78,12 +76,12 @@ def module_env():
 def _engine_config_is_test_local():
     """No test may change the engine's configuration for the tests after it.
 
-    ``monkeypatch`` already covers everything a test sets deliberately. This covers what the ENGINE
-    sets on its way past: booting the app with the feed source on runs
-    ``api_fastapi._configure_recs_source``, which writes ``RWE_QBIAS`` and ``RWE_PROFILE`` into the
-    process environment on purpose — that is how the feed catalog becomes the authoritative corpus.
-    Nothing recorded those, so nothing put them back, and every test after the first app boot ran
-    against a corpus it had not chosen.
+    ``monkeypatch`` already covers everything a test sets deliberately. This covers configuration a
+    test asks a HELPER to apply on its behalf, where the helper's whole job is to leave the process
+    configured: ``rec_pipeline.extract.build(keep_env=True)`` sets up a fixture's store and corpus
+    and deliberately does not restore, so that the caller can keep working against them. That is a
+    reasonable contract and the test is its right boundary — without one, the fixture's database URL
+    and sizing outlive the test that asked for them.
 
     Restoring to the state at test start rather than to some pristine baseline is what makes this
     safe next to module-scoped fixtures: pytest builds broader scopes first, so a module fixture's

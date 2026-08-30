@@ -230,8 +230,9 @@ def main(argv=None) -> int:
         print(f"\n-- 3. served diff -- the recommender is not sourcing from the live feed "
               f"(RWE_RECS_SOURCE), so there is no country-bearing catalog to probe.")
         return 1
-    os.environ["RWE_QBIAS"] = feed_csv
-    os.environ["RWE_PROFILE"] = "qbias"
+    # The feed catalog becomes the corpus by ARGUMENT (resolve_profile ranks CLI above env), not by
+    # writing RWE_QBIAS/RWE_PROFILE into the process an audit happens to be running in.
+    ns.profile, ns.qbias = "qbias", feed_csv
     be = engine.Backend(engine.resolve_profile(ns))
     be.attach_url_resolver(feed_source.load_url_map(feed_csv))
     be.attach_country_resolver(feed_source.load_country_map(feed_csv))

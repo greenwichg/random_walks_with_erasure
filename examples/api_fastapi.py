@@ -179,11 +179,24 @@ def _ensure_demo_user() -> int:
     return u.id
 
 
-def _profile_from_env() -> "engine.DatasetProfile":
-    """Resolve the dataset profile from environment only (deployment config), reusing the
-    exact same resolution as the CLI so behaviour is identical."""
+def _profile_for(feed_csv: "str | None" = None) -> "engine.DatasetProfile":
+    """The dataset profile this process will serve.
+
+    Deployment configuration comes from the environment (``RWE_PROFILE``, ``RWE_NPZ``, …), resolved
+    by the same ``resolve_profile`` the CLI uses so the two behave identically.
+
+    ``feed_csv`` is the live recommendation source's answer, when it produced one: the feed catalog
+    IS the corpus, so it must win over a pre-set ``RWE_PROFILE`` (the docker/compose default is
+    ``synthetic``) or the engine would build the pre-set corpus and silently ignore the feed — and no
+    publisher URL would ever reach a recommendation. It wins by being passed HERE, on the argument
+    that ``resolve_profile`` already ranks above the environment. It used to win by being written
+    back into ``os.environ``, which reached the same build and also reconfigured every later reader
+    in the process — invisible in production, where the app boots once, and a steady source of
+    cross-test contamination in a suite that boots it dozens of times.
+    """
     ns = SimpleNamespace(
-        profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
+        profile="qbias" if feed_csv else None, npz=None, qbias=feed_csv,
+        register_csv=None, emotion_csv=None,
         behaviors=None, lean_tau=None, domain=None,
         n_users=_int_env("RWE_N_USERS"), max_items=_int_env("RWE_MAX_ITEMS"),
         seed=_int_env("RWE_SEED"),
@@ -220,15 +233,14 @@ state = _State()
 
 def _configure_recs_source(st) -> "str | None":
     """Opt-in live recommendation source. When ``RWE_RECS_SOURCE=feed`` and the RSS ``FeedArticle``
-    catalog is large enough, export it to a qbias-format CSV and point the engine's corpus at it
-    **authoritatively** — ``RWE_QBIAS`` at the CSV *and* ``RWE_PROFILE=qbias`` — then return the CSV
-    path. The feed catalog *is* the corpus, so the profile must become ``qbias`` even if
-    ``RWE_PROFILE`` was already set (e.g. the docker/compose default ``synthetic``); otherwise the
-    engine would build the pre-set corpus and silently ignore the feed CSV (and no publisher URL
-    would ever reach a recommendation). Returns ``None`` — keep the existing corpus, touch no env —
-    when the source is disabled or the catalog is below ``RWE_FEED_MIN_ARTICLES`` (so enabling the
-    flag before any RSS ingest stays safe). No recommendation algorithm is affected; this only
-    selects the article source."""
+    catalog is large enough, export it to a qbias-format CSV and return that path; :func:`_profile_for`
+    turns it into the corpus. Returns ``None`` — keep the existing corpus — when the source is
+    disabled or the catalog is below ``RWE_FEED_MIN_ARTICLES``, so enabling the flag before any RSS
+    ingest stays safe. No recommendation algorithm is affected; this only selects the article source.
+
+    It answers a question and changes nothing. The CSV path used to be applied here, by writing
+    ``RWE_QBIAS`` and ``RWE_PROFILE`` into the process environment; deciding and applying are now
+    separate, so a caller can ask what the source would be without reconfiguring the process."""
     if not feed_source.enabled():
         return None
     feed_csv = feed_source.prepare(st)
@@ -242,8 +254,6 @@ def _configure_recs_source(st) -> "str | None":
                     "or filtered out of candidacy (RWE_FEED_MAX_AGE_DAYS)",
              articles=st.count_feed_articles())
         return None
-    os.environ["RWE_QBIAS"] = feed_csv
-    os.environ["RWE_PROFILE"] = "qbias"   # authoritative: the feed catalog is now the corpus
     _log(logging.INFO, "recs_source", source="feed", csv=feed_csv, profile="qbias",
          articles=st.count_feed_articles())
     return feed_csv
@@ -281,12 +291,12 @@ async def lifespan(app: FastAPI):
                                                     display_name="Demo Reader").id
         _log(logging.INFO, "demo_account", uid=state.demo_uid, identity=demo_account)
     # Live recommendation source (opt-in): build the recommender's catalog from the RSS FeedArticle
-    # store instead of the static qbias CSV / synthetic generator. Additive — it just points RWE_QBIAS
-    # at a FeedArticle-derived qbias-format CSV, so the ENGINE and the protected simulator are unchanged
-    # and the recommender operates over live articles exactly as over qbias. Falls back (keeps the
-    # existing corpus) when the catalog is too small.
+    # store instead of the static qbias CSV / synthetic generator. Additive — the FeedArticle-derived
+    # CSV is handed to the profile as the qbias corpus, so the ENGINE and the protected simulator are
+    # unchanged and the recommender operates over live articles exactly as over qbias. Falls back
+    # (keeps the existing corpus) when the catalog is too small.
     feed_csv = _configure_recs_source(st)
-    be = engine.Backend(_profile_from_env(), provider=provider)
+    be = engine.Backend(_profile_for(feed_csv), provider=provider)
     if feed_csv:
         # Map the corpus item ids (Q{i}) back to their FeedArticle publisher URLs, so recommendations
         # carry the real openable URL (the Honest URL Pass-through). Additive; no algorithm change.

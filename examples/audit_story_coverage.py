@@ -114,14 +114,17 @@ def serve_and_diagnose(st, user_id: int) -> dict:
         v = os.environ.get(name)
         return int(v) if v and v.isdigit() else None
 
-    ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
+    feed_csv = feed_source.prepare(st) if feed_source.enabled() else None
+    # The feed catalog outranks a pre-set RWE_PROFILE by being passed as an ARGUMENT, which
+    # `resolve_profile` already ranks above the environment — not by being written back into
+    # os.environ, which reconfigured every later reader in the process as a side effect of running
+    # an audit. Same precedence, same build, no global state. (api_fastapi._profile_for is the
+    # serving path's version of this.)
+    ns = SimpleNamespace(profile="qbias" if feed_csv else None, npz=None, qbias=feed_csv,
+                         register_csv=None, emotion_csv=None,
                          behaviors=None, lean_tau=None, domain=None,
                          n_users=_int_env("RWE_N_USERS"), max_items=_int_env("RWE_MAX_ITEMS"),
                          seed=_int_env("RWE_SEED") or 0)
-    feed_csv = feed_source.prepare(st) if feed_source.enabled() else None
-    if feed_csv:
-        os.environ["RWE_QBIAS"] = feed_csv
-        os.environ["RWE_PROFILE"] = "qbias"
     be = engine.Backend(engine.resolve_profile(ns))
     if feed_csv:
         be.attach_url_resolver(feed_source.load_url_map(feed_csv))

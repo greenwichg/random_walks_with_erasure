@@ -1145,9 +1145,13 @@ def _seed_feed(store_, n=60):
             scored={"article_id": u, "outlet": "Fox News", "category": "Politics", "lean": 1.4})
 
 
-def test_configure_recs_source_forces_qbias_profile_over_preset(tmp_path, monkeypatch):
+def test_the_feed_corpus_outranks_a_preset_profile(tmp_path, monkeypatch):
     """Enabling the feed source must switch the corpus to the feed CSV even when RWE_PROFILE is
-    already set to a non-qbias value — otherwise the feed (and its URLs) is silently ignored."""
+    already set to a non-qbias value — otherwise the feed (and its URLs) is silently ignored.
+
+    Asserted on the resolved profile rather than on the environment, because the environment is no
+    longer how it wins: `_configure_recs_source` reports the CSV and `_profile_for` ranks it above
+    the preset, on the argument precedence `resolve_profile` already has."""
     import store, feed_source
     monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
     monkeypatch.setenv("RWE_PROFILE", "synthetic")            # the docker/compose default, pre-set
@@ -1160,16 +1164,43 @@ def test_configure_recs_source_forces_qbias_profile_over_preset(tmp_path, monkey
     feed_csv = api_fastapi._configure_recs_source(st)
 
     assert feed_csv and os.path.exists(feed_csv)              # catalog exported
-    assert os.environ["RWE_PROFILE"] == "qbias"              # ...and the profile is now authoritative
-    assert os.environ["RWE_QBIAS"] == feed_csv               # ...pointed at the feed catalog
+    profile = api_fastapi._profile_for(feed_csv)
+    assert profile.name == "qbias"                            # ...beating the preset "synthetic"
+    assert profile.qbias_csv == feed_csv                      # ...pointed at the feed catalog
     # the exported catalog carries the URLs the pass-through resolves against
     assert any(v.startswith("https://real-news.example/")
                for v in feed_source.load_url_map(feed_csv).values())
 
 
+def test_choosing_the_feed_corpus_reconfigures_nothing(tmp_path, monkeypatch):
+    """Selecting the live source is a decision, not a side effect.
+
+    The CSV path used to be applied by writing RWE_QBIAS and RWE_PROFILE into the process
+    environment. That reached the startup build, and also every other reader in the process — a
+    detail with no consequence where the app boots once, and a steady source of contamination in a
+    suite that boots it dozens of times (see tests/conftest.py). Both functions must now leave the
+    environment exactly as they found it."""
+    import store
+    monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
+    monkeypatch.setenv("RWE_PROFILE", "synthetic")
+    monkeypatch.setenv("RWE_FEED_MIN_ARTICLES", "50")
+    monkeypatch.setenv("RWE_FEED_CORPUS_CSV", str(tmp_path / "feed.csv"))
+    monkeypatch.delenv("RWE_QBIAS", raising=False)
+
+    st = store.Store("sqlite://")
+    _seed_feed(st, 60)
+    before = {k: v for k, v in os.environ.items() if k.startswith("RWE_")}
+
+    feed_csv = api_fastapi._configure_recs_source(st)
+    assert api_fastapi._profile_for(feed_csv).name == "qbias"   # the decision did land...
+
+    after = {k: v for k, v in os.environ.items() if k.startswith("RWE_")}
+    assert after == before, "selecting the live corpus must not rewrite the environment"
+
+
 def test_configure_recs_source_disabled_or_too_small_keeps_corpus(tmp_path, monkeypatch):
-    """Disabled, or a catalog below the threshold, returns None and touches no corpus env — so the
-    existing (static) corpus stays in force and enabling the flag before any ingest is safe."""
+    """Disabled, or a catalog below the threshold, returns None and the pre-set corpus stays in
+    force — so enabling the flag before any ingest is safe."""
     import store
     monkeypatch.setenv("RWE_PROFILE", "mind")                # a pre-set profile that must survive
     monkeypatch.delenv("RWE_QBIAS", raising=False)
@@ -1177,7 +1208,7 @@ def test_configure_recs_source_disabled_or_too_small_keeps_corpus(tmp_path, monk
     # (a) disabled outright
     monkeypatch.delenv("RWE_RECS_SOURCE", raising=False)
     assert api_fastapi._configure_recs_source(store.Store("sqlite://")) is None
-    assert os.environ["RWE_PROFILE"] == "mind" and "RWE_QBIAS" not in os.environ
+    assert api_fastapi._profile_for(None).name == "mind"
 
     # (b) enabled but the catalog is too small -> graceful fallback, corpus untouched
     monkeypatch.setenv("RWE_RECS_SOURCE", "feed")
@@ -1186,7 +1217,8 @@ def test_configure_recs_source_disabled_or_too_small_keeps_corpus(tmp_path, monk
     st = store.Store("sqlite://")
     _seed_feed(st, 10)                                        # below threshold
     assert api_fastapi._configure_recs_source(st) is None
-    assert os.environ["RWE_PROFILE"] == "mind" and "RWE_QBIAS" not in os.environ
+    assert api_fastapi._profile_for(None).name == "mind"
+    assert "RWE_QBIAS" not in os.environ
 
 
 def test_feed_health_endpoint(client, monkeypatch):

@@ -135,9 +135,10 @@ def main(argv=None) -> int:
         v = os.environ.get(n)
         return int(v) if v and v.isdigit() else None
 
-    os.environ["RWE_QBIAS"] = feed_csv
-    os.environ["RWE_PROFILE"] = "qbias"
-    ns = SimpleNamespace(profile=None, npz=None, qbias=None, register_csv=None, emotion_csv=None,
+    # The feed catalog becomes the corpus by ARGUMENT (resolve_profile ranks CLI above env), not by
+    # writing RWE_QBIAS/RWE_PROFILE into the process an audit happens to be running in.
+    ns = SimpleNamespace(profile="qbias", npz=None, qbias=feed_csv,
+                         register_csv=None, emotion_csv=None,
                          behaviors=None, lean_tau=None, domain=None,
                          n_users=_int_env("RWE_N_USERS"), max_items=_int_env("RWE_MAX_ITEMS"),
                          seed=_int_env("RWE_SEED") or 0)
