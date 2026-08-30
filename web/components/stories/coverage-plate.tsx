@@ -5,6 +5,7 @@ import { EyeOff } from "lucide-react";
 import type { LeanBucket, Story } from "@ih/core/domain/types";
 import { PublisherLogo } from "@/components/shared/publisher-logo";
 import { hostIconCandidates } from "@ih/core/logic/publisher-logo";
+import { monogram } from "@ih/core/logic/placeholder-art";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -226,16 +227,4 @@ export function CoveragePlate({
       </div>
     </div>
   );
-}
-
-/** Up-to-two-letter monogram for a publisher with no loadable icon ("The Hill" -> "TH"). */
-function monogram(name: string): string {
-  const letters = name
-    .split(/\s+/)
-    .map((w) => w.charAt(0))
-    .filter((ch) => /\p{L}|\p{N}/u.test(ch))
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-  return letters || "?";
 }

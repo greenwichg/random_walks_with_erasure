@@ -50,14 +50,25 @@ test("the masonry machinery stays retired", () => {
   }
 });
 
-test("every card leads with an occupied image slot — art or the publisher placeholder", () => {
+test("every card leads with an occupied image slot — art or the publisher plate", () => {
   const slot = read("components/shared/article-image-slot.tsx");
   assert.ok(slot.includes("<ArticleImage"), "the slot renders article art when usable");
-  assert.ok(slot.includes("<PublisherLogo"), "and the publisher's dimmed mark otherwise");
+  assert.ok(slot.includes("<PublisherLogo"), "and the publisher's mark otherwise");
   assert.ok(slot.includes("article.imageSuspect"), "engine-flagged branding never fronts as art");
   assert.ok(
     slot.includes('aria-hidden="true"'),
     "the placeholder is decorative — the metadata row names the publisher",
+  );
+  // The plate, not the void (2026-08-30): identity-derived colour from the shared core rule, so
+  // the same outlet is tinted identically on every surface — and the dimmed-grey treatment that
+  // read as a broken image beside real photos stays dead.
+  assert.ok(
+    slot.includes("placeholderHues(article.publisher"),
+    "the plate's colour must derive from the publisher via @ih/core/logic/placeholder-art",
+  );
+  assert.ok(
+    !slot.includes("grayscale") && !slot.includes("opacity-35"),
+    "the dimmed-grey placeholder stays retired — the plate renders the mark in full colour",
   );
   const card = read("components/discover/discover-card.tsx");
   const h3 = card.lastIndexOf("<h3");
