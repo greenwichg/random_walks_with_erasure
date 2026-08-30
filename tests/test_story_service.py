@@ -209,6 +209,61 @@ def test_fallback_summary_handles_empty_topic():
     assert next(iter(ss.cluster_from_store(st2)))["summary"] == "2 publishers covering tech."
 
 
+def test_an_uncategorized_member_does_not_outvote_a_categorized_one():
+    """The production defect: `_mode_topic` counted "" alongside real topics, so a story with more
+    uncategorized members than any single category resolved to "" and the card showed no chip.
+
+    Measured on the default 30-story front page (2026-08-30): 7 stories had no category and ALL 7
+    carried at least one categorized member — none was blank for want of evidence. 66.8% of
+    catalogue articles carry a category, so the uncategorized third was winning pluralities."""
+    st = store_mod.Store("sqlite://")
+    # Three uncategorized members against two that agree on World — the empties are the PLURALITY,
+    # exactly the shape that used to lose. Plus one Science member, which is alphabetically BEFORE
+    # World: without it, "ignore the counts and sort alphabetically" returns World too and the test
+    # cannot see that mutation.
+    for i, cat in enumerate(("", "", "", "World", "World", "Science")):
+        _add(st, f"https://p{i}.example/1", f"Outlet{i}", 0.0,
+             "Avalanche triggers deadly flash floods in Nepal valley",
+             category=cat, desc="", days=1)
+    s = next(iter(ss.cluster_from_store(st)))
+    assert s["totalCoverage"] == 6, "the fixture no longer forms one cluster"
+    assert s["topic"] == "World", \
+        "an uncategorized majority outvoted the categorized members — absence is not a category"
+
+
+def test_a_story_with_no_categorized_member_stays_blank():
+    """The other half of the contract, and the reason this is not a fallback. `classify_topic`
+    returns "" on purpose — this system does not invent metadata — so a cluster nobody classified
+    still renders no chip. `discover.feed_article_to_article` and the card's `{story.topic && ...}`
+    already agree; this keeps the aggregation agreeing too."""
+    st = store_mod.Store("sqlite://")
+    for i in range(3):
+        _add(st, f"https://q{i}.example/1", f"Outlet{i}", 0.0,
+             "Samsung introduces new foldable phone line", category="", desc="", days=1)
+    s = next(iter(ss.cluster_from_store(st)))
+    assert s["topic"] == "", "a topic was invented for a cluster with no categorized member"
+    assert s["topic"] != "General", "the unreachable General default is back"
+
+
+def test_the_topic_tiebreak_stays_deterministic():
+    """Two topics with equal support resolve alphabetically, so two builds over one catalogue agree
+    — the story id is stable and the chip must not flicker between them.
+
+    Asserted on `_mode_topic` DIRECTLY, and under both member orderings, because that is the only
+    way to see the property. Driven through a cluster build instead, `sorted` is stable, so a
+    version with no tiebreak key at all returns whatever member order supplies — which in a build
+    is deterministic and can coincidentally match the alphabetical answer. Two orderings, one
+    result, is the claim.
+
+    Tech/World deliberately: the alphabetically-first of the pair is also the SHORTER one, so a
+    tiebreak keyed on length resolves differently. A Science/World pair ranks identically under
+    both rules and could not see its own mutation."""
+    a = [{"topic": "World"}, {"topic": "Tech"}, {"topic": ""}]
+    b = [{"topic": "Tech"}, {"topic": "World"}, {"topic": ""}]
+    assert ss._mode_topic(a) == ss._mode_topic(b) == "Tech", \
+        "the tiebreak depends on member order — two builds could show different chips"
+
+
 def test_filters_topic_publisher_lean():
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     assert ss.list_stories(st, topic="Climate")["total"] == 1        # only the wildfire event

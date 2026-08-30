@@ -265,10 +265,32 @@ def _coverage(members: list) -> list:
 
 
 def _mode_topic(members: list) -> str:
+    """The cluster's topic: the most common topic its members CARRY. ``""`` when none carries one.
+
+    **Absence is not a competing category, and counting it as one was the bug.** `classify_topic`
+    returns ``""`` for an article whose source published no category tag, whose URL has no topical
+    section, and whose headline the subject lexicon does not hit — deliberately, because this
+    system does not invent metadata. Those empties used to be tallied alongside real topics, so a
+    story with 30 uncategorized members and 25 "World" ones resolved to ``""``: *we don't know*
+    outvoted the evidence, and the card rendered with no chip.
+
+    Measured on production (2026-08-30, the default 30-story front page): 7 stories showed no
+    category, **all 7 had at least one categorized member**, and none was blank for want of
+    evidence. 66.8% of catalogue articles carry a category, so the uncategorized third was winning
+    pluralities outright. The losers skewed non-political — World, Entertainment, Culture, Science
+    — which is what the political-leaning lexicon predicts: those clusters carry the largest share
+    of members it cannot classify.
+
+    The empty return is the contract, not a fallback. A cluster whose members are ALL uncategorized
+    still yields ``""`` and still renders no chip, which is the honest answer and the one
+    `classify_topic`, `discover.feed_article_to_article` and the card's ``{story.topic && …}`` all
+    already agree on. (It replaces a ``"General"`` default that was unreachable — stories need two
+    members — and that contradicted `classify_topic`'s explicit "never General".)"""
     counts: dict = {}
     for m in members:
-        counts[m["topic"]] = counts.get(m["topic"], 0) + 1
-    return sorted(counts, key=lambda t: (-counts[t], t))[0] if counts else "General"
+        if m["topic"]:
+            counts[m["topic"]] = counts.get(m["topic"], 0) + 1
+    return sorted(counts, key=lambda t: (-counts[t], t))[0] if counts else ""
 
 
 # --------------------------------------------------------------------------- #
