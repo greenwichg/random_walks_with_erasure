@@ -381,16 +381,28 @@ services:
       # 5-14+ days old: the recommender has no time feature, so this is the ONLY place article
       # age can reach a served feed.
       #
-      # 7 days chosen as the shipped default. On a 30-day fixture it moves the median served age
-      # 15.1d -> 7.5d and the under-a-week share 22% -> 47%, while publisher count and the
-      # left/centre/right split hold (recency weights ARTICLES, not publishers, so a prolific
-      # outlet's old items are discounted exactly as much as a rare outlet's). It is the middle
-      # of the measured range, not the aggressive end — 3d reaches 4.3d median but concentrates
-      # the pool much harder for a product whose point is a WIDE reading diet.
+      # 14 days, measured on the LIVE catalogue (64,124 rows, 0-28.4 days) 2026-08-30:
       #
-      # Verify on the live catalogue with deploy/ops/rec-age-probe.py after deploying, and raise
-      # this number if distinct publishers or the lean split move materially there.
-      RWE_REC_RECENCY_HALFLIFE_DAYS: ${RWE_REC_RECENCY_HALFLIFE_DAYS:-7}
+      #   half-life   median      p90    <7d   publishers
+      #         OFF     6.2d    24.1d    52%          395
+      #         14d     3.7d    18.1d    68%          364   (-7.8%)
+      #          7d     2.8d    11.9d    78%          338   (-14.4%)
+      #          3d     1.8d     6.0d    93%          290   (-26.6%)
+      #
+      # The knob really does cost source diversity, and a synthetic fixture said otherwise because
+      # it modelled low-volume outlets as rare-but-ONGOING. The live catalogue also carries
+      # rare-and-DORMANT ones — a few articles weeks ago, then silence — and recency weighting is
+      # exactly what removes those. Measure here, never on a fixture.
+      #
+      # 14d is chosen for the knee: it takes most of the freshness (median 6.2d -> 3.7d, two thirds
+      # of the feed under a week) for HALF the publisher cost of 7d. Tightening past it costs about
+      # twice as much breadth per day of freshness bought: 7d buys another 0.9d of median for
+      # another 26 publishers, 3d another 1.0d for 48 more.
+      # The lean split holds throughout (44/25/30 -> 46/26/27), so diversity here means SOURCES,
+      # not politics. Re-measure with examples/rec_age_probe.py when the catalogue's shape changes
+      # — the per-outlet cap already does much of the recency work, so these numbers move with
+      # RWE_FEED_MAX_PER_OUTLET and with retention.
+      RWE_REC_RECENCY_HALFLIFE_DAYS: ${RWE_REC_RECENCY_HALFLIFE_DAYS:-14}
       RWE_REC_BLINDSPOT_SLOTS: ${RWE_REC_BLINDSPOT_SLOTS:-0}
       RWE_REC_EXPERIMENT: ${RWE_REC_EXPERIMENT:-}
       RWE_REC_SHADOW: ${RWE_REC_SHADOW:-}

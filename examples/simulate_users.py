@@ -173,7 +173,7 @@ def recency_halflife_days() -> float:
     currency against SOURCE DIVERSITY — a low-volume outlet publishes rarely, so a short half-life
     makes it less likely to be in the pool at all, and this product exists to widen a reading diet,
     not to narrow it onto whoever posts most often. Pick the value from the measured age and
-    publisher/lean distributions (deploy/ops/rec-age-probe.py), never by taste.
+    publisher/lean distributions (examples/rec_age_probe.py), never by taste.
     """
     raw = _os.environ.get("RWE_REC_RECENCY_HALFLIFE_DAYS", "").strip()
     try:

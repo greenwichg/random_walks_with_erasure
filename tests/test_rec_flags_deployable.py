@@ -85,7 +85,7 @@ def test_every_tier2_flag_defaults_dark_in_compose():
             f"{flag} compose default is {defaults.get(flag)!r} — must be empty (nothing declared)")
 
 
-def test_the_recency_half_life_ships_at_seven_days():
+def test_the_recency_half_life_ships_at_fourteen_days():
     """The one rec flag that is deliberately ON by default, so the number is pinned.
 
     Every other flag here is dark-by-default because it changes what the reader is shown in a way
@@ -93,16 +93,51 @@ def test_the_recency_half_life_ships_at_seven_days():
     draw over the whole retention window that served 5-14+ day-old articles in the first place.
     Leaving it off ships the reported bug; the value is therefore part of the contract.
 
-    Seven days is the middle of the measured range (median served age 15.1d -> 7.5d on a 30-day
-    fixture), chosen over 3d because this product exists to widen a reading diet and a harder
-    concentration buys currency with pool breadth. Change it from the live measurement
-    (deploy/ops/rec-age-probe.py), not from taste — and if you do, change it here too, which is
-    the point of pinning it.
+    Fourteen days is where the live catalogue's trade turns (64,124 rows, 0-28.4 days): it takes
+    the median served age from 6.2d to 3.7d and puts two thirds of the feed under a week, for a
+    7.8% drop in distinct publishers. Every step tighter costs roughly twice as much breadth per
+    day of freshness bought — 7d gives up 14.4% of publishers, 3d gives up 26.6% — and this
+    product exists to WIDEN a reading diet. Change it from the live measurement
+    (examples/rec_age_probe.py), not from taste; a fixture will tell you diversity holds, because
+    a fixture has no rare-and-dormant outlets for the weighting to remove. And if you do change
+    it, change it here too, which is the point of pinning it.
     """
     compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
     m = re.search(r"^\s+RWE_REC_RECENCY_HALFLIFE_DAYS:\s*\$\{RWE_REC_RECENCY_HALFLIFE_DAYS:-([^}]*)\}",
                   compose, re.M)
     assert m, "the recency half-life must stay an overridable ${VAR:-default}, not a literal"
-    assert m.group(1) == "7", (
-        f"shipped recency half-life is {m.group(1)!r}, expected '7'. 0 would restore the uniform "
+    assert m.group(1) == "14", (
+        f"shipped recency half-life is {m.group(1)!r}, expected '14'. 0 would restore the uniform "
         f"draw over the whole retention window — the behaviour this flag exists to fix.")
+
+
+def test_every_container_path_this_repo_tells_you_to_run_exists_in_the_image():
+    """A documented command that cannot execute is worse than no command.
+
+    `rec-age-probe.py` shipped under deploy/ops/ with instructions to run it as
+    `/app/deploy/ops/rec-age-probe.py`. deploy/Dockerfile.api copies rwe, examples and scripts —
+    never deploy/ — so that path does not exist in the api container and never could. The probe
+    was correct; the only way to reach it was not.
+
+    So the rule is checked instead of remembered: every `python <path>` this repo tells an operator
+    to run inside the container must name a path the image actually contains.
+    """
+    dockerfile = (ROOT / "deploy" / "Dockerfile.api").read_text(encoding="utf-8")
+    copied = set(re.findall(r"^COPY\s+(?:\S+\s+)*?(\S+)\s+\./?(\S*)$", dockerfile, re.M))
+    roots = {(dst.strip("./") or src.strip("./")) for src, dst in copied}
+    assert {"examples", "rwe", "scripts"} <= roots, f"unexpected image layout: {roots}"
+
+    sources = [ROOT / "deploy" / "docker-compose.yml", ROOT / "examples" / "simulate_users.py",
+               ROOT / "examples" / "rec_age_probe.py", pathlib.Path(__file__)]
+    bad = []
+    for path in sources:
+        for m in re.finditer(r"(?:python3?\s+)(/app/)?((?:examples|deploy|scripts|rwe)/[\w./-]+\.py)",
+                             path.read_text(encoding="utf-8")):
+            target = m.group(2)
+            if target.split("/", 1)[0] not in roots:
+                bad.append(f"{path.name}: {m.group(0).strip()}")
+            elif not (ROOT / target).exists():
+                bad.append(f"{path.name}: {target} does not exist in the repo")
+    assert not bad, (
+        "these documented commands name a path the api image does not contain, so an operator "
+        f"following them gets 'No such file or directory': {bad}")

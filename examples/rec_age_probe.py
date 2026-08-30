@@ -12,8 +12,8 @@ Read-only: it exports to a temp file, never touches the serving corpus, and sets
 inside this process. Run it BEFORE setting the variable, and again after, so the change is a
 measurement rather than a preference.
 
-    dc run --rm -T api python /app/deploy/ops/rec-age-probe.py
-    dc run --rm -T api python /app/deploy/ops/rec-age-probe.py 0 14 7 3
+    dc run --rm -T api python examples/rec_age_probe.py
+    dc run --rm -T api python examples/rec_age_probe.py 0 14 7 3
 """
 import collections
 import csv
@@ -23,8 +23,11 @@ import pathlib
 import sys
 import tempfile
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(ROOT / "examples"))
+# Lives in examples/ because that is what the image copies (deploy/Dockerfile.api takes rwe,
+# examples and scripts — never deploy/). A probe under deploy/ops/ cannot be run inside the api
+# container at all, which is how the first version of this shipped as an instruction that could
+# not execute.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import numpy as np                       # noqa: E402
 import feed_source                       # noqa: E402

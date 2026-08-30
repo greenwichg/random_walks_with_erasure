@@ -182,9 +182,18 @@ def test_a_half_life_makes_the_pool_measurably_newer(tmp_path, monkeypatch):
 
 
 def test_the_weighting_does_not_starve_publishers_or_a_side(tmp_path, monkeypatch):
-    """The guardrail on the knob. Recency weights ARTICLES, not publishers — a prolific outlet's
-    old articles are discounted exactly as much as a rare outlet's — so representation must hold
-    even at an aggressive half-life. Measured, because the intuition runs the other way."""
+    """The guardrail on the knob, on a fixture where every outlet is still PUBLISHING.
+
+    Scope matters here, because the general version of this claim is false. Recency weights
+    articles rather than publishers, so an outlet that still posts keeps its share whatever the
+    half-life — which is what this asserts. It does NOT follow that publisher counts hold on a real
+    catalogue: measured on production (2026-08-30) a 7-day half-life cost 14.4% of distinct
+    publishers, because a live catalogue also contains DORMANT outlets whose last articles are
+    weeks old, and recency weighting is precisely what removes those. This fixture has none, and an
+    earlier version of this docstring generalised from that absence.
+
+    So: a passing test here means the mechanism is not biased against small ONGOING publishers. The
+    real cost is a deployment question, answered by examples/rec_age_probe.py."""
     import csv as _c
     path, _ = _age_corpus(tmp_path)
     rows = list(_c.DictReader(open(path, encoding="utf-8")))
