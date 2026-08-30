@@ -29,6 +29,9 @@ export function StoryFeatureCard({
   showTopic?: boolean;
 }) {
   const { t, formatCompact, timeAgo } = useTranslation();
+  // `showTopic` is a LAYOUT preference; `story.topic` is whether there is a topic to show. Both
+  // have to hold, and folding them here keeps the dateline row from rendering empty.
+  const topic = showTopic ? story.topic : "";
 
   return (
     <article className="group h-full">
@@ -43,9 +46,9 @@ export function StoryFeatureCard({
         />
 
         <div className="flex flex-1 flex-col p-4">
-          {(showTopic || story.freshness) && (
+          {(topic || story.freshness) && (
             <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-              {showTopic && <span className="font-medium text-foreground/70">{story.topic}</span>}
+              {topic && <span className="font-medium text-foreground/70">{topic}</span>}
               {story.freshness && (
                 <FreshnessBadge band={story.freshness.band} score={story.freshness.score} />
               )}

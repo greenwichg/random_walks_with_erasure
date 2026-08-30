@@ -38,9 +38,13 @@ export function HeroStory({ story }: { story: Story }) {
             <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
               {t("home.hero.eyebrow")}
             </span>
-            <span className="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
-              {story.topic}
-            </span>
+            {/* An uncategorized story has no topic, and the pill is a filled chip: without this
+                guard a blank topic renders as an empty coloured lozenge. */}
+            {story.topic && (
+              <span className="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
+                {story.topic}
+              </span>
+            )}
             {story.freshness && (
               <FreshnessBadge band={story.freshness.band} score={story.freshness.score} />
             )}

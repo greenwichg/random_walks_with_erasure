@@ -217,9 +217,11 @@ export default function StoryDetailPage() {
             )}
             <div className="p-5">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {story.topic}
-                </span>
+                {story.topic && (
+                  <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {story.topic}
+                  </span>
+                )}
                 {story.freshness && (
                   <FreshnessBadge band={story.freshness.band} score={story.freshness.score} />
                 )}

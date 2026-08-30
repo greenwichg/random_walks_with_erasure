@@ -77,6 +77,9 @@ export function StoryListItem({
   const total = (d?.left ?? 0) + (d?.center ?? 0) + (d?.right ?? 0);
   const publisherCount = story.publisherCount ?? story.publishers?.length ?? null;
   const urgent = story.freshness && URGENT_BANDS.has(story.freshness.band);
+  // `showTopic` is a LAYOUT preference; `story.topic` is whether there is a topic to show. Both
+  // have to hold, and folding them here keeps the dateline row from rendering empty.
+  const topic = showTopic ? story.topic : "";
 
   return (
     <li className={cn("group", className)}>
@@ -100,11 +103,11 @@ export function StoryListItem({
 
         <div className="min-w-0 flex-1">
           {/* 1 — Dateline (hidden entirely when it has nothing to say) */}
-          {(showTopic || urgent || story.updatedAt) && (
+          {(topic || urgent || story.updatedAt) && (
             <div className="mb-1 flex flex-wrap items-center gap-2">
-              {showTopic && (
+              {topic && (
                 <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/70">
-                  {story.topic}
+                  {topic}
                 </span>
               )}
               {urgent ? (
