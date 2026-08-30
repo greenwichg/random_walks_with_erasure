@@ -2140,3 +2140,47 @@ def test_globo_group_rating_was_not_taken_for_g1(reg):
     # is not a masthead this file lists — taking either would be the group-rating inference.
     for absent in ("globo.com", "Globo"):
         assert reg.resolve(absent) is None, absent
+
+
+# --------------------------------------------------------------------------- #
+# Reader-facing source type — the Stories "Type" filter's whole basis.
+# --------------------------------------------------------------------------- #
+def test_source_type_projects_the_curated_kind(reg):
+    """News / Research / Community are the registry's own vocabulary, re-labelled — not a new
+    classification and not anything inferred from an article."""
+    assert orx.source_type("Nature") == "research"        # kind = research
+    assert orx.source_type("arxiv.org") == "research"     # …by domain too
+    assert orx.source_type("Reddit") == "community"       # kind = forum
+    assert orx.source_type("BBC News") == "news"          # a curated row with no kind
+    assert reg.resolve("BBC News").kind is None, "the news case is the BLANK kind, not a value"
+
+
+def test_an_unknown_publisher_has_no_type_rather_than_defaulting_to_news():
+    """The load-bearing distinction, and the easy thing to get wrong.
+
+    Most feed publishers have no registry row at all — the catalogue runs to thousands of hosts
+    against 573 curated ones. Both an unknown outlet and a curated news outlet have `kind = None`,
+    so a mapping that reads the kind alone calls every stranger News, and the filter would assert a
+    classification nobody made. Absence of a row is not evidence, exactly as it is not for
+    `is_wire`, so it must resolve first and only then read the kind.
+    """
+    assert orx.resolve("Definitely Not A Curated Outlet") is None
+    assert orx.source_type("Definitely Not A Curated Outlet") is None
+    assert orx.source_type(None) is None and orx.source_type("") is None
+
+
+def test_kinds_outside_the_three_map_to_nothing(reg):
+    """`org`, `wire` and `aggregator` are none of the three, and are not forced into one.
+
+    An NGO's own announcement is not reporting, research, or a community post; saying otherwise
+    would be inventing a verdict a curator never gave. (`wire`/`aggregator` are EXCLUDED_KINDS and
+    never reach a story anyway — asserted here so the mapping stays explicit about them.)"""
+    assert reg.resolve("Unitaid").kind == "org"
+    assert orx.source_type("Unitaid") is None
+    for name in ("PR Newswire", "Google News"):
+        o = reg.resolve(name)
+        if o is not None and o.kind in ("wire", "aggregator"):
+            assert orx.source_type(name) is None, name
+    assert set(orx.SOURCE_TYPES) == {"news", "research", "community"}
+    # Every value the mapping can emit is one the UI offers — no orphan type can reach a chip.
+    assert set(orx._TYPE_OF_KIND.values()) <= set(orx.SOURCE_TYPES)

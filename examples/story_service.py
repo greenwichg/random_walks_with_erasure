@@ -3398,14 +3398,17 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
 
 
 def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,
-                 date_from=None, date_to=None,
+                 story_type=None, date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
                  min_publishers: int = 2, max_scan: int = None, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets,
     blindspotFacets}`` (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are
-    pre-filtered in SQL; publisher/lean/country/blindspot are coverage post-filters on the built
-    stories. ``country`` matches EVENT location only — the story's member-consensus event
+    pre-filtered in SQL; publisher/lean/country/blindspot/story_type are coverage post-filters on
+    the built stories. ``story_type`` is the curated SOURCE type — news / research / community,
+    projected from the outlet registry's ``kind`` column by
+    :func:`outlet_registry.source_type` — and matches a story with at least one member publisher
+    of that type. A publisher the registry does not carry is unclassified and matches no type. ``country`` matches EVENT location only — the story's member-consensus event
     countries (``_event_consensus``); publisher homes never substitute, so an unlocated story
     appears under "All" and under no country. ``blindspot`` is the coverage-gap lens:
     ``"any"`` matches stories with a DETECTED gap (``blindspotSide`` set), a side matches that
@@ -3447,6 +3450,15 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         stories = [s for s in stories if want in {p.lower() for p in s["publishers"]}]
     if lean in ("left", "center", "right"):
         stories = [s for s in stories if s["distribution"][lean] > 0.0]
+    if story_type in outlet_registry.SOURCE_TYPES:
+        # Coverage post-filter, the same shape as `publisher` and `lean` directly above: a story
+        # matches when at least ONE of its member publishers is curated as that type of source.
+        # "Has coverage from" is the honest reading of a cluster — a story is many publishers, so
+        # it has no single type of its own, and the existing "Covered by" lens already means
+        # exactly this for lean. An uncurated publisher matches nothing (see
+        # `outlet_registry.source_type`), so this can only narrow to sources somebody classified.
+        stories = [s for s in stories
+                   if any(outlet_registry.source_type(p) == story_type for p in s["publishers"])]
     # Story-level country + blindspot facets: counted after topic/publisher/lean narrowed the
     # set, before their own filters (standard faceting — a picker must not collapse to the
     # current selection) and before pagination.

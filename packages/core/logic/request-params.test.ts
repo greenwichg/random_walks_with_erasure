@@ -53,6 +53,7 @@ test("every StoryQuery field is part of the request identity", () => {
     lean: "left",
     country: "US",
     blindspot: "any",
+    type: "research",
     dateFrom: "2026-01-01",
     dateTo: "2026-02-01",
     sort: "top",
@@ -69,7 +70,8 @@ test("every StoryQuery field is forwarded by the /api/stories proxy whitelist", 
   const { STORY_WIRE_KEYS } = await import("./story-wire-keys.ts");
   const full: Required<StoryQuery> = {
     topic: "Politics", publisher: "Reuters", lean: "left", country: "US", blindspot: "any",
-    dateFrom: "2026-01-01", dateTo: "2026-02-01", sort: "top", limit: 24, offset: 24,
+    type: "research", dateFrom: "2026-01-01", dateTo: "2026-02-01", sort: "top", limit: 24,
+    offset: 24,
   };
   for (const key of Object.keys(full)) {
     assert.ok((STORY_WIRE_KEYS as readonly string[]).includes(key),

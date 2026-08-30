@@ -2759,6 +2759,13 @@ def stories(
     blindspot: Optional[str] = Query(None, description="any | left | center | right — stories with "
                                                        "a DETECTED coverage gap (the thin side); "
                                                        "balanced-or-unknown stories never match"),
+    # Named `type` because FastAPI takes the query-string name from the parameter name, and the
+    # filter is `?type=`. It shadows the builtin for the length of this function, which never calls
+    # it; renaming it would quietly rename the public parameter, so use `alias=` if it ever must.
+    type: Optional[str] = Query(None, description="news | research | community — stories with "
+                                                  "coverage from a source CURATED as that type "
+                                                  "(outlet registry `kind`); a publisher the "
+                                                  "registry does not carry matches no type"),
     dateFrom: Optional[str] = Query(None, description="ISO lower bound on publication time"),
     dateTo: Optional[str] = Query(None, description="ISO upper bound on publication time"),
     sort: str = Query("top", description="top | latest | oldest | publishers"),
@@ -2772,7 +2779,7 @@ def stories(
     Read flow) and the nullable `image` contract for future enrichment. Never touches the recommender."""
     debug = debug or os.environ.get("RWE_STORIES_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
     result = story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
-                                        country=country, blindspot=blindspot,
+                                        country=country, blindspot=blindspot, story_type=type,
                                         date_from=dateFrom, date_to=dateTo, sort=sort,
                                         limit=limit, offset=offset, debug=debug)
     # Additive Story Intelligence summary (freshness + lifecycle) per story — computed HERE (the API

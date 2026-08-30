@@ -271,6 +271,62 @@ def test_filters_topic_publisher_lean():
     assert ss.list_stories(st, lean="right")["total"] == 1           # only the Senate event has right coverage
 
 
+def _news_research_community(st):
+    """Three events, each covered by a different curated source type.
+
+    Real registry names on purpose — the filter's entire basis is the curated `kind` column, so a
+    fixture of invented outlets would resolve to nothing and the test would pass against a filter
+    that returned everything. Each event pairs its typed source with a plain news outlet, because a
+    story needs two publishers to exist at all; that also makes the "has coverage from" reading
+    testable, since the research and community events are equally News events.
+    """
+    _add(st, "https://nature.com/r1", "Nature", 0.0,
+         "Fusion reactor sustains plasma for a record duration", category="Science", days=1)
+    _add(st, "https://bbc.com/r2", "BBC News", 0.0,
+         "Fusion reactor sustains plasma for record duration", category="Science", days=1)
+
+    _add(st, "https://reddit.com/c1", "Reddit", 0.0,
+         "Coastal ferry terminal refurbishment sparks debate", category="Business", days=2)
+    _add(st, "https://npr.org/c2", "NPR", -1.0,
+         "Coastal ferry terminal refurbishment sparks local debate", category="Business", days=2)
+
+    _add(st, "https://foxnews.com/n1", "Fox News", 1.5,
+         "Senate confirms the new transport secretary", days=3)
+    _add(st, "https://cnn.com/n2", "CNN", -1.2,
+         "Senate confirms new transport secretary", days=3)
+
+
+def test_filter_type_selects_by_curated_source_type():
+    st = store_mod.Store("sqlite://"); _news_research_community(st)
+    assert ss.list_stories(st)["total"] == 3, "fixture: three events before any type filter"
+
+    def titles(story_type):
+        return {s["title"] for s in ss.list_stories(st, story_type=story_type)["stories"]}
+
+    research = titles("research")
+    community = titles("community")
+    assert len(research) == 1 and "Fusion" in next(iter(research))
+    assert len(community) == 1 and "ferry" in next(iter(community)).lower()
+    # News is the majority, and — the point of "has coverage from" — it includes the research and
+    # community events too, since each is also covered by a curated news outlet. A story is many
+    # publishers; it has no single type of its own.
+    assert len(titles("news")) == 3
+    assert research | community <= titles("news")
+
+
+def test_filter_type_never_invents_a_classification():
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    # Not one of these outlets is curated research or forum, so both lenses must come back empty
+    # rather than falling back to "everything" or bucketing strangers.
+    assert ss.list_stories(st)["total"] == 2
+    assert ss.list_stories(st, story_type="research")["total"] == 0
+    assert ss.list_stories(st, story_type="community")["total"] == 0
+    # An unrecognised value is not a filter — it must not silently narrow or empty the feed.
+    assert ss.list_stories(st, story_type="wire")["total"] == 2
+    assert ss.list_stories(st, story_type="nonsense")["total"] == 2
+    assert ss.list_stories(st, story_type=None)["total"] == 2       # "All" keeps the whole feed
+
+
 def test_filter_country_is_event_dimension_only():
     """?country= is EVENT location only (intended contract change): publisher homes are a
     separate preserved fact (``publisherCountries``), never a filter substitute. A story with no

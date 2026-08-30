@@ -23,8 +23,23 @@ const DB = path.join(WEB_DIR, ".e2e-tmp", "engine.db");
 let seeded = false;
 
 /**
- * Two near-identical headlines from a left and a right outlet — the shape that reliably clusters.
- * Gives the page a card to open and the facets some values.
+ * TWO events, seeded together before any page load.
+ *
+ * Together, and up front, because the engine caches its story build: rows inserted after a later
+ * test has already requested /api/stories do not appear in the cached view, so a fixture seeded
+ * mid-run is simply absent from the page. (Measured — the Type test failed with zero cards for its
+ * own event while every other test passed.) One seeding call, ahead of everything, keeps every test
+ * looking at the same catalogue.
+ *
+ *   harbour   NPR + New York Post — both plain news outlets, and a left/right pair for the
+ *             Covered-by assertions.
+ *   exoplanet Nature + BBC News — Nature is `kind = research` in the outlet registry, which is the
+ *             ONLY thing the Type filter reads. Real registry names are the point: an invented
+ *             outlet resolves to nothing, and every arm of the Type assertions would then pass
+ *             against a filter that never ran. Pairing it with a news outlet also makes the event a
+ *             News story too, which is the correct reading of a cluster covered by both.
+ *
+ * Two near-identical headlines per event — the shape that reliably clusters.
  *
  * Published RELATIVE TO NOW, deliberately. `story_service` only clusters a 6-day window
  * (`scan_days`), so a fixture written with a hardcoded date works until that date ages past the
@@ -45,19 +60,24 @@ import store as store_mod
 st = store_mod.Store("sqlite:///" + ${JSON.stringify(DB)})
 now = datetime.now(timezone.utc)
 desc = "The harbour authority released its dredging schedule on Tuesday morning. " * 3
+sci = "The array resolved the planet's atmosphere across four observing runs. " * 3
 members = [
     ("NPR", "Harbour authority releases its long delayed dredging schedule",
-     "https://npr-filters.example.com/e2e/harbour", -1.0, 3),
+     "https://npr-filters.example.com/e2e/harbour", -1.0, 3, "Politics", True, desc),
     ("New York Post", "Harbour authority releases long delayed dredging schedule",
-     "https://nypost-filters.example.com/e2e/harbour", 2.0, 2),
+     "https://nypost-filters.example.com/e2e/harbour", 2.0, 2, "Politics", True, desc),
+    ("Nature", "Telescope array resolves the atmosphere of a distant exoplanet",
+     "https://nature-filters.example.com/e2e/exoplanet", 0.0, 3, "Science", False, sci),
+    ("BBC News", "Telescope array resolves atmosphere of distant exoplanet",
+     "https://bbc-filters.example.com/e2e/exoplanet", 0.0, 2, "Science", False, sci),
 ]
-for pub, headline, url, lean, hours_ago in members:
+for pub, headline, url, lean, hours_ago, cat, political, body_desc in members:
     st.upsert_feed_article(
         canonical_url=ingest.canonical_url(url), url=url, publisher=pub, source_publisher=None,
-        title=headline, description=desc, body=None,
+        title=headline, description=body_desc, body=None,
         published_at=(now - timedelta(hours=hours_ago)).isoformat(), source_feed="e2e",
-        scored={"article_id": url, "outlet": pub, "category": "Politics",
-                "topic": "Politics", "lean": lean, "political": True})
+        scored={"article_id": url, "outlet": pub, "category": cat,
+                "topic": cat, "lean": lean, "political": political})
 `;
   execFileSync("python", ["-c", py], { cwd: REPO_ROOT, stdio: "pipe" });
 }
@@ -130,6 +150,33 @@ test.describe("Stories filter state survives a round trip", () => {
     await expect(authedPage).toHaveURL(/lean=left/);
     await pick(authedPage, "Covered by", "All");
     await expect(authedPage).not.toHaveURL(/lean=/);
+  });
+
+  test("the Type filter narrows the page to a curated source type", async ({ authedPage }) => {
+    // The Type lens reads the outlet registry's curated `kind`, so the fixture uses REAL registry
+    // names: Nature is `kind = research`, BBC News a plain news outlet. Invented outlets resolve to
+    // nothing, and every arm of this test would then look correct against a filter that did nothing.
+    seedStory();
+    await authedPage.goto("/stories", { waitUntil: "networkidle" });
+
+    const cards = authedPage.getByRole("heading", { level: 3 });
+    await expect(cards.filter({ hasText: /Telescope/ })).toHaveCount(1);
+    const before = await cards.count();
+    expect(before, "both seeded events are on the page to begin with").toBeGreaterThan(1);
+
+    await pick(authedPage, "Type", "Research");
+    await expect(authedPage, "the choice reaches the URL like every other filter").toHaveURL(
+      /type=research/,
+    );
+
+    // The narrowing itself — the research event stays, the news-only one goes.
+    await expect(cards.filter({ hasText: /Telescope/ })).toHaveCount(1);
+    await expect(cards.filter({ hasText: /[Hh]arbour/ })).toHaveCount(0);
+
+    // …and resetting cleans the parameter out, so Back never restores `type=all` as a literal.
+    await pick(authedPage, "Type", "All");
+    await expect(authedPage).not.toHaveURL(/type=/);
+    await expect(cards.filter({ hasText: /[Hh]arbour/ })).toHaveCount(1);
   });
 
   test("the existing ?country= deep link still preselects", async ({ authedPage }) => {

@@ -1340,6 +1340,46 @@ def test_search_endpoint(client):
         st.delete_feed_articles(urls)
 
 
+def test_stories_type_filter_reaches_the_service(client):
+    """`?type=` is wired end to end, not merely accepted.
+
+    A query parameter the endpoint declares and then never forwards is indistinguishable from a
+    working filter as long as nothing checks the result — the request 200s and the full feed comes
+    back. So this asserts the NARROWING, on real registry names (the filter reads the curated
+    `kind` column, so invented outlets would resolve to nothing and every arm would look correct).
+    """
+    st = api_fastapi.state.store
+    urls = []
+    try:
+        for cu, pub, title in [
+            ("https://ty-nature.example/1", "Nature", "Telescope array resolves a distant exoplanet"),
+            ("https://ty-bbc.example/1", "BBC News", "Telescope array resolves distant exoplanet"),
+            ("https://ty-fox.example/1", "Fox News", "Harbor authority approves the new ferry contract"),
+            ("https://ty-cnn.example/1", "CNN", "Harbor authority approves new ferry contract"),
+        ]:
+            urls.append(cu)
+            st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub,
+                                   title=title, description="d", body=None,
+                                   published_at="2026-07-06T12:00:00+00:00", source_feed="f",
+                                   scored={"article_id": cu, "outlet": pub, "lean": 0.0,
+                                           "category": "Science"})
+
+        def titles(params):
+            return {s["title"] for s in client.get("/api/stories", params=params).json()["stories"]}
+
+        unfiltered = titles({})
+        research = titles({"type": "research"})
+        assert research, "?type=research returned nothing — the fixture's Nature story is missing"
+        assert research < unfiltered, "?type= did not narrow the feed; is it forwarded to the service?"
+        assert all("Telescope" in t for t in research)
+        # No curated forum outlet covers either event, so this lens is legitimately empty — and an
+        # empty result must come from the filter, not from the request failing.
+        assert client.get("/api/stories", params={"type": "community"}).status_code == 200
+        assert titles({"type": "community"}) == set()
+    finally:
+        st.delete_feed_articles(urls)
+
+
 def test_stories_endpoint_envelope_and_detail(client):
     """GET /api/stories is a paginated Story envelope from the Story Service; /api/story/{id} (and the
     /api/stories/{id} alias) return one Story whose coverage articles keep their canonical URLs."""

@@ -497,6 +497,41 @@ def is_aggregator(text: "str | None") -> bool:
     return default_registry().is_aggregator(text)
 
 
+#: Reader-facing SOURCE TYPE, projected from the curated :data:`KINDS` column. The Stories "Type"
+#: filter is this and nothing else — it is a curated identity fact about the publisher, one cell
+#: per row to reverse, never inferred from an article's text, topic or transport.
+#:
+#: The mapping is the registry's own vocabulary, not a new classification:
+#:
+#:   ``news``       a curated row with no ``kind`` — the column's documented meaning of a news outlet
+#:   ``research``   ``kind = research``  (a journal or preprint server)
+#:   ``community``  ``kind = forum``     (user-generated posts, not reporting)
+#:
+#: ``org``, ``wire`` and ``aggregator`` map to NOTHING. An NGO's own announcement is not reporting,
+#: research or a community post, and saying otherwise would be inventing a verdict; the other two
+#: are :data:`EXCLUDED_KINDS` and never reach a story at all.
+_TYPE_OF_KIND = {"": "news", "research": "research", "forum": "community"}
+
+#: The three the UI offers, in the order it offers them.
+SOURCE_TYPES = ("news", "research", "community")
+
+
+def source_type(text: "str | None") -> Optional[str]:
+    """The reader-facing source type of ``text``, or ``None`` when the registry does not say.
+
+    ``None`` covers two genuinely different situations, and neither may be reported as a type:
+    an outlet with a ``kind`` outside the mapping above, and — far more often — an outlet the
+    registry has never heard of. Most feed publishers are unknown to it, and absence of a row is
+    not evidence of anything, exactly as it is not for :func:`is_wire`. An unclassified publisher
+    therefore matches no type rather than defaulting into ``news``, so the filter can only ever
+    narrow to sources somebody actually curated.
+    """
+    outlet = resolve(text)
+    if outlet is None:
+        return None
+    return _TYPE_OF_KIND.get((outlet.kind or "").strip().lower())
+
+
 def credibility(text: "str | None") -> Optional[str]:
     """Convenience: :meth:`OutletRegistry.credibility` against the default registry."""
     return default_registry().credibility(text)

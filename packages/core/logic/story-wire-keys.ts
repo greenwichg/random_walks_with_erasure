@@ -12,6 +12,7 @@ export const STORY_WIRE_KEYS = [
   "lean",
   "country",
   "blindspot",
+  "type",
   "dateFrom",
   "dateTo",
   "sort",

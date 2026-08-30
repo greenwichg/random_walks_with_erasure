@@ -22,6 +22,16 @@ const LEAN_OPTIONS: FilterOption[] = [
   { value: "center", label: "Center" },
   { value: "right", label: "Right" },
 ];
+/**
+ * Curated SOURCE type. A fixed list rather than a facet-gated one, because these three are the
+ * registry's whole reader-facing vocabulary and do not vary with the catalog.
+ *
+ * The values are the engine's, not new UI concepts: `outlet_registry.source_type` projects them
+ * from the curated `kind` column — no kind is a news outlet, `research` a journal or preprint
+ * server, `forum` user-generated posts. A story matches when at least one of its publishers is
+ * curated that way, which is the same "has coverage from" reading the Covered-by lens already uses.
+ */
+const TYPE_VALUES = ["news", "research", "community"] as const;
 const SORT_OPTIONS: FilterOption[] = [
   { value: "top", label: "Top" },
   { value: "latest", label: "Latest" },
@@ -88,6 +98,7 @@ export function StoryBrowser({
   // engine as a country named ALL instead of meaning "no country filter".
   const country = rawCountry ? rawCountry.toUpperCase() : "all";
   const blindspot = params.get("blindspot") ?? initialBlindspot ?? "all";
+  const type = params.get("type") ?? "all";
   const sort = params.get("sort") ?? defaultSort;
 
   const setParam = React.useCallback(
@@ -112,6 +123,7 @@ export function StoryBrowser({
   const setLean = React.useCallback((v: string) => setParam("lean", v, "all"), [setParam]);
   const setCountry = React.useCallback((v: string) => setParam("country", v, "all"), [setParam]);
   const setBlindspot = React.useCallback((v: string) => setParam("blindspot", v, "all"), [setParam]);
+  const setType = React.useCallback((v: string) => setParam("type", v, "all"), [setParam]);
   const setSort = React.useCallback(
     (v: string) => setParam("sort", v, defaultSort), [setParam, defaultSort]);
 
@@ -119,7 +131,12 @@ export function StoryBrowser({
 
   React.useEffect(() => {
     setOffset(0);
-  }, [topic, publisher, lean, country, blindspot, sort]);
+  }, [topic, publisher, lean, country, blindspot, type, sort]);
+
+  const typeOptions = React.useMemo(
+    () => TYPE_VALUES.map((v) => ({ value: v, label: t(`filter.type.${v}`) })),
+    [t],
+  );
 
   const facets = useDiscover({});
   // Article-level place facts (located articles / publishers / rated) for the facts line only —
@@ -136,6 +153,7 @@ export function StoryBrowser({
     lean: asFilter(lean),
     country: asFilter(country),
     blindspot: asFilter(blindspot),
+    type: asFilter(type),
     sort: sort as StoryQuery["sort"],
     limit: PAGE,
     offset,
@@ -197,6 +215,8 @@ export function StoryBrowser({
         />
         <FilterSelect label={t("filter.coveredBy")} description={t("filter.coveredByHint")}
           value={lean} options={LEAN_OPTIONS} onChange={setLean} />
+        <FilterSelect label={t("filter.type")} description={t("filter.typeHint")}
+          value={type} options={typeOptions} onChange={setType} />
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}

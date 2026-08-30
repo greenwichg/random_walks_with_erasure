@@ -833,6 +833,10 @@ export interface StoryQuery {
   /** Coverage-gap lens: "any" = stories with a DETECTED gap (blindspotSide set); a side = that
    *  thin side exactly. Balanced-or-unknown stories never match. Absent = "All". */
   blindspot?: string;
+  /** Curated SOURCE type: "news" | "research" | "community" — stories with coverage from at least
+   *  one publisher the outlet registry classifies that way. A publisher the registry does not
+   *  carry is unclassified and matches no type. Absent = "All". */
+  type?: string;
   dateFrom?: string;
   dateTo?: string;
   sort?: "top" | "latest" | "oldest" | "publishers";
