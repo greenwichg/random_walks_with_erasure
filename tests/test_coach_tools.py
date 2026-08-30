@@ -49,14 +49,12 @@ TITLE = "landmark ruling reshapes the harbor oversight case"
 
 
 @pytest.fixture(scope="module")
-def stack(tmp_path_factory):
+def stack(tmp_path_factory, module_env):
     """A measured reader over a real feed corpus + one story cluster + snapshots for trends."""
-    import os
-    os.environ["RWE_RECS_SOURCE"] = "feed"
-    os.environ["RWE_FEED_MIN_ARTICLES"] = "5"
-    os.environ.pop("RWE_STORY_SLOT", None)
-    os.environ.pop("RWE_QBIAS", None)
-    os.environ.pop("RWE_PROFILE", None)
+    module_env.setenv("RWE_RECS_SOURCE", "feed")
+    module_env.setenv("RWE_FEED_MIN_ARTICLES", "5")
+    for _k in ("RWE_STORY_SLOT", "RWE_QBIAS", "RWE_PROFILE"):
+        module_env.delenv(_k, raising=False)
     tmp = tmp_path_factory.mktemp("coach_tools")
     st = store_mod.Store(f"sqlite:///{tmp / 'tools.db'}")
     _feed(st, ANCHOR, "CNN", TITLE, days=1.2, lean=-0.5)
@@ -81,8 +79,8 @@ def stack(tmp_path_factory):
                          behaviors=None, lean_tau=None, domain=None, n_users=None,
                          max_items=None, seed=0)
     csvp = feed_source.prepare(st)
-    os.environ["RWE_QBIAS"] = csvp
-    os.environ["RWE_PROFILE"] = "qbias"
+    module_env.setenv("RWE_QBIAS", csvp)
+    module_env.setenv("RWE_PROFILE", "qbias")
     be = engine.Backend(engine.resolve_profile(ns))
     be.attach_url_resolver(feed_source.load_url_map(csvp))
     pers = personalize.Personalizer(be, st, persist=False)

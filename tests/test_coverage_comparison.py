@@ -319,16 +319,17 @@ HEADLINES = [
 
 
 @pytest.fixture(scope="module")
-def analyze_client(tmp_path_factory):
+def analyze_client(tmp_path_factory, module_env):
     import importlib.util
     import os
     import store as store_mod
     tmp = tmp_path_factory.mktemp("covcmp")
-    os.environ.update({"RWE_DB_URL": f"sqlite:///{tmp}/cc.db", "RWE_RECS_SOURCE": "feed",
-                       "RWE_FEED_MIN_ARTICLES": "4", "RWE_CORPUS_MIN_ARTICLES": "4",
-                       "RWE_SEED": "0", "RWE_STORY_SLOT": "0"})
-    os.environ.pop("RWE_INTERNAL_SECRET", None)
-    os.environ.pop("RWE_COVERAGE_COMPARISON", None)
+    for k, v in {"RWE_DB_URL": f"sqlite:///{tmp}/cc.db", "RWE_RECS_SOURCE": "feed",
+                 "RWE_FEED_MIN_ARTICLES": "4", "RWE_CORPUS_MIN_ARTICLES": "4",
+                 "RWE_SEED": "0", "RWE_STORY_SLOT": "0"}.items():
+        module_env.setenv(k, v)
+    module_env.delenv("RWE_INTERNAL_SECRET", raising=False)
+    module_env.delenv("RWE_COVERAGE_COMPARISON", raising=False)
     st = store_mod.Store(os.environ["RWE_DB_URL"])
     desc = "Councillors voted seven to two on Tuesday evening to approve the plan. " * 3
     for i, (pub, headline) in enumerate(HEADLINES):

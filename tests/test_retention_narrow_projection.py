@@ -120,11 +120,15 @@ _FLOOR_SETTINGS = [
 #:
 #: This is not defensive padding — it caught a real leak. `test_coach_greeting`, `test_coach_tools`
 #: and `test_coach_conversations` each set `RWE_FEED_MIN_ARTICLES=5` with a bare
-#: `os.environ[...] =` inside a module-scoped fixture and never restore it, and `minArticles` falls
+#: `os.environ[...] =` inside a module-scoped fixture and never restored it, and `minArticles` falls
 #: back to that variable. So this file passed alone and failed in the full suite, with `minArticles`
-#: silently 5 instead of 50. **The leak is pre-existing and still there** — fixing three unrelated
-#: coach fixtures is not this change's business — but no test of a deletion policy should be
-#: readable only in the right alphabetical company.
+#: silently 5 instead of 50.
+#:
+#: That leak is now fixed at its source — those fixtures take conftest's `module_env`, and
+#: `_no_env_leaks_between_modules` fails any module that configures the engine for its successors.
+#: The clearing stays anyway: a test of a deletion policy should assert against the floors it sets,
+#: not against whichever floors the session happens to be carrying, and that is true whether or not
+#: anything is currently leaking.
 _THRESHOLD_ENV = ("RWE_CORPUS_MIN_ARTICLES", "RWE_FEED_MIN_ARTICLES", "RWE_CORPUS_MIN_PUBLISHERS",
                   "RWE_CORPUS_MIN_PER_BUCKET", "RWE_CORPUS_MIN_FRESH",
                   "RWE_CORPUS_FRESH_MAX_AGE_DAYS")

@@ -86,14 +86,15 @@ def test_novel_reads_land_on_the_position_lattice_not_the_registry_scale():
 
 
 @pytest.fixture(scope="module")
-def app_client(tmp_path_factory):
+def app_client(tmp_path_factory, module_env):
     import os
     tmp = tmp_path_factory.mktemp("leancons")
-    os.environ.update({"RWE_DB_URL": f"sqlite:///{tmp}/lc.db", "RWE_RECS_SOURCE": "feed",
-                       "RWE_FEED_MIN_ARTICLES": "5", "RWE_CORPUS_MIN_ARTICLES": "5",
-                       "RWE_SEED": "0", "RWE_STORY_SLOT": "0"})
-    os.environ.pop("RWE_INTERNAL_SECRET", None)
-    os.environ.pop("RWE_FEED_MAX_AGE_DAYS", None)
+    for k, v in {"RWE_DB_URL": f"sqlite:///{tmp}/lc.db", "RWE_RECS_SOURCE": "feed",
+                 "RWE_FEED_MIN_ARTICLES": "5", "RWE_CORPUS_MIN_ARTICLES": "5",
+                 "RWE_SEED": "0", "RWE_STORY_SLOT": "0"}.items():
+        module_env.setenv(k, v)
+    module_env.delenv("RWE_INTERNAL_SECRET", raising=False)
+    module_env.delenv("RWE_FEED_MAX_AGE_DAYS", raising=False)
     st = store_mod.Store(os.environ["RWE_DB_URL"])
     _seed(st)
     spec = importlib.util.spec_from_file_location("api_leancons",

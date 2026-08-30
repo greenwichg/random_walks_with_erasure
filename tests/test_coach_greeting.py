@@ -29,12 +29,11 @@ TITLE = "sweeping verdict reshapes the estuary oversight case"
 
 
 @pytest.fixture(scope="module")
-def stack(tmp_path_factory):
-    import os
-    os.environ["RWE_RECS_SOURCE"] = "feed"
-    os.environ["RWE_FEED_MIN_ARTICLES"] = "5"
+def stack(tmp_path_factory, module_env):
+    module_env.setenv("RWE_RECS_SOURCE", "feed")
+    module_env.setenv("RWE_FEED_MIN_ARTICLES", "5")
     for k in ("RWE_STORY_SLOT", "RWE_QBIAS", "RWE_PROFILE"):
-        os.environ.pop(k, None)
+        module_env.delenv(k, raising=False)
 
     def _iso(d):
         return (datetime.now(timezone.utc) - timedelta(days=d)).isoformat()
@@ -96,9 +95,8 @@ def stack(tmp_path_factory):
                          behaviors=None, lean_tau=None, domain=None, n_users=None,
                          max_items=None, seed=0)
     csvp = feed_source.prepare(st)
-    import os as _os
-    _os.environ["RWE_QBIAS"] = csvp
-    _os.environ["RWE_PROFILE"] = "qbias"
+    module_env.setenv("RWE_QBIAS", csvp)
+    module_env.setenv("RWE_PROFILE", "qbias")
     be = engine.Backend(engine.resolve_profile(ns))
     be.attach_url_resolver(feed_source.load_url_map(csvp))
     pers = personalize.Personalizer(be, st, persist=False)
