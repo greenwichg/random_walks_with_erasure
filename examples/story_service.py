@@ -3102,6 +3102,98 @@ def shutdown_warmer() -> None:
             _WARMER = None
 
 
+def tier_b_attach_enabled() -> bool:
+    """Whether Tier B articles ATTACH to built stories as coverage. OFF — ``RWE_STORY_TIER_B_ATTACH=1``
+    turns it on.
+
+    This is M4 of `docs/SCALE_ROADMAP.md`, the mechanism the whole Tier B lane exists for: an
+    admitted Tier B outlet is searchable and attributable, and without attachment its articles can
+    never appear beside the stories they cover — admitting a source just made it vanish from the
+    Stories surface. Dark by default like every flag that changes what a reader sees; the admit
+    command is the human gate on WHICH outlets, this flag is the gate on WHETHER the lane renders.
+    """
+    v = os.environ.get("RWE_STORY_TIER_B_ATTACH", "").strip().lower()
+    return v in ("1", "true", "yes")
+
+
+def attach_tier_b(store_, stories: list, *, date_from=None, max_scan=None) -> list:
+    """Attach Tier B articles to already-built stories, as coverage that never votes.
+
+    The one non-negotiable property, from the roadmap's own claim ("assignment is linear in new
+    arrivals and **cannot alter the partition**"): every field a built story already carries is
+    byte-identical after this pass. Attachment may only APPEND — marked entries at the END of
+    ``coverage`` (the existing list is a strict prefix), plus an ``attachedCoverage`` count that
+    exists only when something attached. Membership, ids, distribution, blindspot, publisher
+    counts and chips are computed from Tier A members upstream and are not recomputed here: a
+    Tier B outlet is unrated, so it adds coverage and no lean vote — and `stabilize_ids` has
+    already synced the member table from the pre-attachment coverage, so downstream member
+    consumers (rec story quotas, coverage comparison) never see an attached row.
+
+    The assignment rule is the shadow harness's, imported rather than restated
+    (:func:`source_evaluation.would_attach` — exact against ``clustering.pair_admits``), so "would
+    this article have joined?" and "attach it" can never drift apart. The Tier B rows come from
+    ``include_publishers`` — the same term set ``corpus.sql_exclusions`` removed from the
+    clustering fetch, on the same column, so the two sets are disjoint by construction (the alias
+    residue `corpus.select` drops post-SQL is missed here too; measured as small, and a missed
+    attachment is an absent addendum, never a wrong story).
+
+    Deterministic (rows visited newest-first with id tiebreak; `would_attach` is order-stable),
+    and fail-soft: this decorates a build that is already correct, so any failure returns the
+    stories untouched rather than costing a reader the page."""
+    # Local import, one level down from the audits: `source_evaluation` is the shadow harness's
+    # module and nothing else in the serving path needs it — the flag-off deployment never pays
+    # for loading it.
+    import source_evaluation
+    try:
+        terms = corpus.tier_b_exclusions()
+        if not terms or not stories:
+            return stories
+        if date_from is None:
+            date_from = _window_start()
+        cap = max_scan or max_scan_default()
+        rows, _total = store_.search_feed_articles(
+            date_from=date_from, sort="newest",
+            pagination=OffsetPagination.from_params(cap, 0, max_limit=cap),
+            include_publishers=terms)
+        if not rows:
+            return stories
+        index = source_evaluation.assignment_index(stories)
+        by_id = {s.get("id"): s for s in stories}
+        member_urls = {c.get("url") for s in stories for c in s.get("coverage", ())}
+        attached = 0
+        # The SAME serializer `build_stories` feeds its rows through (line ~2284), so an attached
+        # entry's publisher prettification, L2.2 nulls and lean bucketing can never diverge from a
+        # member's — one row shape in, one Article shape out, on both sides of the tier boundary.
+        arts = [discover.feed_article_to_article(r) for r in rows]
+        for a in sorted(arts, key=lambda a: (a.get("publishedAt") or "", a.get("id") or ""),
+                        reverse=True):
+            if a.get("url") in member_urls or a.get("id") in member_urls:
+                continue                    # an alias twin of an existing member is not new coverage
+            sid = source_evaluation.would_attach(a.get("headline"), a.get("publishedAt"), index)
+            story = by_id.get(sid)
+            if story is None:
+                continue
+            story.setdefault("coverage", []).append({
+                "publisher": a.get("publisher"), "headline": a.get("headline"),
+                "lean": a.get("lean"), "leanBucket": a.get("leanBucket"),
+                "register": a.get("register"), "emotion": a.get("emotion"),
+                "url": a.get("url"), "publishedAt": a.get("publishedAt"),
+                "tierB": True,
+            })
+            story["attachedCoverage"] = story.get("attachedCoverage", 0) + 1
+            member_urls.add(a.get("url"))
+            attached += 1
+        if attached:
+            obs_metrics.incr("story_tier_b_attached_total", attached)
+        return stories
+    except Exception:
+        # Fail-soft for the reader, never silent for the operator: during development this
+        # swallowed a NameError and the tests read "nothing attached" — the counter is what
+        # separates "no Tier B article matched" from "the attach pass is broken" in /api/metrics.
+        obs_metrics.incr("story_tier_b_attach_error_total")
+        return stories
+
+
 def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, min_publishers,
                   allow_stale: bool = True) -> list:
     """``build_stories(_fetch(...))`` behind a cache with TWO independent invalidation conditions,
@@ -3181,6 +3273,12 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
                 stories = stabilize_ids(store_, stories)
             else:
                 stories = stabilize_ids_readonly(store_, stories)
+        # Tier B attachment (M4) runs LAST, in the parent, after identity: `stabilize_ids` has
+        # already synced the member table from the pre-attachment coverage, so an attached row can
+        # never become a "member" downstream — the ordering IS the containment proof. Parent-side
+        # also covers the subprocess path with the same single implementation.
+        if tier_b_attach_enabled():
+            stories = attach_tier_b(store_, stories, date_from=date_from, max_scan=max_scan)
         return stories
 
     ttl = cache_ttl()

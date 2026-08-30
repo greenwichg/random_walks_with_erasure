@@ -1292,6 +1292,10 @@ class StoryCoverageModel(BaseModel):
     emotion: Optional[EmotionShareModel] = None
     url: Optional[str] = None
     publishedAt: str
+    # M4: True on a Tier B article ATTACHED to this story after the build — coverage that never
+    # voted (no lean count, no membership, no id input). Absent (exclude_none) on every member
+    # row, so the flag-off wire payload is byte-identical to before the field existed.
+    tierB: Optional[bool] = None
 
 
 class TimelinePointModel(BaseModel):
@@ -1338,6 +1342,10 @@ class StoryModel(BaseModel):
     # extra request. story_service stays untouched. Omitted (exclude_none) if not computed.
     freshness: Optional[dict[str, Any]] = None    # {band, score}
     lifecycle: Optional[str] = None
+    # M4: how many Tier B articles attached to this story (the marked tail of `coverage`).
+    # Present only when > 0; every count above (totalCoverage, publisherCount, distribution) still
+    # describes the Tier A cluster alone — attached coverage is an addendum, not a vote.
+    attachedCoverage: Optional[int] = None
 
 
 class StoryIntelligenceModel(BaseModel):

@@ -517,9 +517,11 @@ def tier_b_exclusions() -> "frozenset[str]":
     """The TIER B half of :func:`sql_exclusions` — publisher strings the story builder must not see.
 
     The complement of :func:`shadow_exclusions`, and deliberately **not** a reader-surface exclusion:
-    Tier B is searchable. Nothing in the query path should call this; it exists for the retention
-    arm, which needs to act on one tier at a time because the two carry different horizons
-    (``RWE_RETENTION_MAX_AGE_DAYS_TIER_B`` against ``..._SHADOW``).
+    Tier B is searchable. Two sanctioned callers, both on the safe side of the miss direction: the
+    retention arm, which needs to act on one tier at a time because the two carry different horizons
+    (``RWE_RETENTION_MAX_AGE_DAYS_TIER_B`` against ``..._SHADOW``); and Tier B story attachment
+    (M4, ``story_service.attach_tier_b``), which reads it as an INCLUDE set — a missed row there is
+    an absent addendum on a story, never a wrong exclusion. No other query path should call this.
 
     ## Why this may be used to DELETE and :func:`sql_exclusions` may not
 

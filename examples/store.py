@@ -2382,7 +2382,8 @@ class Store:
     def search_feed_articles(self, *, q=None, publisher=None, lean=None, topic=None,
                              date_from=None, date_to=None, source=None, country=None,
                              sort="newest", pagination=None, include_provisional: bool = True,
-                             exclude_publishers=None, include_shadow: bool = False):
+                             exclude_publishers=None, include_publishers=None,
+                             include_shadow: bool = False):
         """Search the catalog directly, in SQL. Returns ``(rows, total)`` — ``rows`` are paginated
         FeedArticle-row dicts, ``total`` the match count before pagination. All filtering / sorting /
         paging happen in the database (index-backed); it never touches the recommendation engine.
@@ -2395,6 +2396,14 @@ class Store:
         the row cap bounds **Tier A** rather than the mixture: applied here it runs before ``LIMIT``,
         so an excluded row never consumes cap. Empty or ``None`` adds no term at all, which is what
         keeps every other caller — Search, Discover, export — byte-identical.
+
+        ``include_publishers`` is the exclusion's mirror: ONLY rows whose lower-cased publisher is
+        in the set are returned (a NULL publisher never matches — there is nothing to match). One
+        caller: Tier B story attachment (M4), which needs "exactly the rows the clustering fetch's
+        ``exclude_publishers`` removed" — the same term set on the same column, so the two results
+        are disjoint by construction. It composes with ``include_shadow=False``: a host in BOTH
+        shadow and the include set stays hidden, because shadow means surfaced nowhere and
+        attachment is a surface.
 
         ``include_shadow`` is **False by default, and that default is the point** (M5,
         `docs/SCALE_ROADMAP.md`). A shadow outlet is one being observed before evaluation, and the
@@ -2429,6 +2438,12 @@ class Store:
             conds = list(conds) + [or_(
                 FeedArticle.publisher.is_(None),
                 func.lower(FeedArticle.publisher).notin_(sorted(exclude_publishers)))]
+        if include_publishers:
+            # The mirror keeps NO null arm: an include is a positive match, and a row with no
+            # publisher cannot positively match anything. ANDed with the exclusion above, so a
+            # shadow host folded into `exclude_publishers` stays hidden even when included here.
+            conds = list(conds) + [
+                func.lower(FeedArticle.publisher).in_(sorted(include_publishers))]
         if not include_provisional:
             conds = list(conds) + [or_(FeedArticle.article_state.is_(None),
                                        FeedArticle.article_state != "provisional")]

@@ -653,6 +653,15 @@ services:
       # member aged out of the rolling window, 9 because a backfilled article displaced it. Each
       # one is a saved or shared link that stops resolving. 0 reverts to deriving from the anchor.
       RWE_STORY_STABLE_IDS: ${RWE_STORY_STABLE_IDS:-1}
+      # M4 — Tier B story attachment. Tier B articles (corpus.tier_b_exclusions) join built
+      # stories as coverage-only entries: appended to the END of `coverage` with `tierB: true`
+      # plus an `attachedCoverage` count, and NOTHING else changes — membership, ids, lean
+      # distribution, blindspot and publisher counts are Tier A's alone (an unrated outlet adds
+      # coverage, never a vote). Runs after `stabilize_ids` syncs the member table, so member
+      # consumers (rec story quotas, coverage comparison) never see an attached row. Dark by
+      # default: admission decides WHICH outlets are Tier B, this decides whether the lane
+      # renders at all. Pointless to enable while no host is admitted to Tier B.
+      RWE_STORY_TIER_B_ATTACH: ${RWE_STORY_TIER_B_ATTACH:-0}
       # publisherCount counts OUTLETS, not name forms. Feeds send the same masthead as
       # "Sportskeeda.Com" and "Sportskeeda", and a syndication network as ~100 *.iheart.com station
       # hostnames. Measured: 181 of 1,367 names were duplicates, 60 stories had an inflated count,
