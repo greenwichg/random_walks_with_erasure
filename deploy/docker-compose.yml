@@ -398,8 +398,10 @@ services:
       # of the feed under a week) for HALF the publisher cost of 7d. Tightening past it costs about
       # twice as much breadth per day of freshness bought: 7d buys another 0.9d of median for
       # another 26 publishers, 3d another 1.0d for 48 more.
-      # The lean split holds throughout (44/25/30 -> 46/26/27), so diversity here means SOURCES,
-      # not politics. Re-measure with examples/rec_age_probe.py when the catalogue's shape changes
+      # The lean split holds throughout — across two runs every half-life landed inside
+      # 43-46 / 25-28 / 27-30 (left/centre/right), a point or two off the OFF baseline and well
+      # within what a 1500-row random draw moves on its own. So diversity here means SOURCES, not
+      # politics. Re-measure with examples/rec_age_probe.py when the catalogue's shape changes
       # — the per-outlet cap already does much of the recency work, so these numbers move with
       # RWE_FEED_MAX_PER_OUTLET and with retention.
       RWE_REC_RECENCY_HALFLIFE_DAYS: ${RWE_REC_RECENCY_HALFLIFE_DAYS:-14}
