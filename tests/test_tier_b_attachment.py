@@ -97,6 +97,29 @@ def test_a_non_matching_article_attaches_nowhere(monkeypatch):
     assert story_service.attach_tier_b(st, stories) == before
 
 
+def test_a_zero_attach_pass_is_visible_in_metrics(monkeypatch):
+    """A healthy pass that matches nothing must still leave fingerprints.
+
+    Found on production 2026-08-31, the first day the lane served: seven freshly-admitted
+    non-English outlets attached nothing (expected — M14), and /api/metrics carried no tier_b
+    keys at all because the counter only incremented when attached > 0. An operator could not
+    tell "healthy, no match" from "flag off" from "pass never reached". Three states now have
+    three signatures: runs>0 & attached=0 · no keys · error>0."""
+    import obs_metrics
+    monkeypatch.setenv("RWE_CORPUS_TIER_B", "tierb-gazette.example")
+    st = _tier_b_store([("tierb-gazette.example",
+                         "Quarterly earnings beat expectations at regional bank",
+                         "https://tierb-gazette.example/earnings", 1)])
+    counters = lambda: obs_metrics.snapshot().get("counters", {})
+    runs0 = int(counters().get("story_tier_b_attach_runs_total", 0))
+    story_service.attach_tier_b(st, [_story()])
+    after = counters()
+    assert int(after.get("story_tier_b_attach_runs_total", -1)) == runs0 + 1, \
+        "every pass that reaches the attach loop must count a run, matched or not"
+    assert "story_tier_b_attached_total" in after, \
+        "the attached counter must REGISTER (at +0) on a zero-attach pass"
+
+
 def test_an_alias_twin_of_an_existing_member_is_not_new_coverage(monkeypatch):
     # Same canonical URL as a member: the article is already IN the story under its Tier A
     # identity; attaching it again would double-count the one thing dedup exists to keep single.

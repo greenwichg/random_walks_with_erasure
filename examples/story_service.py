@@ -3183,8 +3183,13 @@ def attach_tier_b(store_, stories: list, *, date_from=None, max_scan=None) -> li
             story["attachedCoverage"] = story.get("attachedCoverage", 0) + 1
             member_urls.add(a.get("url"))
             attached += 1
-        if attached:
-            obs_metrics.incr("story_tier_b_attached_total", attached)
+        # BOTH counters register even on a zero-attach pass (incr(0) creates the key). Measured
+        # cost of the old `if attached:` guard on production 2026-08-31: a healthy pass that
+        # matched nothing left /api/metrics with no tier_b keys at all, indistinguishable from
+        # the flag being off or the pass never running. Three states, three signatures now:
+        # runs>0 & attached=0 = healthy-no-match · no keys = not running · error>0 = broken.
+        obs_metrics.incr("story_tier_b_attach_runs_total")
+        obs_metrics.incr("story_tier_b_attached_total", attached)
         return stories
     except Exception:
         # Fail-soft for the reader, never silent for the operator: during development this
