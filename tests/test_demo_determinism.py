@@ -11,6 +11,7 @@ report and the same demo reader — no unseeded RNG, no unordered iteration, no
 floating-point accumulation-order drift anywhere in the pipeline.
 """
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -22,6 +23,9 @@ sys.path.insert(0, str(ROOT / "examples"))
 
 CHILD = r"""
 import json, os, sys
+# FIRST line of output: what this child actually received. The parent checks it, because an
+# experiment that does not vary what it claims to vary passes for the wrong reason.
+print("env", os.environ.get("PYTHONHASHSEED"), os.environ.get("RWE_FEED_MAX_AGE_DAYS"))
 from types import SimpleNamespace
 sys.path.insert(0, EXAMPLES_DIR)
 mode, store_url = sys.argv[1], sys.argv[2]
@@ -49,15 +53,28 @@ def _restart(tmp_path, mode, store_url, hashseed):
     """One simulated app restart: a FRESH interpreter with its own hash seed."""
     child = tmp_path / "child.py"
     child.write_text(CHILD.replace("EXAMPLES_DIR", repr(str(ROOT / "examples"))))
-    env = {"PATH": "/usr/bin:/bin", "PYTHONHASHSEED": hashseed,
+    env = {"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "/tmp"),
+           "PYTHONHASHSEED": hashseed,
            "RWE_N_USERS": "150", "RWE_MAX_ITEMS": "400",
            # pin the wall clock OUT of the corpus export: the freshness window and the
            # dated-candidacy flag are the documented, deliberate time dependencies
            "RWE_FEED_MAX_AGE_DAYS": "0", "RWE_FEED_MIN_ARTICLES": "5"}
-    r = subprocess.run([sys.executable, str(child), mode, store_url],
+    # `env=env` is the whole experiment. Without it this dict was built and dropped on the floor:
+    # both "restarts" inherited the parent's environment, so they ran under the SAME hash seed and
+    # the test could not observe the hash-randomized iteration order it exists to catch — while the
+    # freshness window stayed live despite the comment above claiming it was pinned out, which is
+    # what made a determinism test depend on the date. A hermetic env is also the right shape for
+    # this test: a sibling module that leaks RWE_* into os.environ must not reach these children.
+    r = subprocess.run([sys.executable, str(child), mode, store_url], env=env,
                        capture_output=True, text=True, cwd=str(ROOT), timeout=300)
     assert r.returncode == 0, r.stderr[-2000:]
-    return r.stdout.strip().splitlines()[-1]
+    lines = r.stdout.strip().splitlines()
+    # The child confirms it got the seed this restart is supposed to run under, and the pinned
+    # window. Without this, dropping `env=` above silently turns two different hash seeds into two
+    # identical ones and every assertion below still passes.
+    assert lines[0] == f"env {hashseed} 0", \
+        f"child ran under the wrong environment: {lines[0]!r} (expected seed {hashseed})"
+    return lines[-1]
 
 
 @pytest.fixture(scope="module")
