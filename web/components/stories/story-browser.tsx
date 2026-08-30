@@ -133,10 +133,6 @@ export function StoryBrowser({
     setOffset(0);
   }, [topic, publisher, lean, country, blindspot, type, sort]);
 
-  const typeOptions = React.useMemo(
-    () => TYPE_VALUES.map((v) => ({ value: v, label: t(`filter.type.${v}`) })),
-    [t],
-  );
 
   const facets = useDiscover({});
   // Article-level place facts (located articles / publishers / rated) for the facts line only —
@@ -177,6 +173,23 @@ export function StoryBrowser({
         label: <CountryBadge code={code} />,
       })),
     [storyFacets],
+  );
+
+  // Source-type options: the fixed vocabulary, each carrying what selecting it would return.
+  // Same sticky pattern as the two pickers around it — the response is briefly absent while a new
+  // filter loads, and a count that blinked to zero mid-interaction would be a lie about the data
+  // rather than a loading state.
+  //
+  // Unlike country and coverage gaps, an empty type is NOT dropped: three fixed options that
+  // appear and disappear between page states read as a broken control, and the badge already
+  // answers what omission was there to answer — "Community 0" tells the reader not to spend the
+  // click, and tells them the lens exists.
+  const typeRef = React.useRef<Record<string, number>>({});
+  if (data?.typeFacets) typeRef.current = data.typeFacets;
+  const typeFacets = data?.typeFacets ?? typeRef.current;
+  const typeOptions = React.useMemo(
+    () => TYPE_VALUES.map((v) => ({ value: v, label: t(`filter.type.${v}`), count: typeFacets[v] })),
+    [typeFacets, t],
   );
 
   // Coverage-gap lens options: only sides with ≥1 story under the other filters (same sticky

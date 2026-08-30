@@ -1367,6 +1367,13 @@ def test_stories_type_filter_reaches_the_service(client):
         def titles(params):
             return {s["title"] for s in client.get("/api/stories", params=params).json()["stories"]}
 
+        # The facet badge's numbers, served alongside the page. `response_model_exclude_none` is on
+        # this route, so a field the model does not declare is dropped silently — asserted here
+        # rather than assumed.
+        body = client.get("/api/stories").json()
+        assert set(body["typeFacets"]) == {"news", "research", "community"}
+        assert body["typeFacets"]["research"] >= 1
+
         unfiltered = titles({})
         research = titles({"type": "research"})
         assert research, "?type=research returned nothing — the fixture's Nature story is missing"

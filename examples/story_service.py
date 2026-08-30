@@ -3403,7 +3403,7 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
                  min_publishers: int = 2, max_scan: int = None, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets,
-    blindspotFacets}`` (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are
+    blindspotFacets, typeFacets}`` (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are
     pre-filtered in SQL; publisher/lean/country/blindspot/story_type are coverage post-filters on
     the built stories. ``story_type`` is the curated SOURCE type — news / research / community,
     projected from the outlet registry's ``kind`` column by
@@ -3450,25 +3450,28 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         stories = [s for s in stories if want in {p.lower() for p in s["publishers"]}]
     if lean in ("left", "center", "right"):
         stories = [s for s in stories if s["distribution"][lean] > 0.0]
-    if story_type in outlet_registry.SOURCE_TYPES:
-        # Coverage post-filter, the same shape as `publisher` and `lean` directly above: a story
-        # matches when at least ONE of its member publishers is curated as that type of source.
-        # "Has coverage from" is the honest reading of a cluster — a story is many publishers, so
-        # it has no single type of its own, and the existing "Covered by" lens already means
-        # exactly this for lean. An uncurated publisher matches nothing (see
-        # `outlet_registry.source_type`), so this can only narrow to sources somebody classified.
-        stories = [s for s in stories
-                   if any(outlet_registry.source_type(p) == story_type for p in s["publishers"])]
-    # Story-level country + blindspot facets: counted after topic/publisher/lean narrowed the
-    # set, before their own filters (standard faceting — a picker must not collapse to the
+    # Story-level country + blindspot + type facets: counted after topic/publisher/lean narrowed
+    # the set, before their own filters (standard faceting — a picker must not collapse to the
     # current selection) and before pagination.
     country_facets: dict = {}
     blindspot_facets: dict = {}
+    # Seeded with every type, so a lens that currently matches nothing reports 0 rather than going
+    # missing: the reader is told the option exists and is empty, which is the whole point of
+    # showing the number. `source_type` memoises its registry resolves, so the per-publisher walk
+    # costs one lookup per distinct name for the life of the process.
+    type_facets: dict = {t: 0 for t in outlet_registry.SOURCE_TYPES}
     for s in stories:
         for c in s["countries"]:
             country_facets[c] = country_facets.get(c, 0) + 1
         if s["blindspotSide"]:
             blindspot_facets[s["blindspotSide"]] = blindspot_facets.get(s["blindspotSide"], 0) + 1
+        # A story counts under EVERY type that covers it, never once under a "dominant" one. The
+        # filter is "has coverage from", so a Nature+BBC event is one Research story AND one News
+        # story; each count is what selecting that lens would actually return, which is the only
+        # number a picker may show. They therefore do not sum to `total`, by design.
+        for kind in {outlet_registry.source_type(p) for p in s["publishers"]}:
+            if kind in type_facets:
+                type_facets[kind] += 1
     if country and country.strip():
         want = country.strip().upper()
         stories = [s for s in stories if want in s["countries"]]
@@ -3476,12 +3479,25 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         stories = [s for s in stories if s["blindspotSide"]]
     elif blindspot in ("left", "center", "right"):
         stories = [s for s in stories if s["blindspotSide"] == blindspot]
+    if story_type in outlet_registry.SOURCE_TYPES:
+        # Coverage post-filter, the same shape as `publisher` and `lean` above: a story matches
+        # when at least ONE of its member publishers is curated as that type of source. "Has
+        # coverage from" is the honest reading of a cluster — a story is many publishers, so it has
+        # no single type of its own, and the "Covered by" lens already means exactly this for lean.
+        # An uncurated publisher matches nothing (see `outlet_registry.source_type`), so this can
+        # only narrow to sources somebody classified.
+        #
+        # Applied HERE, below the facet pass, for the same reason country and blindspot are: a
+        # filter counted after itself collapses its own picker to the current selection. Filters are
+        # conjunctive, so the position changes the facets and never the result.
+        stories = [s for s in stories
+                   if any(outlet_registry.source_type(p) == story_type for p in s["publishers"])]
 
     stories = _sort_stories(stories, sort)
     total = len(stories)
     page = stories[pg.offset: pg.offset + pg.limit] if pg.limit > 0 else stories
     out = {"stories": page, "total": total, "sort": sort, "countryFacets": country_facets,
-           "blindspotFacets": blindspot_facets,
+           "blindspotFacets": blindspot_facets, "typeFacets": type_facets,
            **pg.meta(total)}
     if debug:
         out["clusterMs"] = cluster_ms

@@ -16,6 +16,16 @@ export interface FilterOption {
   value: string;
   /** Text, or a node (e.g. CountryBadge); its accessible text is the option label. */
   label: React.ReactNode;
+  /**
+   * How many results this option would return, rendered as a trailing count badge.
+   *
+   * For a filter whose options are a fixed vocabulary rather than a list derived from the data,
+   * where the pickers that CAN drop empty options (country, coverage gaps) instead answer the
+   * question by omission. A fixed list cannot do that without its contents flickering between
+   * page states, so it says the number out loud — including `0`, which is the answer a reader most
+   * needs before spending a click.
+   */
+  count?: number;
 }
 
 /**
@@ -76,6 +86,20 @@ export function FilterSelect({
           {options.map((o) => (
             <DropdownMenuRadioItem key={o.value} value={o.value}>
               {o.label}
+              {o.count !== undefined && (
+                // `ml-auto` pushes it to the row's trailing edge so the numbers form a column the
+                // eye can compare; `tabular-nums` keeps that column from shifting between 9 and 10.
+                // Muted, and dimmer still at zero — an empty lens should read as unavailable
+                // without becoming a second kind of control.
+                <span
+                  className={cn(
+                    "ml-auto pl-3 text-xs tabular-nums",
+                    o.count === 0 ? "text-muted-foreground/50" : "text-muted-foreground",
+                  )}
+                >
+                  {o.count}
+                </span>
+              )}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

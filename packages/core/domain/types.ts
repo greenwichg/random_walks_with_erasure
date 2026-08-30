@@ -860,6 +860,11 @@ export interface StoriesResponse {
   /** Story counts per DETECTED coverage-gap side, same faceting discipline — the gaps picker
    *  offers only sides returning ≥1 story; balanced-or-unknown stories are counted nowhere. */
   blindspotFacets?: Record<string, number>;
+  /** Story counts per curated SOURCE type (news / research / community), same faceting discipline
+   *  — what selecting that lens would return. Always carries all three keys, so an empty lens
+   *  reads as 0 rather than going missing. A story covered by both a journal and a newspaper
+   *  counts under BOTH, so these do not sum to `total`. */
+  typeFacets?: Record<string, number>;
 }
 
 /** Discover feed: the latest catalog articles plus the facet values for the filters. */

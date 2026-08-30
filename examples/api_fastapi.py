@@ -1375,6 +1375,11 @@ class StoriesResponseModel(BaseModel):
     # the coverage-gaps picker offers only sides that return ≥1 story. Balanced-or-unknown
     # stories (blindspotSide null) are counted nowhere: a gap is a finding, never a default.
     blindspotFacets: "dict[str, int]" = {}
+    # Story counts per curated SOURCE type (news / research / community), same faceting discipline
+    # — what selecting that lens would return. Always carries all three keys, so an empty lens
+    # reads as 0 rather than going missing. A story covered by both a journal and a newspaper
+    # counts under BOTH, so these do not sum to `total`.
+    typeFacets: "dict[str, int]" = {}
 
 
 class CitationModel(BaseModel):

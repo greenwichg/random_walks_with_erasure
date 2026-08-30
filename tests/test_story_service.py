@@ -314,6 +314,48 @@ def test_filter_type_selects_by_curated_source_type():
     assert research | community <= titles("news")
 
 
+def test_type_facets_count_what_selecting_each_lens_returns():
+    """The badge's number must BE the result, or it is worse than no number."""
+    st = store_mod.Store("sqlite://"); _news_research_community(st)
+    facets = ss.list_stories(st)["typeFacets"]
+
+    assert set(facets) == {"news", "research", "community"}, "every lens reports, including empties"
+    for kind, n in facets.items():
+        assert ss.list_stories(st, story_type=kind)["total"] == n, kind
+    assert facets == {"news": 3, "research": 1, "community": 1}
+
+    # They do NOT partition the feed: the research and community events are each also covered by a
+    # news outlet, so they count twice. A badge that summed to `total` would be describing a
+    # different filter from the one it sits on.
+    assert sum(facets.values()) > ss.list_stories(st)["total"]
+
+
+def test_type_facets_do_not_collapse_to_the_current_selection():
+    """A picker counted after its own filter can only ever show the lens already chosen.
+
+    This is the ordering the country and coverage-gap facets are computed under, and the reason
+    the type filter is applied below the facet pass rather than beside `lean`: with it above,
+    selecting Research would report research=1, news=0, community=0 and the reader could never
+    find their way back out.
+    """
+    st = store_mod.Store("sqlite://"); _news_research_community(st)
+    unfiltered = ss.list_stories(st)["typeFacets"]
+    for kind in ("news", "research", "community"):
+        assert ss.list_stories(st, story_type=kind)["typeFacets"] == unfiltered, kind
+    # The same must hold under a sibling filter, which is the case that proves the counts are
+    # scoped to the OTHER active filters rather than simply frozen.
+    climate = ss.list_stories(st, topic="Science")["typeFacets"]
+    assert climate != unfiltered and climate["research"] == 1 and climate["community"] == 0
+
+
+def test_an_empty_lens_reports_zero_rather_than_going_missing():
+    st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
+    facets = ss.list_stories(st)["typeFacets"]
+    assert facets["research"] == 0 and facets["community"] == 0
+    assert "research" in facets and "community" in facets, \
+        "a missing key is indistinguishable from 'not computed'; the badge needs a real 0"
+
+
 def test_filter_type_never_invents_a_classification():
     st = store_mod.Store("sqlite://"); _senate_and_wildfire(st)
     # Not one of these outlets is curated research or forum, so both lenses must come back empty

@@ -82,10 +82,17 @@ for pub, headline, url, lean, hours_ago, cat, political, body_desc in members:
   execFileSync("python", ["-c", py], { cwd: REPO_ROOT, stdio: "pipe" });
 }
 
-/** Open a FilterSelect by its visible label and choose an option. */
+/**
+ * Open a FilterSelect by its visible label and choose an option.
+ *
+ * The option is matched by name plus an OPTIONAL trailing count, because a filter that shows facet
+ * counts folds the number into each row's accessible name — "Research 1", not "Research". That is
+ * the right name for a screen reader to announce, so the matcher accommodates it rather than the
+ * component hiding it. Still anchored at both ends, so "News" cannot select "Newsletters".
+ */
 async function pick(page: import("@playwright/test").Page, label: string, option: string) {
   await page.getByRole("button", { name: new RegExp(`^${label}`) }).click();
-  await page.getByRole("menuitemradio", { name: option, exact: true }).click();
+  await page.getByRole("menuitemradio", { name: new RegExp(`^${option}(\\s+\\d+)?$`) }).click();
 }
 
 test.describe("Stories filter state survives a round trip", () => {
@@ -177,6 +184,27 @@ test.describe("Stories filter state survives a round trip", () => {
     await pick(authedPage, "Type", "All");
     await expect(authedPage).not.toHaveURL(/type=/);
     await expect(cards.filter({ hasText: /[Hh]arbour/ })).toHaveCount(1);
+  });
+
+  test("each Type option carries the count it would return", async ({ authedPage }) => {
+    seedStory();
+    await authedPage.goto("/stories", { waitUntil: "networkidle" });
+    await authedPage.getByRole("button", { name: /^Type/ }).click();
+
+    // Two seeded events. Both are covered by a curated news outlet, and one of them also by Nature,
+    // so News reads 2 and Research 1 — the counts are "has coverage from this type", not a
+    // partition, which is why they sum to more than the two stories on the page.
+    const row = (name: string) => authedPage.getByRole("menuitemradio", { name: new RegExp(`^${name}`) });
+    await expect(row("News")).toContainText("2");
+    await expect(row("Research")).toContainText("1");
+    // The empty lens says 0 rather than vanishing — a fixed three-option list whose contents came
+    // and went between page states would read as a broken control.
+    await expect(row("Community"), "an empty type still reports").toContainText("0");
+
+    // And the number is the result: choosing Research leaves exactly that many cards.
+    await row("Research").click();
+    await expect(authedPage).toHaveURL(/type=research/);
+    await expect(authedPage.getByRole("heading", { level: 3 })).toHaveCount(1);
   });
 
   test("the existing ?country= deep link still preselects", async ({ authedPage }) => {
