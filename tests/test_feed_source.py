@@ -87,13 +87,21 @@ def test_export_catalog_csv_format(tmp_path):
     assert set(rows[0].keys()) == {"title", "source", "bias_rating", "tags", "url", "political",
                                    # appended for the For You country preference; the corpus
                                    # builder reads columns by name, so a trailing field is inert
-                                   "country"}
+                                   "country",
+                                   # appended for the corpus subsample's recency weighting — the
+                                   # recommender still has no time feature, this only lets the
+                                   # LOADER prefer newer rows (RWE_REC_RECENCY_HALFLIFE_DAYS)
+                                   "published_at"}
     by = {r["source"]: r for r in rows}
     assert by["Fox News"]["bias_rating"] == "right"          # 1.6 -> past the 1.5 lattice midpoint
     assert by["New York Times"]["bias_rating"] == "lean left"  # -1.4 -> the grade now survives
     assert by["Fox News"]["url"].startswith("https://www.foxnews.com")  # url carried (builder ignores it)
     assert by["Fox News"]["tags"] == "Politics"
     assert by["Fox News"]["political"] == "1"     # the seed scores political=True
+    # The real timestamp, carried through — never a placeholder. An article the feed dated is
+    # dated; the loader's weighting is only as honest as this column.
+    assert by["Fox News"]["published_at"], "the export must carry the publication date"
+    assert by["Fox News"]["published_at"].startswith("20")
 
 
 def test_export_caps_per_outlet(tmp_path):

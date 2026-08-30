@@ -33,7 +33,11 @@ DEFAULT_MIN_ARTICLES = 50
 # real publisher URL from the same CSV by row order. ``political`` (Commit R1) carries the scored
 # article-level flag ("1"/"0"; "" = unknown → the loader derives from tags+url) so the corpus mask
 # is real per-article classification, never assumed.
-_COLUMNS = ["title", "source", "bias_rating", "tags", "url", "political", "country"]
+# ``published_at`` is the second APPENDED column, on the same terms as ``country`` below: read by
+# name, ignored by every reader that does not ask for it. It exists so the corpus loader can weight
+# its subsample by article age — the recommender itself still has no time feature, and adding this
+# column does not give it one.
+_COLUMNS = ["title", "source", "bias_rating", "tags", "url", "political", "country", "published_at"]
 
 
 def enabled() -> bool:
@@ -268,6 +272,10 @@ def _qbias_record(a: dict, center: float) -> list:
         # Pipe-separated: an article about India AND Pakistan belongs to both, and a single label
         # would silently drop one of them.
         "|".join(sorted(article_countries(a, country_source()))),
+        # The real publication timestamp, never a substitute: an article the feed dated is dated,
+        # and one it did not is blank. `catalog_from_qbias` treats a blank as "unknown age" and
+        # gives it the neutral weight rather than guessing it is old or new.
+        str(a.get("publishedAt") or a.get("published_at") or ""),
     ]
 
 

@@ -42,6 +42,9 @@ Outputs (all prefixed ``--tag`` = "sim"):
 import argparse
 import ast
 import csv as _csv
+import datetime as _dt
+import math as _math
+import os as _os
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -162,6 +165,57 @@ def _parse_political(raw) -> "bool | None":
     return None
 
 
+def recency_halflife_days() -> float:
+    """Half-life in days for the corpus subsample's recency weighting; ``0`` (the default) = OFF.
+
+    OFF is byte-identical to the uniform draw this replaced, so shipping it changes nothing until
+    an operator sets ``RWE_REC_RECENCY_HALFLIFE_DAYS``. That default is deliberate: the knob trades
+    currency against SOURCE DIVERSITY — a low-volume outlet publishes rarely, so a short half-life
+    makes it less likely to be in the pool at all, and this product exists to widen a reading diet,
+    not to narrow it onto whoever posts most often. Pick the value from the measured age and
+    publisher/lean distributions (deploy/ops/rec-age-probe.py), never by taste.
+    """
+    raw = _os.environ.get("RWE_REC_RECENCY_HALFLIFE_DAYS", "").strip()
+    try:
+        v = float(raw)
+    except ValueError:
+        return 0.0
+    return v if v > 0 and _math.isfinite(v) else 0.0
+
+
+def _recency_weights(published: list, halflife_days: float):
+    """Sampling weights over rows: ``0.5 ** (age_days / halflife)``, newest weighted highest.
+
+    An article whose feed carried no date gets the MEDIAN weight of the dated rows, not the best
+    or the worst. Ranking it as newest would let a missing timestamp buy a slot; ranking it oldest
+    would silently drop whole publishers whose feeds omit dates. The median keeps it in the draw on
+    ordinary terms, which is the only honest reading of "we do not know when this was published".
+
+    Returns ``None`` when no row carries a usable date — the caller then falls back to the uniform
+    draw rather than inventing an ordering from row position.
+    """
+    now = _dt.datetime.now(_dt.timezone.utc)
+    ages: list = []
+    for raw in published:
+        try:
+            when = _dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            ages.append(None)
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=_dt.timezone.utc)
+        # Clamped at 0: a feed dated slightly in the future is a clock skew, not a scoop.
+        ages.append(max(0.0, (now - when).total_seconds() / 86400.0))
+    dated = [a for a in ages if a is not None]
+    if not dated:
+        return None
+    w = np.array([0.5 ** (a / halflife_days) if a is not None else np.nan for a in ages],
+                 dtype=float)
+    w[np.isnan(w)] = float(np.median(w[~np.isnan(w)]))
+    total = w.sum()
+    return (w / total) if total > 0 else None
+
+
 def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
     """Build a catalog from Qbias (real gold lean + real outlets + topic tags). Article
     *quality* is SYNTHETIC (Qbias has no quality label) -- a per-article Beta draw.
@@ -179,6 +233,7 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
 
     rng = np.random.default_rng(seed)
     pos, outlets, topics, titles, ids, political = [], [], [], [], [], []
+    published: list = []
     with open(csv_path, newline="", encoding="utf-8", errors="replace") as f:
         rd = _csv.DictReader(f)
         hc = _pick_col(rd.fieldnames, _HEADLINE_COLS)
@@ -187,6 +242,7 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
         tc = _pick_col(rd.fieldnames, ("tags", "topic", "topics", "tag"))
         pc = _pick_col(rd.fieldnames, ("political",))
         uc = _pick_col(rd.fieldnames, ("url", "link"))
+        dc = _pick_col(rd.fieldnames, ("published_at", "publishedat", "published", "date"))
         for i, row in enumerate(rd):
             # graded: 'lean left'/'lean right' land at ±LEAN_GRADE, not the poles — the corpus
             # keeps the registry's grade so distance-graded recommendation is possible at all.
@@ -198,6 +254,7 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
             topics.append(_first_tag(row.get(tc)) if tc else "")   # clean first tag; "" = untagged
             titles.append((row.get(hc) or "").strip())
             ids.append(f"Q{i}")
+            published.append(row.get(dc) if dc else None)
             flag = _parse_political(row.get(pc)) if pc else None
             if flag is None:                                # unknown -> derive, never assume
                 flag = looks_political(url=(row.get(uc) or "" if uc else ""),
@@ -205,8 +262,19 @@ def catalog_from_qbias(csv_path, max_items=None, seed=0) -> ItemCatalog:
             political.append(bool(flag))
     pos = np.asarray(pos, dtype=float)
     political = np.asarray(political, dtype=bool)
-    if max_items and len(pos) > max_items:                # random subsample for a denser demo
-        keep = rng.choice(len(pos), size=max_items, replace=False)
+    if max_items and len(pos) > max_items:
+        # The subsample was UNIFORM over the whole export — written for a synthetic demo, where the
+        # rows had no dates and a well-mixed draw was the point. Against a live catalogue it is the
+        # reason a recommendation can be two weeks old: the recommender has no time feature at all
+        # (ItemCatalog carries none), so age enters only here, in what reaches the pool.
+        #
+        # `recency_halflife_days()` is 0 by default and this stays the uniform draw, byte for byte.
+        # Set it and the same draw runs under 0.5 ** (age/halflife) — still random, so no publisher
+        # or viewpoint is starved and every downstream guarantee (slice budgets, publisher cap,
+        # cross-cutting partition) is untouched; recent articles are simply likelier to be drawn.
+        halflife = recency_halflife_days()
+        weights = _recency_weights(published, halflife) if halflife > 0 else None
+        keep = rng.choice(len(pos), size=max_items, replace=False, p=weights)
         pos, outlets, topics, titles, ids, political = (
             pos[keep], [outlets[k] for k in keep], [topics[k] for k in keep],
             [titles[k] for k in keep], [ids[k] for k in keep], political[keep])

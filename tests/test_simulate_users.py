@@ -4,6 +4,7 @@ Uses the fully-synthetic catalog (no Qbias needed). Covers trait ranges, determi
 the MINDData round-trip into the pipeline, and the key model-validity check: agents with
 higher openness actually click more cross-cutting content."""
 
+import collections
 import importlib.util
 import pathlib
 
@@ -119,3 +120,113 @@ def test_build_dataset_roundtrip_and_enrichment_files(tmp_path):
     assert reg == "news_id,reporting" and emo == "news_id," + ",".join(su.EMOTION_LABELS)
     beh_first = open(tmp_path / "beh.tsv").readline().split("\t")
     assert beh_first[1].startswith("sim_u") and "-" in beh_first[4]     # MIND impressions format
+
+
+# --------------------------------------------------------------------------- #
+# Recency-weighted corpus subsample (RWE_REC_RECENCY_HALFLIFE_DAYS).
+# --------------------------------------------------------------------------- #
+def _age_corpus(tmp_path, days=30, per_day=60):
+    """A dated catalogue shaped like the live one: many publishers, a month of history."""
+    import csv as _c
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    path = tmp_path / "aged.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = _c.writer(f)
+        w.writerow(["title", "source", "bias_rating", "tags", "url", "political", "country",
+                    "published_at"])
+        for d in range(days):
+            for k in range(per_day):
+                w.writerow([f"headline {d}-{k}", f"Outlet{k % 12}",
+                            ("left", "center", "right")[k % 3], "Politics",
+                            f"https://a{d}-{k}.example/x", "1", "US",
+                            (now - timedelta(days=d, hours=k % 24)).isoformat()])
+    return str(path), now
+
+
+def _ages_of(catalog, path, now):
+    import csv as _c
+    from datetime import datetime
+    rows = list(_c.DictReader(open(path, encoding="utf-8")))
+    out = []
+    for ident in catalog.ids:
+        when = datetime.fromisoformat(rows[int(str(ident)[1:])]["published_at"])
+        out.append((now - when).total_seconds() / 86400.0)
+    return np.array(out)
+
+
+def test_recency_weighting_is_off_by_default(tmp_path, monkeypatch):
+    """The shipped default must be the uniform draw, byte for byte — this changes nothing until
+    an operator turns it on."""
+    monkeypatch.delenv("RWE_REC_RECENCY_HALFLIFE_DAYS", raising=False)
+    assert su.recency_halflife_days() == 0.0
+    path, _ = _age_corpus(tmp_path)
+    a = su.catalog_from_qbias(path, max_items=400, seed=0)
+    monkeypatch.setenv("RWE_REC_RECENCY_HALFLIFE_DAYS", "0")
+    b = su.catalog_from_qbias(path, max_items=400, seed=0)
+    assert list(a.ids) == list(b.ids), "0 must be identical to unset, not merely similar"
+
+
+def test_a_half_life_makes_the_pool_measurably_newer(tmp_path, monkeypatch):
+    path, now = _age_corpus(tmp_path)
+    monkeypatch.delenv("RWE_REC_RECENCY_HALFLIFE_DAYS", raising=False)
+    uniform = _ages_of(su.catalog_from_qbias(path, max_items=400, seed=0), path, now)
+    monkeypatch.setenv("RWE_REC_RECENCY_HALFLIFE_DAYS", "3")
+    weighted = _ages_of(su.catalog_from_qbias(path, max_items=400, seed=0), path, now)
+
+    # The claim is the whole distribution moving, not one lucky draw: a uniform sample of a 30-day
+    # window sits near 15 days, and a 3-day half-life must pull the median well under it.
+    assert np.median(uniform) > 12.0, "fixture: the uniform draw should span the window"
+    assert np.median(weighted) < np.median(uniform) / 2
+    assert (weighted < 7).mean() > (uniform < 7).mean() * 2
+
+
+def test_the_weighting_does_not_starve_publishers_or_a_side(tmp_path, monkeypatch):
+    """The guardrail on the knob. Recency weights ARTICLES, not publishers — a prolific outlet's
+    old articles are discounted exactly as much as a rare outlet's — so representation must hold
+    even at an aggressive half-life. Measured, because the intuition runs the other way."""
+    import csv as _c
+    path, _ = _age_corpus(tmp_path)
+    rows = list(_c.DictReader(open(path, encoding="utf-8")))
+    monkeypatch.setenv("RWE_REC_RECENCY_HALFLIFE_DAYS", "1")
+    cat = su.catalog_from_qbias(path, max_items=400, seed=0)
+
+    assert len(set(str(o) for o in cat.outlets)) == 12, "every publisher still reaches the pool"
+    leans = collections.Counter(rows[int(str(i)[1:])]["bias_rating"] for i in cat.ids)
+    assert min(leans.values()) > 0.25 * max(leans.values()), f"a side was starved: {leans}"
+
+
+def test_an_undated_article_gets_the_median_weight_not_the_best(tmp_path, monkeypatch):
+    """A missing timestamp must not buy a slot, and must not cost one either.
+
+    Treating it as newest would let a publisher whose feed omits dates outrank everyone; treating
+    it as oldest would silently drop that publisher entirely. Both are worse than saying "unknown"
+    and drawing on ordinary terms."""
+    w = su._recency_weights(["2026-08-30T00:00:00+00:00", None,
+                             "2026-07-01T00:00:00+00:00"], 3.0)
+    assert w is not None
+    assert w[0] > w[1] > w[2], f"undated must sit between the dated extremes: {w}"
+    # No date anywhere -> no ordering to invent, so the caller falls back to the uniform draw.
+    assert su._recency_weights([None, "", "not-a-date"], 3.0) is None
+
+
+def test_a_corpus_without_the_column_still_builds(tmp_path, monkeypatch):
+    """The static qbias dataset has no published_at. A half-life set against it must be inert
+    rather than an error — the column is appended, and appended columns are optional."""
+    import csv as _c
+    path = tmp_path / "undated.csv"
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = _c.writer(f)
+        w.writerow(["title", "source", "bias_rating", "tags", "url", "political", "country"])
+        for k in range(200):
+            w.writerow([f"h{k}", f"Outlet{k % 8}", ("left", "center", "right")[k % 3],
+                        "Politics", f"https://u{k}.example/x", "1", "US"])
+    monkeypatch.setenv("RWE_REC_RECENCY_HALFLIFE_DAYS", "3")
+    cat = su.catalog_from_qbias(str(path), max_items=50, seed=0)
+    assert cat.n == 50
+
+
+def test_a_junk_half_life_is_off_rather_than_a_crash(monkeypatch):
+    for bad in ("", "abc", "-5", "0", "nan", "inf"):
+        monkeypatch.setenv("RWE_REC_RECENCY_HALFLIFE_DAYS", bad)
+        assert su.recency_halflife_days() == 0.0, bad

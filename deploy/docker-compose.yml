@@ -376,6 +376,11 @@ services:
       # ("feature:pct", e.g. story_source:50), and the shadow-log feature list.
       RWE_REC_STORY_SOURCE: ${RWE_REC_STORY_SOURCE:-0}
       RWE_REC_EMERGING: ${RWE_REC_EMERGING:-0}
+      # Recency weighting for the recommendation corpus subsample, half-life in DAYS.
+      # 0 = OFF = the uniform draw, byte-identical to before. The recommender has no time
+      # feature, so this is the only place article age can reach a served feed. Measure with
+      # deploy/ops/rec-age-probe.py before changing it.
+      RWE_REC_RECENCY_HALFLIFE_DAYS: ${RWE_REC_RECENCY_HALFLIFE_DAYS:-0}
       RWE_REC_BLINDSPOT_SLOTS: ${RWE_REC_BLINDSPOT_SLOTS:-0}
       RWE_REC_EXPERIMENT: ${RWE_REC_EXPERIMENT:-}
       RWE_REC_SHADOW: ${RWE_REC_SHADOW:-}
