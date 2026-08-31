@@ -477,6 +477,19 @@ class SourceAdmission(Base):
     article_pattern: Mapped[Optional[str]] = mapped_column(Text, default=None)
     reason: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
+    # -- crawl policy — ORTHOGONAL to the admission state machine ------------------------
+    #: Admission IS crawl authorization: an admitted host crawls, and there is deliberately no
+    #: separate "crawl-approved" state to forget to set. These two columns are the only crawl
+    #: policy, and neither can move `state`, `tier`, or the probe ledger — pausing a misbehaving
+    #: host must not look like withdrawing it (withdrawal has tier side-effects this table's own
+    #: docstring warns about), and a paused host must answer "since when" without a second lookup,
+    #: which is why this is a timestamp and not a boolean.
+    crawl_paused_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    #: Per-host poll cadence override, seconds; NULL = the global ``RWE_CRAWL_INTERVAL``. Floored
+    #: at read time (`crawler.MIN_CRAWL_INTERVAL`), never at write — the record keeps what the
+    #: operator said, the adapter enforces what a publisher can be asked to bear.
+    crawl_interval_seconds: Mapped[Optional[int]] = mapped_column(default=None)
+
 
 class WebSearchSpend(Base):
     """Search requests spent per UTC day — the meter behind ``RWE_WEB_SEARCH_DAILY_BUDGET``.
@@ -2119,7 +2132,9 @@ class Store:
         spells out: ``create_all`` creates NEW tables only, and this one shipped with M11 and is
         already carrying 1,173 rows in production. A column added to :class:`SourceAdmission` after
         that first deploy belongs in this list, or every read fails with ``no such column``."""
-        for name, decl in [("channel", "VARCHAR(24)")]:
+        for name, decl in [("channel", "VARCHAR(24)"),
+                           ("crawl_paused_at", "VARCHAR(64)"),
+                           ("crawl_interval_seconds", "INTEGER")]:
             try:
                 with self.session() as s:
                     s.execute(text(f"ALTER TABLE source_admission ADD COLUMN {name} {decl}"))
@@ -2931,7 +2946,8 @@ class Store:
                 "verdict": r.verdict, "feedUrl": r.feed_url, "discoveredVia": r.discovered_via,
                 "gates": json.loads(r.gates or "[]"), "samples": json.loads(r.samples or "[]"),
                 "tier": r.tier, "articlePattern": r.article_pattern, "reason": r.reason,
-                "channel": r.channel}
+                "channel": r.channel, "crawlPausedAt": r.crawl_paused_at,
+                "crawlIntervalSeconds": r.crawl_interval_seconds}
 
     def admission_row(self, host: str) -> "dict | None":
         with self.session() as s:
@@ -3427,6 +3443,41 @@ class Store:
                 .where(SourceAdmission.state == "admitted")
                 .where(SourceAdmission.feed_url.is_not(None))
                 .order_by(SourceAdmission.host)).scalars()]
+
+    def set_crawl_policy(self, host: str, *, paused: "bool | None" = None,
+                         interval_seconds: "int | None | object" = "unchanged",
+                         at: "str | None" = None) -> "dict | None":
+        """Set the crawl-policy half of one admission row; ``None`` if the host is unknown.
+
+        Policy only: `state`, `tier` and the probe ledger are untouchable from here by
+        construction — this method can write exactly two columns. ``paused=True`` stamps now (or
+        ``at``), ``paused=False`` clears; ``interval_seconds`` accepts an int to set or ``None``
+        to clear, and the default sentinel leaves it alone. Any state may carry policy — pausing
+        a candidate is a harmless statement about a crawl that is not happening yet."""
+        with self.session() as s:
+            row = s.get(SourceAdmission, (host or "").strip().lower())
+            if row is None:
+                return None
+            if paused is True:
+                row.crawl_paused_at = at or datetime.now(timezone.utc).isoformat()
+            elif paused is False:
+                row.crawl_paused_at = None
+            if interval_seconds != "unchanged":
+                row.crawl_interval_seconds = (int(interval_seconds)
+                                              if interval_seconds is not None else None)
+            s.flush()
+            return self._admission_row(row)
+
+    def crawl_paused(self, host: str) -> "str | None":
+        """When ``host`` was paused, or ``None`` — the one-PK read behind the live pause check.
+
+        Read per poll cycle by `crawler.CrawlAdapter.poll_once`, so a pause takes effect within
+        one cadence instead of at the next restart. Fail direction is decided at the CALLER and
+        it is fail-open: pause is a convenience, robots is the safety, and a store hiccup must
+        not silently stop ingestion."""
+        with self.session() as s:
+            row = s.get(SourceAdmission, (host or "").strip().lower())
+            return row.crawl_paused_at if row is not None else None
 
     # -- content lifecycle (Commit 18: extension-created articles) --------------------
     def maybe_promote_feed_article(self, canonical_url: str, min_readers: int) -> bool:

@@ -320,6 +320,9 @@ def crawl_config_fields(row: dict) -> dict:
         "article_pattern": (row.get("articlePattern") or "").strip(),
         "max_age_days": ADMITTED_MAX_AGE_DAYS,
         "enabled": True,
+        # Crawl-policy cadence override (NULL = the global interval). Threaded as data and floored
+        # at READ (`crawler.MIN_CRAWL_INTERVAL`), so the record keeps what the operator wrote.
+        "interval_seconds": row.get("crawlIntervalSeconds"),
     }
     feed_host = _host_of(feed)
     if feed_host and feed_host != host and not feed_host.endswith("." + host):

@@ -80,6 +80,11 @@ services:
       #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
       RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
       RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
+      # Which acquisition channels' ADMITTED hosts this deployment crawls (comma list of
+      # source_discovery.CHANNELS values; `web_search` is accepted as an alias for `web`).
+      # Empty = all admitted hosts, the prior behaviour. Selection, not authorization: an
+      # admitted host outside the filter stays admitted, it just gets no crawl config.
+      RWE_CRAWL_CHANNELS: ${RWE_CRAWL_CHANNELS:-}
       # Phase 2 web-discovery channel (`source_web.py`). ALL EMPTY BY DEFAULT, and the emptiness is
       # the safety property: `search_adapter()` returns None without an endpoint, and `discover`
       # treats None as "plan the queries, ask nobody". So an unconfigured deployment cannot make a
@@ -856,6 +861,11 @@ services:
       #   RWE_CRAWL_INTERVAL    seconds between cycles per publisher (default 900)
       RWE_CRAWL_ENABLED: ${RWE_CRAWL_ENABLED:-}
       RWE_CRAWL_INTERVAL: ${RWE_CRAWL_INTERVAL:-}
+      # Which acquisition channels' ADMITTED hosts this deployment crawls (comma list of
+      # source_discovery.CHANNELS values; `web_search` is accepted as an alias for `web`).
+      # Empty = all admitted hosts, the prior behaviour. Selection, not authorization: an
+      # admitted host outside the filter stays admitted, it just gets no crawl config.
+      RWE_CRAWL_CHANNELS: ${RWE_CRAWL_CHANNELS:-}
       # Phase 2 web-discovery channel (`source_web.py`). ALL EMPTY BY DEFAULT, and the emptiness is
       # the safety property: `search_adapter()` returns None without an endpoint, and `discover`
       # treats None as "plan the queries, ask nobody". So an unconfigured deployment cannot make a

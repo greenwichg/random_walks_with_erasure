@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -78,6 +79,13 @@ USER_AGENT = robots.user_agent("Crawler")
 #: Conservative floor between two requests to the SAME host, in seconds. Overridden upward (never
 #: downward) by a publisher's own ``Crawl-delay``.
 DEFAULT_MIN_INTERVAL = 2.0
+
+#: Floor on a per-publisher poll CADENCE (`PublisherCrawlConfig.interval_seconds`), in seconds.
+#: `DEFAULT_MIN_INTERVAL` above bounds request spacing WITHIN a cycle; this bounds how often whole
+#: cycles may start, so a typo'd per-host interval of ``1`` cannot turn crawl policy into a hammer.
+#: Applied at read (:meth:`CrawlAdapter.interval`), never at write — the admission row keeps what
+#: the operator actually said.
+MIN_CRAWL_INTERVAL = 300.0
 
 #: Distinct off-domain hosts recorded per publisher per cycle (link mining). A newsroom index links
 #: outward a handful of times; a page linking to hundreds of domains is a link farm, and an
@@ -137,6 +145,11 @@ class PublisherCrawlConfig:
     min_interval: float = DEFAULT_MIN_INTERVAL
     max_fetches: int = DEFAULT_MAX_FETCHES
     enabled: bool = True
+    #: Per-publisher poll cadence, seconds; ``None`` = the global ``RWE_CRAWL_INTERVAL``. Comes from
+    #: the admission row's crawl policy (`source_admission.crawl_config_fields`); floored at read by
+    #: :meth:`CrawlAdapter.interval`, so no stored value can cycle a publisher faster than
+    #: ``MIN_CRAWL_INTERVAL`` allows.
+    interval_seconds: "int | None" = None
 
     @property
     def pattern(self):
@@ -201,8 +214,21 @@ def admitted_configs(store_, *, exclude=frozenset()) -> "list[PublisherCrawlConf
         rows = store_.admitted_crawl_rows()
     except Exception:
         return configs
+    channels = crawl_channels()
     for row in rows:
         host = row["host"]
+        # Crawl POLICY, not admission state: a paused host stays admitted (and its articles stay
+        # served) — it simply gets no config this build. The live half of the same pause is the
+        # per-cycle check in `CrawlAdapter.poll_once`; this is the restart half.
+        if row.get("crawlPausedAt"):
+            continue
+        # Channel SELECTION (RWE_CRAWL_CHANNELS): which acquisition channels' admissions this
+        # deployment crawls. Empty = all admitted, today's behaviour. Selection is orthogonal to
+        # authorization — an admitted host outside the filter stays admitted, just unselected —
+        # and rows with no recorded channel (pre-M11 legacy) match only the empty filter, because
+        # guessing their channel is exactly what the channel column's docstring refuses to do.
+        if channels is not None and (row.get("channel") or "") not in channels:
+            continue
         if not corpus.is_assigned(row.get("publisher") or host, f"https://{host}/"):
             continue
         fields = source_admission.crawl_config_fields(row)
@@ -211,6 +237,33 @@ def admitted_configs(store_, *, exclude=frozenset()) -> "list[PublisherCrawlConf
         srcs = tuple(DiscoverySource(kind=s["kind"], url=s["url"]) for s in fields.pop("sources"))
         configs.append(PublisherCrawlConfig(sources=srcs, **fields))
     return configs
+
+
+#: `RWE_CRAWL_CHANNELS` spellings accepted for a channel — the stored value is
+#: `source_discovery.CHANNELS`' ``web`` (15 production rows already carry it; renaming recorded
+#: history would break the per-channel economics comparison), but the operator-facing name for the
+#: channel is "web search", so both spellings select it.
+_CHANNEL_ALIASES = {"web_search": "web", "websearch": "web", "web-search": "web"}
+
+
+def crawl_channels() -> "frozenset[str] | None":
+    """The acquisition channels this deployment crawls, or ``None`` for "all admitted".
+
+    Read per config build (not cached at import) so a test or an operator restart sees the current
+    environment. Unknown names pass through un-aliased: a filter of ``bogus`` selects nothing,
+    which is visible in `status --crawl` — silently selecting everything would be the worse bug."""
+    raw = os.environ.get("RWE_CRAWL_CHANNELS", "").strip().lower()
+    if not raw:
+        return None
+    return frozenset(_CHANNEL_ALIASES.get(c.strip(), c.strip())
+                     for c in raw.split(",") if c.strip())
+
+
+def crawl_health_key(publisher: str) -> str:
+    """The `FeedHealth` row key for one crawl publisher — THE join between the admission table and
+    crawl status. One implementation, used by `CrawlAdapter.health_key` (the writer) and
+    `source_campaign status --crawl` (the reader), so the two can never disagree about a slug."""
+    return f"crawl://{(publisher or '').lower().replace(' ', '-')}"
 
 
 def lint_config(configs) -> "list[dict]":
@@ -806,7 +859,7 @@ class CrawlAdapter(sources.SourceAdapter):
 
     @property
     def health_key(self) -> str:
-        return f"crawl://{self.config.publisher.lower().replace(' ', '-')}"
+        return crawl_health_key(self.config.publisher)
 
     def enabled(self) -> bool:
         """Both switches must be on: the global flag **and** this publisher's own.
@@ -856,7 +909,45 @@ class CrawlAdapter(sources.SourceAdapter):
                 f"corpus — promotion by omission. Assign it to a lane first.")
 
     def interval(self) -> float:
+        """Per-publisher cadence when the admission row set one, else the global default.
+
+        The override is floored at ``MIN_CRAWL_INTERVAL`` HERE, at read, so no stored value can
+        cycle a publisher faster than the floor allows — and the clamp composes with the poller's
+        failure backoff, which multiplies whatever this returns. Re-read at every lease release
+        [sources._release -> _effective_interval -> interval()], so the scheduler needs no change
+        to honour per-host values."""
+        v = self.config.interval_seconds
+        if v:
+            return max(MIN_CRAWL_INTERVAL, float(v))
         return sources._float_env("RWE_CRAWL_INTERVAL", 900.0)
+
+    def poll_once(self, store_, scorer, *, on_feed=None) -> dict:
+        """The base cycle, behind the LIVE half of the pause check.
+
+        `admitted_configs` already skips a paused host at config build — but configs are built once
+        at process start, so that half alone honours a pause only at the next restart, and the use
+        case is pausing a misbehaving host NOW. Same shape as `KeyedJSONAdapter.poll_once`'s
+        budget short-circuit: decide before any request, return a marked aggregate, touch no
+        health row's lastSuccess.
+
+        Fail-OPEN on the store read: pause is a convenience, robots is the safety, and a store
+        hiccup must not silently stop ingestion — the opposite direction from every authorization
+        gate in this file, and deliberate."""
+        paused = None
+        host = self.config.domains[0] if self.config.domains else ""
+        if store_ is not None and host:
+            try:
+                paused = store_.crawl_paused(host)
+            except Exception:
+                paused = None
+        if paused:
+            sources._default_log(logging.INFO, "crawl_paused_skip",
+                                 provider=self.provider, host=host, pausedAt=paused)
+            agg = sources._agg(self.provider, self.source_type, None, None, 0.0, None,
+                               key=self.health_key)
+            agg["crawlPaused"] = True
+            return agg
+        return super().poll_once(store_, scorer, on_feed=on_feed)
 
     def max_articles(self) -> Optional[int]:
         return self.config.max_urls

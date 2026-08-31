@@ -286,8 +286,89 @@ def _print_cohort_impact(st, args) -> None:
                 print(f"    {h['host'][:38]:<38} {h['window']:>10,} {h['catalogue']:>13,}")
 
 
+def cmd_crawl(args) -> int:
+    """Crawl POLICY on one admitted host — never admission state.
+
+    Three operations, exactly one per invocation: pause (stamps now, crawling stops within one
+    poll cycle via the live check and at the next config build), resume (clears the stamp), and
+    set-interval (per-host cadence; the CLI refuses below `crawler.MIN_CRAWL_INTERVAL` rather than
+    silently storing a value the read-side clamp would override — the record should say what will
+    actually happen). None of these can move `state`, `tier`, or the probe ledger."""
+    st = _store(args)
+    ops = [bool(args.pause), bool(args.resume), bool(args.set_interval)]
+    if sum(ops) != 1:
+        print("Exactly one of --pause HOST, --resume HOST, --set-interval HOST SECONDS.")
+        return 2
+    if args.pause:
+        row = st.set_crawl_policy(args.pause, paused=True)
+        verb = "PAUSED"
+    elif args.resume:
+        row = st.set_crawl_policy(args.resume, paused=False)
+        verb = "RESUMED"
+    else:
+        host, raw = args.set_interval
+        try:
+            secs = int(raw)
+        except ValueError:
+            print(f"--set-interval takes seconds, got {raw!r}")
+            return 2
+        if secs != 0 and secs < crawler.MIN_CRAWL_INTERVAL:
+            print(f"Refusing: {secs}s is below the {crawler.MIN_CRAWL_INTERVAL:.0f}s floor "
+                  f"(crawler.MIN_CRAWL_INTERVAL) — the floor protects publishers from a typo'd "
+                  f"cadence, and storing a value the read-side clamp would override makes the "
+                  f"record lie. 0 clears the override.")
+            return 2
+        row = st.set_crawl_policy(host, interval_seconds=(secs or None))
+        verb = f"INTERVAL={'global default' if not secs else f'{secs}s'}"
+    if row is None:
+        print("no such host in the admission table")
+        return 2
+    print(f"{verb}  {row['host']}   state={row['state']} tier={row['tier'] or '-'} "
+          f"channel={row['channel'] or '-'}")
+    print(f"  crawlPausedAt        : {row['crawlPausedAt'] or '-'}")
+    print(f"  crawlIntervalSeconds : {row['crawlIntervalSeconds'] or '- (global)'}")
+    if row["state"] != "admitted":
+        print(f"  NOTE: policy recorded, but only an ADMITTED host crawls; this one is "
+              f"{row['state']!r}, so the policy takes effect if it is admitted.")
+    return 0
+
+
+def _print_crawl_status(st) -> None:
+    """The admission ⋈ FeedHealth join, per admitted host — the read half of the crawl policy."""
+    import source_admission as _sa
+    health = {h["feedUrl"]: h for h in st.list_feed_health()}
+    rows = st.admission_rows(states=["admitted"], limit=0)
+    channels = crawler.crawl_channels()
+    env_default = float(os.environ.get("RWE_CRAWL_INTERVAL") or 900.0)
+    now = datetime.now(timezone.utc)
+    print(f"\n=== crawl policy + status ({len(rows)} admitted host(s); "
+          f"channel filter: {','.join(sorted(channels)) if channels else 'none — all'}) ===")
+    for r in sorted(rows, key=lambda r: r["host"]):
+        iv = r.get("crawlIntervalSeconds")
+        eff = max(crawler.MIN_CRAWL_INTERVAL, float(iv)) if iv else env_default
+        h = health.get(crawler.crawl_health_key(r.get("publisher") or r["host"])) or {}
+        last = max(filter(None, [h.get("lastSuccessAt"), h.get("lastFailureAt")]), default=None)
+        last_dt = _sa.parse_iso(last)
+        if r.get("crawlPausedAt"):
+            due = f"paused since {r['crawlPausedAt']}"
+        elif channels is not None and (r.get("channel") or "") not in channels:
+            due = "unselected (RWE_CRAWL_CHANNELS)"
+        elif last_dt is None:
+            due = "due now (never polled)"
+        else:
+            remaining = eff - (now - last_dt).total_seconds()
+            due = "due now" if remaining <= 0 else f"due in {remaining:.0f}s"
+        status = ("ok" if h.get("healthy") else f"failing x{h.get('consecutiveFailures', '?')}"
+                  ) if h else "no health row yet"
+        print(f"  {r['host']:<28} ch={r.get('channel') or '-':<10} every {eff:>5.0f}s  "
+              f"{status:<18} last={last or '-':<27} {due}")
+
+
 def cmd_status(args) -> int:
     st = _store(args)
+    if getattr(args, "crawl", False):
+        _print_crawl_status(st)
+        return 0
     _print_status(st, args)
     _print_cohort_impact(st, args)
     if args.show:
@@ -614,7 +695,17 @@ def main(argv=None) -> int:
         return p
 
     common(sub.add_parser("seed", help="upsert candidate rows from the catalogue (offline)"))
-    common(sub.add_parser("status", help="what the table holds and what a probe would do"))
+    status_p = common(sub.add_parser("status", help="what the table holds and what a probe would do"))
+    status_p.add_argument("--crawl", action="store_true",
+                          help="crawl policy + health per admitted host (admission ⋈ feed_health)")
+    crawl_p = sub.add_parser("crawl", help="crawl POLICY on one admitted host — pause / resume / "
+                                           "cadence. Never admission state.")
+    crawl_p.add_argument("--db", default=os.environ.get("RWE_DB_URL"))
+    crawl_p.add_argument("--pause", default="", metavar="HOST",
+                         help="stop crawling HOST (within one poll cycle); admission untouched")
+    crawl_p.add_argument("--resume", default="", metavar="HOST", help="clear a pause")
+    crawl_p.add_argument("--set-interval", nargs=2, default=None, metavar=("HOST", "SECONDS"),
+                         help=f"per-host cadence; >= {crawler.MIN_CRAWL_INTERVAL:.0f}s, 0 clears")
     common(sub.add_parser("probe", help="STAGE 2: probe candidates. Touches publishers."))
     common(sub.add_parser("admit", help="validated -> admitted, into the shadow or Tier B lane"))
     common(sub.add_parser("withdraw", help="admitted -> withdrawn; the shadow assignment is kept"))
@@ -623,7 +714,7 @@ def main(argv=None) -> int:
 
     args = ap.parse_args(argv)
     return {"seed": cmd_seed, "status": cmd_status, "probe": cmd_probe, "admit": cmd_admit,
-            "withdraw": cmd_withdraw, "reopen": cmd_reopen,
+            "withdraw": cmd_withdraw, "reopen": cmd_reopen, "crawl": cmd_crawl,
             "emit-config": cmd_emit_config}[args.cmd](args)
 
 
