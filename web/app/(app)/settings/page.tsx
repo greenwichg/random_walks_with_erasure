@@ -54,6 +54,7 @@ import { ExtensionConnect } from "@/components/settings/extension-connect";
 import { PushToggle } from "@/components/settings/push-toggle";
 import { usePushConfig } from "@/hooks/use-push";
 import { CountryBadge } from "@/components/shared/country-badge";
+import { CountryPicker } from "@/components/shared/country-picker";
 import { countryName } from "@ih/core/logic/countries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -68,13 +69,6 @@ const LANGUAGES = [
   { value: "de", label: "Deutsch" },
   { value: "pt", label: "Português" },
 ];
-
-/** Lower-case and strip diacritics for search matching. Without the fold, typing "tur" misses
- *  Türkiye — ICU's current name — and the same applies to Côte d'Ivoire, São Tomé and Åland.
- *  A reader searching a country list types the letters on their keyboard, not the accents. */
-function fold(s: string): string {
-  return s.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
-}
 
 /** Locale short date for a stored ISO timestamp; empty string when the value doesn't parse. */
 function fmtDate(iso: string, lang: string): string {
@@ -178,8 +172,6 @@ export default function SettingsPage() {
   // by located coverage and drops the empties: measured 2026-08-19, the live catalog's supply runs
   // US 35% / GB 8% / AU 2.7% / IN 2.7% and a long tail, so an alphabetical slice would have offered
   // countries where selecting them does nothing at all.
-  const [allCountries, setAllCountries] = React.useState(false);
-  const [countryQuery, setCountryQuery] = React.useState("");
   const recCountryRanked = React.useMemo(
     () =>
       [...(countries.data ?? [])].sort(
@@ -187,19 +179,16 @@ export default function SettingsPage() {
       ),
     [countries.data],
   );
-  const recCountryOptions = React.useMemo(() => {
-    // Collapsed: the twelve with the most located coverage — the ones most likely to fill a feed.
-    // Expanded: everything the platform knows, INCLUDING countries whose located count is zero.
-    // That is deliberate. The count here is event-located only, while the feature now matches on
-    // content (event OR the country named in the text, demonyms included), so a country can have
-    // real supply and a zero here. Hiding it would offer less than the feed can actually serve.
-    if (!allCountries) return recCountryRanked.filter((c) => c.articles > 0).slice(0, 12);
-    const q = fold(countryQuery);
-    if (!q) return recCountryRanked;
-    return recCountryRanked.filter(
-      (c) => fold(c.country).includes(q) || fold(countryName(c.country, lang)).includes(q),
-    );
-  }, [recCountryRanked, allCountries, countryQuery, lang]);
+  const recCountryTop = React.useMemo(
+    // The visible chips: the twelve with the most located coverage — the ones most likely to fill
+    // a feed. The picker behind "Show all" offers everything the platform knows, INCLUDING
+    // countries whose located count is zero. That is deliberate. The count here is event-located
+    // only, while the feature now matches on content (event OR the country named in the text,
+    // demonyms included), so a country can have real supply and a zero here. Hiding it would
+    // offer less than the feed can actually serve.
+    () => recCountryRanked.filter((c) => c.articles > 0).slice(0, 12),
+    [recCountryRanked],
+  );
   // Every country picker on this page reads one query. While it is in flight the old code
   // rendered `(countries.data ?? [])` — an empty chip row indistinguishable from "this platform
   // knows no countries", which is exactly how a slow list reads as a broken one. Measured on
@@ -466,7 +455,7 @@ export default function SettingsPage() {
             }
           >
             <p className="mb-3 text-xs text-muted-foreground">{t("settings.recCountryHint")}</p>
-            {countryListState(recCountryOptions.length)}
+            {countryListState(recCountryTop.length)}
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
@@ -481,7 +470,14 @@ export default function SettingsPage() {
               >
                 {t("settings.recCountryGlobal")}
               </button>
-              {recCountryOptions.map((c) => (
+              {/* A selection made through the picker must stay visible as a chip even when it is
+                  not among the top twelve — a control whose chosen value renders nowhere reads
+                  as unset. */}
+              {(draft.recommendationCountry &&
+              !recCountryTop.some((c) => c.country === draft.recommendationCountry)
+                ? [{ country: draft.recommendationCountry }, ...recCountryTop]
+                : recCountryTop
+              ).map((c) => (
                 <button
                   key={c.country}
                   type="button"
@@ -502,39 +498,23 @@ export default function SettingsPage() {
                   <CountryBadge code={c.country} />
                 </button>
               ))}
+              {recCountryRanked.length > recCountryTop.length && (
+                <CountryPicker
+                  options={recCountryRanked}
+                  isSelected={(code) => draft.recommendationCountry === code}
+                  onToggle={(code) =>
+                    set(
+                      "recommendationCountry",
+                      draft.recommendationCountry === code ? null : code,
+                    )
+                  }
+                  triggerLabel={t("settings.recCountryShowAll", { n: recCountryRanked.length })}
+                  searchPlaceholder={t("settings.recCountrySearch")}
+                  noMatchLabel={(q) => t("settings.recCountryNoMatch", { q })}
+                  dialogLabel={t("settings.recCountry")}
+                />
+              )}
             </div>
-            {recCountryRanked.length > 12 && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => {
-                    setAllCountries((v) => !v);
-                    setCountryQuery("");
-                  }}
-                >
-                  {allCountries
-                    ? t("settings.recCountryShowLess")
-                    : t("settings.recCountryShowAll", { n: recCountryRanked.length })}
-                </Button>
-                {allCountries && (
-                  <input
-                    type="search"
-                    value={countryQuery}
-                    onChange={(e) => setCountryQuery(e.target.value)}
-                    placeholder={t("settings.recCountrySearch")}
-                    aria-label={t("settings.recCountrySearch")}
-                    className="h-8 min-w-48 flex-1 rounded-md border bg-background px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                )}
-              </div>
-            )}
-            {allCountries && countryQuery && recCountryOptions.length === 0 && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {t("settings.recCountryNoMatch", { q: countryQuery })}
-              </p>
-            )}
           </SectionCard>
 
           {/* Recommendation-feedback effects (Tier 2) — the reader's recorded signals shown the
@@ -706,6 +686,9 @@ export default function SettingsPage() {
                 <p className="mb-1 text-sm font-medium">{t("settings.edition")}</p>
                 <p className="mb-2 text-xs text-muted-foreground">{t("settings.editionDesc")}</p>
                 {countryListState((countries.data ?? []).length)}
+                {/* Global + the current choice + a searchable picker over the FULL list. The old
+                    row offered the first twelve alphabetical countries only — most of the 210
+                    could not be chosen as an edition at all. */}
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
@@ -720,57 +703,84 @@ export default function SettingsPage() {
                   >
                     {t("settings.editionGlobal")}
                   </button>
-                  {(countries.data ?? []).slice(0, 12).map((c) => (
+                  {draft.edition && (
                     <button
-                      key={c.country}
                       type="button"
-                      aria-pressed={draft.edition === c.country}
-                      onClick={() => set("edition", draft.edition === c.country ? null : c.country)}
-                      className={cn(
-                        "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                        draft.edition === c.country
-                          ? "border-primary/40 bg-primary/10 text-primary"
-                          : "text-muted-foreground hover:bg-accent",
-                      )}
+                      aria-pressed
+                      onClick={() => set("edition", null)}
+                      className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     >
-                      <CountryBadge code={c.country} />
+                      <CountryBadge code={draft.edition} />
                     </button>
-                  ))}
+                  )}
+                  <CountryPicker
+                    options={countries.data ?? []}
+                    isSelected={(code) => draft.edition === code}
+                    onToggle={(code) => set("edition", draft.edition === code ? null : code)}
+                    triggerLabel={t("settings.editionChoose")}
+                    searchPlaceholder={t("settings.recCountrySearch")}
+                    noMatchLabel={(q) => t("settings.recCountryNoMatch", { q })}
+                    dialogLabel={t("settings.edition")}
+                  />
                 </div>
               </div>
 
               <div>
                 <p className="mb-1 text-sm font-medium">{t("settings.followedPlaces")}</p>
                 <p className="mb-2 text-xs text-muted-foreground">{t("settings.followedPlacesDesc")}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(countries.data ?? []).slice(0, 12).map((c) => {
-                    const list = draft.locations ?? [];
-                    const on = list.some((l) => l.placeId === c.country && l.level === "country");
-                    return (
-                      <button
-                        key={c.country}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() =>
-                          set(
-                            "locations",
-                            on
-                              ? list.filter((l) => !(l.placeId === c.country && l.level === "country"))
-                              : [...list, { placeId: c.country, level: "country" as const }],
-                          )
-                        }
-                        className={cn(
-                          "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                          on
-                            ? "border-primary/40 bg-primary/10 text-primary"
-                            : "text-muted-foreground hover:bg-accent",
-                        )}
-                      >
-                        <CountryBadge code={c.country} />
-                      </button>
+                {/* Chips are the FOLLOWED places themselves (tap to unfollow), not a fixed menu —
+                    the old first-twelve row could neither show nor remove a follow outside its
+                    slice. Adding goes through the searchable picker, capped at ten per the copy. */}
+                {(() => {
+                  const list = draft.locations ?? [];
+                  const followed = list.filter((l) => l.level === "country");
+                  const atCap = followed.length >= 10;
+                  const toggle = (code: string) => {
+                    const on = list.some((l) => l.placeId === code && l.level === "country");
+                    if (!on && atCap) return;
+                    set(
+                      "locations",
+                      on
+                        ? list.filter((l) => !(l.placeId === code && l.level === "country"))
+                        : [...list, { placeId: code, level: "country" as const }],
                     );
-                  })}
-                </div>
+                  };
+                  return (
+                    <div className="flex flex-wrap gap-1.5">
+                      {followed.map((l) => (
+                        <button
+                          key={l.placeId}
+                          type="button"
+                          aria-label={t("settings.followedPlacesRemove", {
+                            name: countryName(l.placeId, lang),
+                          })}
+                          onClick={() => toggle(l.placeId)}
+                          className="group inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        >
+                          <CountryBadge code={l.placeId} />
+                          <X className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                        </button>
+                      ))}
+                      <CountryPicker
+                        options={countries.data ?? []}
+                        isSelected={(code) =>
+                          list.some((l) => l.placeId === code && l.level === "country")
+                        }
+                        onToggle={toggle}
+                        multi
+                        full={atCap}
+                        fullNote={t("settings.followedPlacesLimit")}
+                        triggerLabel={t("settings.followedPlacesAdd", {
+                          n: followed.length,
+                          max: 10,
+                        })}
+                        searchPlaceholder={t("settings.recCountrySearch")}
+                        noMatchLabel={(q) => t("settings.recCountryNoMatch", { q })}
+                        dialogLabel={t("settings.followedPlaces")}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </SectionCard>
