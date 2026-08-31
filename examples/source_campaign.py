@@ -398,7 +398,12 @@ def _queue(st, args, *, limit=None) -> list:
     wanted = ({h.strip().lower() for h in args.hosts.split(",") if h.strip()}
               if args.hosts else None)
     out = []
-    for row in st.admission_rows(states=sa.PROBEABLE, hosts=wanted):
+    # Explicitly named hosts skip the PROBEABLE pre-filter so `may_probe` stays the ONE predicate:
+    # force may reopen a completed host, and the pre-filter was vetoing that before may_probe ever
+    # saw the row — while the NOT-PROBED report, asking may_probe directly, printed an EMPTY reason
+    # (observed on production 2026-08-31, diariandorra.ad). Unhosted scans keep the pre-filter as a
+    # scan bound; may_probe returns the same verdicts either way.
+    for row in st.admission_rows(states=None if wanted else sa.PROBEABLE, hosts=wanted):
         decision = sa.may_probe(row, now=datetime.now(timezone.utc), force=args.force,
                                 stale_minutes=args.stale_minutes)
         if decision.allowed:

@@ -999,6 +999,34 @@ def test_the_admit_cli_defaults_to_shadow_and_refuses_tier_a(campaign, monkeypat
     assert "TO THE shadow LANE" in _run(campaign, "admit", "--all-validated")
 
 
+def test_a_named_host_with_force_reopens_a_completed_probe(campaign, monkeypatch):
+    """`probe --hosts X --force` on a REJECTED host must actually probe it.
+
+    Observed on production 2026-08-31 (diariandorra.ad): rejected on gate 6, the operator supplied
+    the missing language and re-ran with --force — and the run probed 0 hosts while printing an
+    EMPTY skip reason. `_queue` pre-filtered to PROBEABLE before `may_probe` ever saw the row,
+    while the NOT-PROBED report asked `may_probe` directly (allowed under force — empty reason):
+    exactly the status/probe disagreement `_queue`'s docstring forbids. For explicitly named hosts
+    `may_probe` is now the one predicate.
+
+    Mutation ledger (each against a green baseline; the force branch below went red): restoring the
+    unconditional `states=sa.PROBEABLE` pre-filter; and dropping `force=args.force` from `_queue`'s
+    `may_probe` call."""
+    probe = _Probe({"gamma.example": "REJECT"})
+    monkeypatch.setattr(sc.sv, "validate", probe)
+    _run(campaign, "probe", "--interval", "0")
+
+    # Named WITHOUT --force: not probed, and the report carries may_probe's real reason, not "".
+    out = _run(campaign, "probe", "--hosts", "gamma.example", "--interval", "0")
+    assert "NOT PROBED  gamma.example: already rejected" in out
+    assert "PROBING 0 HOSTS" in out
+
+    probe.verdicts.clear()          # the operator fixed the source; this time it validates
+    out = _run(campaign, "probe", "--hosts", "gamma.example", "--force", "--interval", "0")
+    assert "PROBING 1 HOSTS" in out and probe.hosts.count("gamma.example") == 2
+    assert store_mod.Store(campaign).admission_row("gamma.example")["state"] == "validated"
+
+
 def test_admit_refuses_to_do_nothing_by_default(campaign):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
