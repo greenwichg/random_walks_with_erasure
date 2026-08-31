@@ -34,6 +34,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Literal, Optional
+import urllib.parse
 from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling api_server
@@ -2382,6 +2383,123 @@ def metrics_snapshot(request: Request) -> dict:
     if not _trusted(request):
         raise HTTPException(status_code=404, detail="Not found.")
     return obs_metrics.snapshot()
+
+
+# --------------------------------------------------------------------------------------- IH Search
+def _search_api_keys() -> "frozenset[str]":
+    return frozenset(k.strip() for k in os.environ.get("RWE_SEARCH_API_KEYS", "").split(",")
+                     if k.strip())
+
+
+def _search_authorized(api_key: str, request: Request) -> bool:
+    """The facade's own key scheme — deliberately NOT `_trusted` alone, because the design review
+    ruled the search API grows toward external consumers with their own keys. Accepted: any key in
+    ``RWE_SEARCH_API_KEYS``, the internal secret (so the discovery cron works with zero new
+    configuration), or — with neither configured — dev mode's local trust, mirroring `_trusted`."""
+    keys = _search_api_keys()
+    if api_key and api_key in keys:
+        return True
+    secret = _internal_secret()
+    if secret is not None and (api_key == secret or request.headers.get(_AUTH_HEADER) == secret):
+        return True
+    return not keys and secret is None and not _require_auth()
+
+
+def _serp_topup(query: str, need: int, st) -> "tuple[list, str | None]":
+    """Up to ``need`` SerpAPI results — the blended half of the facade, budget-metered.
+
+    Spends ONLY when the internal index fell short (`internal-first, external top-up`), against
+    the same durable daily meter the discovery channel uses (one SerpAPI account, one budget —
+    two meters would let the pair spend double what the operator authorised). The upstream key is
+    ``RWE_SERPAPI_API_KEY``, its own env on purpose: after cutover `RWE_WEB_SEARCH_API_KEY` holds
+    OUR key, and reading it here would send our internal key to SerpAPI. `retries=0` for the
+    reason `source_web.search_adapter` documents: search providers bill errors as readily as
+    successes. Returns (results, note); a failure is a note, never an exception — a thin page is
+    a degraded answer, not an outage."""
+    import source_web
+    key = os.environ.get("RWE_SERPAPI_API_KEY", "").strip()
+    if not key or os.environ.get("RWE_SEARCH_TOPUP", "1").strip().lower() in ("0", "false", "no"):
+        return [], None
+    budget = source_web.search_daily_budget()
+    if st.web_search_spent() >= budget:
+        obs_metrics.incr("search_api_topup_budget_exhausted_total")
+        return [], f"top-up budget exhausted ({budget}/day)"
+    url = ("https://serpapi.com/search.json?"
+           + urllib.parse.urlencode({"q": query, "num": min(need, 20), "api_key": key}))
+    try:
+        st.note_web_search()                            # count BEFORE the request, like the channel
+        payload = sources._get_json(url, retries=0)
+    except Exception as exc:                            # noqa: BLE001 — degraded, not down
+        obs_metrics.incr("search_api_topup_errors_total")
+        return [], f"top-up failed: {type(exc).__name__}"
+    out = [{"link": (r.get("link") or "").strip(), "title": (r.get("title") or "").strip(),
+            "snippet": r.get("snippet") or ""}
+           for r in (payload.get("organic_results") or []) if isinstance(r, dict)]
+    obs_metrics.incr("search_api_topup_requests_total")
+    obs_metrics.incr("search_api_topup_results_total", len(out))
+    return [r for r in out if r["link"]], None
+
+
+@app.get("/api/search.json", response_model=None, tags=["search"],
+         summary="IH Search — SerpAPI-compatible outlet/web-source discovery")
+def ih_search(request: Request, q: str = "", num: int = 10, api_key: str = "",
+              engine: str = "google") -> "JSONResponse | dict":
+    """The SerpAPI-shaped facade over the IH outlet index (`outlet_search.py`).
+
+    The HARD contract (what `source_web.search_adapter` reads): 200 + `organic_results[]` of
+    `{link, title}`; 401/400/429 otherwise. The envelope (`search_metadata` etc.) is served for
+    third-party SerpAPI clients and costs nothing. Results are internal-first; a shortfall is
+    topped up from SerpAPI under the shared daily budget, each row marked `ih_source` — interface
+    compatibility, honestly labelled provenance."""
+    t0 = time.perf_counter()
+    obs_metrics.incr("search_api_requests_total")
+    if not _search_authorized(api_key, request):
+        return JSONResponse({"error": "Invalid API key. Your API key should be here: "
+                                      "https://serpapi.com/manage-api-key"}, status_code=401)
+    if not q.strip():
+        return JSONResponse({"error": "Missing query `q` parameter."}, status_code=400)
+    num = max(1, min(int(num or 10), 50))
+    import outlet_search
+    st = _require_store()
+    con = outlet_search.open_index()
+    try:
+        plan = outlet_search.plan_query(q)
+        rows = outlet_search.query_index(con, plan, count=num,
+                                         feedback=outlet_search.feedback_weights(st))
+    finally:
+        con.close()
+    results = [{"position": i + 1, "title": r["name"], "link": f"https://{r['host']}/",
+                "source": r["domain"], "displayed_link": f"https://{r['host']}",
+                "snippet": (f"{r['country'] or '??'}/{r['language'] or '??'} — evidence: "
+                            f"{', '.join(r['evidence'])}"),
+                "ih_source": "internal", "ih_score": r["score"], "ih_tracked": r["tracked"]}
+               for i, r in enumerate(rows)]
+    obs_metrics.incr("search_api_internal_results_total", len(results))
+    note = None
+    if len(results) < num:
+        extra, note = _serp_topup(q, num - len(results), st)
+        have = {outlet_search.registrable_domain(
+            urlsplit(r["link"]).hostname or "") for r in results}
+        for r in extra:
+            dom = outlet_search.registrable_domain(urlsplit(r["link"]).hostname or "")
+            if dom in have:
+                continue
+            have.add(dom)
+            results.append({"position": len(results) + 1, "title": r["title"], "link": r["link"],
+                            "source": dom, "snippet": r.get("snippet") or "",
+                            "ih_source": "serpapi"})
+            if len(results) >= num:
+                break
+    body = {
+        "search_metadata": {"id": uuid.uuid4().hex, "status": "Success",
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "total_time_taken": round(time.perf_counter() - t0, 3),
+                            **({"note": note} if note else {})},
+        "search_parameters": {"engine": engine or "google", "q": q, "num": num},
+        "search_information": {"total_results": len(results)},
+        "organic_results": results,
+    }
+    return body
 
 
 @app.post("/api/client-errors", response_model=ClientErrorAckModel, tags=["meta"],

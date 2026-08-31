@@ -113,6 +113,21 @@ services:
       # default (200) — unlike the free-feed adapters, search bills per request and the
       # hourly cron re-sends its gap queries every pass. There is no unlimited spelling.
       RWE_WEB_SEARCH_DAILY_BUDGET: ${RWE_WEB_SEARCH_DAILY_BUDGET:-}
+      # ---- IH Search: the SerpAPI-compatible facade over our own outlet index ----
+      # Keys that may call /api/search.json (comma list; the internal secret always works, so the
+      # discovery cron needs nothing new). Empty + auth-required = the facade refuses non-internal
+      # callers — same fail-closed posture as every other gate.
+      RWE_SEARCH_API_KEYS: ${RWE_SEARCH_API_KEYS:-}
+      # Blend a SerpAPI top-up into thin internal responses (internal-first, external top-up).
+      # Spends against the SAME durable daily meter as the discovery channel — one account, one
+      # budget. 0 disables all external calls from the facade.
+      RWE_SEARCH_TOPUP: ${RWE_SEARCH_TOPUP:-1}
+      # The UPSTREAM SerpAPI key, its own variable on purpose: after cutover
+      # RWE_WEB_SEARCH_API_KEY holds OUR internal key, and reusing it here would send our
+      # internal secret to SerpAPI.
+      RWE_SERPAPI_API_KEY: ${RWE_SERPAPI_API_KEY:-}
+      # Where the outlet index lives (default: beside the engine DB, on the persisted volume).
+      RWE_OUTLET_INDEX_DB: ${RWE_OUTLET_INDEX_DB:-}
       # Minimum seconds between catalog-wide post-cycle passes (retention + the hot refresh).
       # Default 600, matching RWE_POLL_INTERVAL. Production measured 87.8% lock occupancy because
       # each of ~11 adapter threads ran its own full pass whenever it found a single article, at a

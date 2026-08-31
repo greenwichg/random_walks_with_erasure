@@ -2390,3 +2390,119 @@ def test_the_digest_email_run_is_internal_only(client, monkeypatch):
     assert client.post("/api/internal/email/digest-run").status_code == 401
     ok = client.post("/api/internal/email/digest-run", headers={"X-IH-Auth": "s3cret"})
     assert ok.status_code == 200 and "sent" in ok.json()
+
+
+# --------------------------------------------------------------------------- IH Search facade
+# The SerpAPI-compatible surface over the outlet index (design frozen 2026-08-31). The HARD
+# contract is what `source_web.search_adapter` reads — 200 + organic_results[{link,title}] — and
+# the blend rule is internal-first, external top-up, on the shared durable budget. These share the
+# module's single app/client for the same lifespan reason the OBS1 tests do.
+#
+# Mutation ledger (each guard removed against a green baseline; the named test went red):
+#   internal-first `len(results) < num` -> if True        => tops_up_only_the_shortfall
+#   budget gate `spent >= budget`       -> if False       => respects_the_shared_daily_budget
+#   registrable-domain dedup            -> if False       => tops_up_only_the_shortfall
+#   _search_authorized                  -> return True    => requires_a_key_once_keys_exist
+#   st.note_web_search() meter write    -> pass           => tops_up_only_the_shortfall (meter delta)
+
+def _seed_search_index(tmp_path, monkeypatch):
+    import outlet_search as osx
+    monkeypatch.setenv("RWE_OUTLET_INDEX_DB", str(tmp_path / "facade-idx.db"))
+    con = osx.open_index()
+    for i in range(3):
+        osx.upsert(con, f"ke{i}.example", name=f"KE Outlet {i}", country="KE",
+                   source="wikidata")
+    osx.upsert(con, "ke0.example", source="wikipedia")     # corroborate one -> deterministic top
+    con.commit()
+    con.close()
+
+
+def test_search_facade_requires_a_key_once_keys_exist_and_a_query_always(client, monkeypatch, tmp_path):
+    _seed_search_index(tmp_path, monkeypatch)
+    monkeypatch.setenv("RWE_SEARCH_API_KEYS", "k-good")
+    r = client.get("/api/search.json", params={"q": "x", "api_key": "k-wrong"})
+    assert r.status_code == 401 and "error" in r.json()
+    r = client.get("/api/search.json", params={"api_key": "k-good"})
+    assert r.status_code == 400 and "Missing query" in r.json()["error"]
+
+
+def test_search_facade_serves_the_serpapi_hard_contract_from_the_internal_index(
+        client, monkeypatch, tmp_path):
+    _seed_search_index(tmp_path, monkeypatch)
+    monkeypatch.setenv("RWE_SEARCH_API_KEYS", "k-good")
+    monkeypatch.delenv("RWE_SERPAPI_API_KEY", raising=False)   # no upstream: pure internal
+    r = client.get("/api/search.json",
+                   params={"q": "local news websites in Kenya", "num": 10, "api_key": "k-good"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["search_metadata"]["status"] == "Success"
+    results = body["organic_results"]
+    assert results and all(row["link"].startswith("https://") and row["title"]
+                           for row in results), "the two fields source_web actually reads"
+    assert results[0]["link"] == "https://ke0.example/", "corroboration ranks first"
+    assert all(row["ih_source"] == "internal" for row in results)
+    # And the CLIENT-side proof: point the real adapter at the facade and run the real parser.
+    import source_web
+    monkeypatch.setenv("RWE_WEB_SEARCH_ENDPOINT",
+                       "http://facade.test/api/search.json?q={query}&num={count}&api_key={key}")
+    monkeypatch.setenv("RWE_WEB_SEARCH_API_KEY", "k-good")
+    monkeypatch.setenv("RWE_WEB_SEARCH_RESULTS", "organic_results")
+    monkeypatch.setenv("RWE_WEB_SEARCH_URL_FIELD", "link")
+    monkeypatch.setenv("RWE_WEB_SEARCH_TITLE_FIELD", "title")
+    search = source_web.search_adapter(get_json=lambda url, **kw: body)
+    parsed = search("local news websites in Kenya")
+    assert parsed and parsed[0]["url"] == "https://ke0.example/", \
+        "the existing adapter consumes the facade with zero application changes"
+
+
+def test_search_facade_tops_up_only_the_shortfall_and_dedups_by_domain(
+        client, monkeypatch, tmp_path):
+    import api_fastapi as af
+    _seed_search_index(tmp_path, monkeypatch)
+    monkeypatch.setenv("RWE_SEARCH_API_KEYS", "k-good")
+    monkeypatch.setenv("RWE_SERPAPI_API_KEY", "serp-upstream")
+    calls = []
+    def fake_get_json(url, **kw):
+        calls.append(url)
+        return {"organic_results": [
+            {"link": "https://www.ke0.example/dup", "title": "Duplicate of internal"},
+            {"link": "https://fresh.example/", "title": "Fresh from SerpAPI"}]}
+    monkeypatch.setattr(af.sources, "_get_json", fake_get_json)
+    spent_before = af._require_store().web_search_spent()
+    # Internal fully satisfies num=2 -> ZERO external calls (internal-first is a spend rule).
+    r = client.get("/api/search.json", params={"q": "local news websites in Kenya",
+                                               "num": 2, "api_key": "k-good"})
+    assert r.status_code == 200 and calls == [], \
+        "a query the index can answer must cost nothing external"
+    # num=5 against 3 internal rows -> one top-up; the duplicate domain is dropped.
+    r = client.get("/api/search.json", params={"q": "local news websites in Kenya",
+                                               "num": 5, "api_key": "k-good"})
+    body = r.json()
+    assert len(calls) == 1 and "serp-upstream" in calls[0]
+    srcs = [row["ih_source"] for row in body["organic_results"]]
+    assert srcs.count("internal") == 3 and srcs.count("serpapi") == 1
+    links = [row["link"] for row in body["organic_results"]]
+    assert "https://fresh.example/" in links and not any("/dup" in l for l in links), \
+        "registrable-domain dedup: SerpAPI may not re-add an internal outlet"
+    assert af._require_store().web_search_spent() == spent_before + 1, \
+        "the top-up spend must land on the SHARED daily meter (today's UTC row, not a bogus key)"
+
+
+def test_search_facade_respects_the_shared_daily_budget(client, monkeypatch, tmp_path):
+    import api_fastapi as af
+    _seed_search_index(tmp_path, monkeypatch)
+    monkeypatch.setenv("RWE_SEARCH_API_KEYS", "k-good")
+    monkeypatch.setenv("RWE_SERPAPI_API_KEY", "serp-upstream")
+    monkeypatch.setenv("RWE_WEB_SEARCH_DAILY_BUDGET", "0")   # 0 -> the default, so use spent>=budget
+    import source_web
+    monkeypatch.setattr(source_web, "search_daily_budget", lambda: 1)
+    st = af._require_store()
+    st.note_web_search()                                      # the discovery channel spent it
+    called = []
+    monkeypatch.setattr(af.sources, "_get_json",
+                        lambda url, **kw: called.append(url) or {"organic_results": []})
+    r = client.get("/api/search.json", params={"q": "local news websites in Kenya",
+                                               "num": 9, "api_key": "k-good"})
+    assert r.status_code == 200 and called == [], \
+        "one account, one meter: the facade may not spend past the shared daily budget"
+    assert "budget" in (r.json()["search_metadata"].get("note") or "")
