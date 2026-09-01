@@ -805,6 +805,7 @@
   "own.unknown": "Unbekannt",
   "story.biasSummary": "{pct} % der Quellen: {side}",
   "story.untrackedBias": "Ohne Einstufung",
+  "story.moreOutlets": "{n} weitere Quellen",
   "story.related": "Weitere Themen",
   "story.registerSplit": "{reporting} Bericht · {opinion} Meinung",
   "story.noCoverage": "Noch keine Berichterstattung von {side}",

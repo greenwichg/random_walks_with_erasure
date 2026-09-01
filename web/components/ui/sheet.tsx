@@ -35,6 +35,11 @@ const sheetVariants = cva(
       side: {
         left: "inset-y-0 left-0 h-full w-72 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
         right: "inset-y-0 right-0 h-full w-72 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+        // The phone-native drawer: full width along the bottom edge, capped so the sheet never
+        // swallows the page behind it, and rounded on the leading corners only. Height is left to
+        // the content (`max-h` bounds it) so a two-row sheet is two rows tall, not half a screen.
+        bottom:
+          "inset-x-0 bottom-0 max-h-[80vh] rounded-t-2xl border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
       },
     },
     defaultVariants: { side: "left" },

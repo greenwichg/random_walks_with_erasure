@@ -63,6 +63,18 @@ export function groupOutletsByLean(coverage: StoryCoverage[]): BiasGroups {
   };
 }
 
+/**
+ * Split a group's marks at the display cap: what the capsule draws, and what its `+N` chip
+ * stands for. One function so the NUMBER on the chip and the LIST behind it can never disagree
+ * — that off-by-one is the whole bug class here (a chip promising 11 and opening 10).
+ */
+export function splitAtCap(
+  outlets: OutletMark[],
+  cap: number,
+): { shown: OutletMark[]; hidden: OutletMark[] } {
+  return { shown: outlets.slice(0, cap), hidden: outlets.slice(cap) };
+}
+
 /** The headline fact — "45% of the sources are Center" — or null when nothing is rated. */
 export function dominantBucket(groups: BiasGroups): { bucket: LeanBucket; pct: number } | null {
   if (groups.ratedCount <= 0) return null;

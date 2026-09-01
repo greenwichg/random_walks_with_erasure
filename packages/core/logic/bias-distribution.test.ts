@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { dominantBucket, groupOutletsByLean } from "./bias-distribution.ts";
+import { dominantBucket, groupOutletsByLean, splitAtCap } from "./bias-distribution.ts";
 import type { StoryCoverage } from "../domain/types.ts";
 
 const row = (publisher: string, leanBucket: StoryCoverage["leanBucket"], url?: string): StoryCoverage =>
@@ -74,4 +74,22 @@ test("dominant: an even split headlines center, and the share is an outlet share
 test("nothing rated -> no headline fact, not a fabricated 100% something", () => {
   assert.equal(dominantBucket(groupOutletsByLean([row("Youm7", null)])), null);
   assert.equal(dominantBucket(groupOutletsByLean([])), null);
+});
+
+test("splitAtCap: the +N chip's number is exactly what the panel behind it lists", () => {
+  // The contract the capsule and its overflow panel share. Mutation ledger:
+  //  - slice(cap + 1) / slice(cap - 1) on either half -> the sum or the counts here fail
+  //  - hidden computed as outlets.slice(0, -cap)      -> the 6-of-16 case fails
+  const outlets = Array.from({ length: 16 }, (_, i) => ({ publisher: `P${i}`, url: undefined }));
+  const { shown, hidden } = splitAtCap(outlets, 5);
+  assert.equal(shown.length, 5);
+  assert.equal(hidden.length, 11, "the chip says +11, so the panel must list 11");
+  assert.deepEqual([...shown, ...hidden], outlets, "nothing is lost or duplicated at the seam");
+  assert.equal(hidden[0].publisher, "P5", "the panel starts where the capsule stopped");
+});
+
+test("splitAtCap: a group that fits has nothing hidden, so no chip is drawn", () => {
+  const outlets = [{ publisher: "A", url: undefined }, { publisher: "B", url: undefined }];
+  assert.deepEqual(splitAtCap(outlets, 5), { shown: outlets, hidden: [] });
+  assert.deepEqual(splitAtCap([], 5), { shown: [], hidden: [] });
 });
