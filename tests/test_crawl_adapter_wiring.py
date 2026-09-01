@@ -75,7 +75,7 @@ def test_a_crawled_source_must_be_in_the_shadow_lane(monkeypatch):
 
     monkeypatch.setenv("RWE_CORPUS_SHADOW", "kait8.com,kwch.com")
     corpus._index.cache_clear()
-    assert [a.provider for a in _adapters() if a.enabled()] == ["kait8.com", "kwch.com"]
+    assert [a.provider for a in _adapters() if a.enabled()] == ["KAIT", "KWCH"]
 
 
 def test_the_default_tier_really_is_A_so_the_precondition_is_load_bearing():
@@ -87,7 +87,7 @@ def test_a_configured_but_unshadowed_publisher_says_why(monkeypatch):
     """Silently not running is indistinguishable from a broken config. The reason names the fix."""
     monkeypatch.setenv("RWE_CRAWL_ENABLED", "1")
     warnings = [a.shadow_warning() for a in _adapters()]
-    named = [w for w in warnings if w and "kait8.com" in w]
+    named = [w for w in warnings if w and "KAIT" in w]
     assert named and "RWE_CORPUS_SHADOW" in named[0] and "promotion by omission" in named[0]
 
 
@@ -113,7 +113,7 @@ def test_the_enabled_publishers_are_the_ones_the_live_probe_verified():
     """kait8.com and kwch.com, 2026-08-26: robots.txt allows HiddenView-Crawler, the declared
     news-sitemap-index parses and descends, 32 and 36 items at 100% dated and 100% on-host."""
     cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
-    assert {p["publisher"] for p in cfg["publishers"] if p["enabled"]} == {"kait8.com", "kwch.com"}
+    assert {p["publisher"] for p in cfg["publishers"] if p["enabled"]} == {"KAIT", "KWCH"}
 
 
 def test_the_configured_source_is_the_DECLARED_index_not_the_child_it_descends_to():
@@ -162,18 +162,20 @@ def test_the_article_pattern_matches_every_url_the_probe_actually_returned():
 def test_the_pattern_rejects_the_non_article_shapes_it_exists_for(url):
     """A pattern that accepted everything would not be filtering — the other half of the warning."""
     cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
-    patt = next(p["article_pattern"] for p in cfg["publishers"] if p["publisher"] == "kait8.com")
+    patt = next(p["article_pattern"] for p in cfg["publishers"] if p["publisher"] == "KAIT")
     assert not re.search(patt, url)
 
 
 def test_setting_the_pattern_cleared_its_lint_warning(monkeypatch):
-    """`unknown_publisher` remains and is CORRECT — an unrated outlet is exactly what shadow is for.
-    `no_article_pattern` was the one carrying real residual risk, and it is now answered."""
+    """The lint is now SILENT on the shipped config. `no_article_pattern` was answered 2026-08-26;
+    `unknown_publisher` — correct while KAIT/KWCH had no registry row — cleared 2026-09-01 when the
+    crawl-campaign identity tranche registered them (blank lean; identity, not a rating). An empty
+    lint on a hand-verified config is the intended end state, not a lint that stopped looking."""
     monkeypatch.setenv("RWE_CORPUS_SHADOW", "kait8.com,kwch.com")
     corpus._index.cache_clear()
     codes = {p["code"] for p in crawler.lint_config(crawler.load_config())}
     assert "no_article_pattern" not in codes
-    assert codes == {"unknown_publisher"}
+    assert codes == set()
 
 
 def test_an_age_bound_is_set_so_an_index_descent_cannot_reach_an_archive():
@@ -320,7 +322,7 @@ def test_a_configured_but_unshadowed_publisher_is_REPORTED_not_just_silently_ski
     "turning on only the flag tells you why" an untrue sentence: the adapter refused and said
     nothing, which is indistinguishable from a broken config. Startup now emits it."""
     inert = [f for ev, f in _poller_with(monkeypatch) if ev == "source_adapter_inert"]
-    named = [f for f in inert if f["provider"] == "kait8.com"]
+    named = [f for f in inert if f["provider"] == "KAIT"]
     assert named, "an enabled-but-unshadowed crawl publisher must say so"
     assert "RWE_CORPUS_SHADOW" in named[0]["reason"]
     assert "promotion by omission" in named[0]["reason"]
@@ -332,4 +334,4 @@ def test_no_such_warning_once_the_publisher_IS_shadowed(monkeypatch):
     lines = _poller_with(monkeypatch, shadow="kait8.com,kwch.com")
     assert [f for ev, f in lines if ev == "source_adapter_inert"] == []
     started = [f for ev, f in lines if ev == "multi_source_start"]
-    assert started and {"kait8.com", "kwch.com"} <= set(started[0]["adapters"])
+    assert started and {"KAIT", "KWCH"} <= set(started[0]["adapters"])
