@@ -217,6 +217,8 @@
   "search.empty.body": "Essayez une autre requête ou effacez les filtres.",
   "filter.topic": "Sujet",
   "filter.publisher": "Éditeur",
+  "filter.search": "Rechercher…",
+  "filter.noMatch": "Aucun résultat pour « {q} ».",
   "filter.lean": "Orientation",
   "filter.coveredBy": "Couvert par",
   "filter.coveredByHint": "Sujets traités par au moins un éditeur de ce bord ; ce n'est pas l'orientation du sujet.",

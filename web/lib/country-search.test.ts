@@ -7,7 +7,7 @@
 // that returned nothing for "" would render every popover empty until the first keystroke.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fold, matchesCountry } from "./country-search.ts";
+import { fold, matchesCountry, matchesOption } from "./country-search.ts";
 
 test("fold strips diacritics and case so keyboard letters match ICU names", () => {
   assert.equal(fold("Türkiye"), "turkiye");
@@ -25,4 +25,10 @@ test("matches by localized name, by ISO code, and diacritic-insensitively", () =
 test("the empty query is the browse state — it matches everything", () => {
   assert.ok(matchesCountry("US", "United States", ""));
   assert.ok(matchesCountry("US", "United States", "   "), "whitespace folds to empty");
+});
+
+test("matchesOption: the generic filter-list matcher shares the fold", () => {
+  assert.ok(matchesOption("Süddeutsche Zeitung", "sudde"), "diacritics fold for publishers too");
+  assert.ok(matchesOption("Le Monde", ""), "empty query is the browse state");
+  assert.ok(!matchesOption("Le Monde", "guardian"));
 });

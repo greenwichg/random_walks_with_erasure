@@ -217,6 +217,8 @@
   "search.empty.body": "Versuchen Sie eine andere Suche oder löschen Sie die Filter.",
   "filter.topic": "Thema",
   "filter.publisher": "Verlag",
+  "filter.search": "Suchen…",
+  "filter.noMatch": "Keine Treffer für „{q}“.",
   "filter.lean": "Tendenz",
   "filter.coveredBy": "Berichtet von",
   "filter.coveredByHint": "Themen, über die mindestens ein Verlag dieser Seite berichtet hat — nicht die Tendenz des Themas.",

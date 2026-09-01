@@ -217,6 +217,8 @@
   "search.empty.body": "Tente outra busca ou limpe os filtros.",
   "filter.topic": "Tema",
   "filter.publisher": "Veículo",
+  "filter.search": "Pesquisar…",
+  "filter.noMatch": "Sem resultados para “{q}”.",
   "filter.lean": "Viés",
   "filter.coveredBy": "Coberto por",
   "filter.coveredByHint": "Histórias cobertas por pelo menos um veículo deste lado; não é o viés da história.",

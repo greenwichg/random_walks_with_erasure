@@ -20,3 +20,10 @@ export function matchesCountry(code: string, name: string, query: string): boole
   if (!q) return true;
   return fold(code).includes(q) || fold(name).includes(q);
 }
+
+/** Generic matcher for searchable filter lists (publishers, topics) — the same fold, so every
+ *  searchable dropdown agrees with the country pickers about what "matches" means. */
+export function matchesOption(label: string, query: string): boolean {
+  const q = fold(query);
+  return !q || fold(label).includes(q);
+}

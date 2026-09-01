@@ -217,6 +217,8 @@
   "search.empty.body": "Try a different query or clear the filters.",
   "filter.topic": "Topic",
   "filter.publisher": "Publisher",
+  "filter.search": "Search…",
+  "filter.noMatch": "No match for “{q}”.",
   "filter.lean": "Lean",
   "filter.coveredBy": "Covered by",
   "filter.coveredByHint": "Stories at least one outlet on this side reported on — not the story's own lean.",

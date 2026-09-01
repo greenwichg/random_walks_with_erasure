@@ -6,6 +6,7 @@ import { CountryBadge } from "@/components/shared/country-badge";
 import { countryName } from "@ih/core/logic/countries";
 import { activeLang } from "@/lib/active-lang";
 import { matchesCountry } from "@/lib/country-search";
+import { usePopoverPlacement } from "@/components/shared/use-popover-placement";
 import { cn } from "@/lib/utils";
 
 /**
@@ -55,52 +56,16 @@ export function CountryPicker({
   const lang = activeLang();
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
-  // Viewport-clamped placement, computed when the panel opens. An `absolute left-0` panel walks
-  // off the right edge of a phone whenever its trigger does not start the row (seen at 390px on
-  // first test), so the panel is `fixed` and both axes clamp to the viewport with a 16px gutter.
-  const [pos, setPos] = React.useState<{
-    top?: number; bottom?: number; left: number; width: number; listMax: number;
-  } | null>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
-
-  const place = React.useCallback(() => {
-    const r = rootRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.min(320, window.innerWidth - 32);
-    const left = Math.min(Math.max(16, r.left), window.innerWidth - 16 - width);
-    // Below the trigger when there is room, above it when there is more room there — a panel
-    // pinned below a bottom-of-screen trigger renders its list off the bottom edge. `listMax`
-    // budgets the chosen side minus the input + padding chrome (~76px), floored at a usable 120.
-    const below = window.innerHeight - r.bottom - 24;
-    const above = r.top - 24;
-    const flip = below < 236 && above > below;
-    setPos({
-      ...(flip ? { bottom: window.innerHeight - r.top + 8 } : { top: r.bottom + 8 }),
-      left, width,
-      listMax: Math.max(120, Math.min(256, (flip ? above : below) - 76)),
-    });
-  }, []);
+  const close = React.useCallback(() => setOpen(false), []);
+  // Placement + dismissal live in the shared hook (see use-popover-placement.ts for the
+  // viewport-clamping and flip rationale, learned on this component's mobile debut).
+  const pos = usePopoverPlacement(rootRef, open, close);
 
   React.useEffect(() => {
-    if (!open) return;
-    place();
-    inputRef.current?.focus();
-    const onPress = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPress);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", place);
-    return () => {
-      document.removeEventListener("pointerdown", onPress);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", place);
-    };
-  }, [open, place]);
+    if (open && pos) inputRef.current?.focus();
+  }, [open, pos]);
 
   const shown = React.useMemo(
     () => options.filter((c) => matchesCountry(c.country, countryName(c.country, lang), query)),
