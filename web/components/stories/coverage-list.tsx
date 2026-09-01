@@ -20,11 +20,16 @@ import { useTranslation } from "@/lib/i18n";
 
 const LEAN_FILTERS: ("all" | LeanBucket)[] = ["all", "left", "center", "right"];
 
-// Groups rendered before "Load more". Cluster size is long-tailed — the catalog median story is 2
-// articles and p90 is 7, but the largest measured cluster is 318, and every row here mounts a Read
-// button and a Save button. Batching keeps the worst case off the first paint without changing what
-// the page contains; the count line below still reports the true article total.
-const PAGE = 40;
+// Rows shown before "Read more". Six is an editorial choice, not a performance one: the list is
+// the page's tallest section, and a reader deciding whether to go deeper needs a legible sample,
+// not the whole cluster. The catalog median story is 2 articles and p90 is 7, so most stories are
+// already whole at first paint and never render the button at all.
+const INITIAL = 6;
+// What one "Read more" reveals. Deliberately larger than INITIAL: past the first click the reader
+// has asked for the full list, so the batch exists only to keep the long tail off a single mount —
+// the largest measured cluster is 318 rows, each mounting a Read and a Save control. Every story up
+// to 46 rows opens completely on one click; beyond that the button simply returns.
+const STEP = 40;
 
 /**
  * The story's article coverage as a FILTERABLE list — the "how is it covered, and by whom" section,
@@ -97,10 +102,10 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
   // Any filter or order change starts the batch AND the expanded runs over — otherwise "Load more"
   // would carry a previous filter's depth into a shorter result set, and an expander would stay
   // open on a group that no longer holds the same rows.
-  const [visible, setVisible] = React.useState(PAGE);
+  const [visible, setVisible] = React.useState(INITIAL);
   const [openRuns, setOpenRuns] = React.useState<Set<string>>(() => new Set());
   React.useEffect(() => {
-    setVisible(PAGE);
+    setVisible(INITIAL);
     setOpenRuns(new Set());
   }, [lean, register, oldestFirst]);
 
@@ -190,9 +195,14 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
         </ul>
       )}
       {hasMore && (
-        <div className="mt-3 flex justify-center">
-          <Button variant="outline" size="sm" onClick={() => setVisible((v) => v + PAGE)}>
-            {t("common.loadMore")}
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="outline"
+            className="w-full gap-1.5 sm:w-auto sm:min-w-56"
+            onClick={() => setVisible((v) => v + STEP)}
+          >
+            {t("story.readMore", { n: formatCompact(groups.length - visible) })}
+            <ChevronDown className="h-4 w-4" aria-hidden />
           </Button>
         </div>
       )}
