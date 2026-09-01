@@ -514,6 +514,32 @@ def test_existing_ingest_entries_without_source_kwargs_still_works(store):
     assert row is not None and row["sourceProvider"] == "Legacy"     # falls back to source_publisher
 
 
+def test_a_future_publish_claim_is_clamped_to_the_observation_time(store):
+    """An article cannot be published AFTER we observed it. Some publishers stamp local wall-clock
+    time as UTC — youm7.com (+3) and kenh14.vn (+7), production 2026-09-01 — so their rows
+    "published" hours into the future and then topped every recency-sorted surface exactly when
+    the bogus timestamp came due (that day: hours after the outlets had been withdrawn). Within
+    the 10-minute skew allowance the claim is kept verbatim.
+
+    Mutation check: removing the clamp in `_ingest_entries` fails the first half (the future
+    timestamp is stored as claimed and `future_dated` stays 0)."""
+    from datetime import datetime, timedelta, timezone
+    future = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    near = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+    stats = ri.ingest_entries(
+        [ri.FeedEntry(url="https://liar.example/a", title="t", published_at=future),
+         ri.FeedEntry(url="https://honest.example/b", title="t", published_at=near)],
+        "P", "feed://p", ri.make_scorer(), store)
+    assert stats["future_dated"] == 1
+
+    lied = store.get_feed_article("https://liar.example/a")["publishedAt"]
+    assert lied < future, "a +3h publish claim must not be stored as stated"
+    assert abs((datetime.fromisoformat(lied) - datetime.now(timezone.utc)).total_seconds()) < 120, \
+        "the clamped value is the observation time"
+    assert store.get_feed_article("https://honest.example/b")["publishedAt"] == near, \
+        "inside the skew allowance the publisher's own timestamp stands"
+
+
 def test_existing_upsert_without_source_params_is_unchanged(store):
     # calling upsert_feed_article the old way (no source_type/provider/external_id) still works
     created = store.upsert_feed_article(

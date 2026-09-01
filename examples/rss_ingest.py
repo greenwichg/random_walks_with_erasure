@@ -36,7 +36,7 @@ import urllib.error          # explicit: urllib.request only exposes it as an im
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # import sibling modules
@@ -462,11 +462,25 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
     RSS callers pass neither and their entries carry no per-entry values, so behaviour is unchanged."""
     stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0, "blocked": 0,
              "missing_metadata": 0, "unknown_outlet": 0, "unknown_outlets": {},
-             "newest": None, "oldest": None}
+             "future_dated": 0, "newest": None, "oldest": None}
+    # An article cannot be published AFTER we observed it. Some publishers stamp local wall-clock
+    # time as UTC — youm7.com (+3) and kenh14.vn (+7), production 2026-09-01 — so their rows
+    # "published" hours into the future and then surfaced at the top of every recency-sorted
+    # surface exactly when the bogus timestamp came due, hours after ingestion (and, that day,
+    # hours after the outlets were withdrawn). `_to_iso` already normalises HONEST offsets; this
+    # clamp handles the dishonest ones. The 10-minute allowance covers clock skew and a feed
+    # listing an item moments before its scheduled publish; beyond it, the observation time IS
+    # the publication fact we can stand behind.
+    now_utc = datetime.now(timezone.utc)
+    horizon = (now_utc + timedelta(minutes=10)).isoformat()
+    now_iso = now_utc.isoformat()
     for e in entries:
         stats["entries"] += 1
         if not (e.title or "").strip() or not (e.published_at or "").strip():
             stats["missing_metadata"] += 1
+        if e.published_at and e.published_at > horizon:     # both ISO-UTC: lexical == chronological
+            e.published_at = now_iso
+            stats["future_dated"] += 1
         iso = e.published_at            # already ISO (see _to_iso); lexical min/max within a feed
         if iso:
             if stats["newest"] is None or iso > stats["newest"]:
