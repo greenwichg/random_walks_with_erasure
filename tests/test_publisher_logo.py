@@ -293,3 +293,16 @@ def test_an_outlet_is_never_given_our_own_mark_at_resolution_or_at_serving():
     assert pl.logo_tuple({"status": "ok", "url": "https://app.hidden-view.com/x.png"}) is None
     assert pl.logo_tuple({"status": "ok", "url": "http://localhost:3100/x.png"}) is None
     assert pl.logo_tuple({"status": "ok", "url": "https://ex.test/icon.png"}) == ("https://ex.test/icon.png", "site")
+
+
+def test_a_large_homepage_is_parsed_not_refused_and_an_oversize_icon_is_skipped():
+    """The first production pass: a third of outlets landed as `error` because a 512 KB cap meant
+    for icons was applied to the homepage. A 600 KB homepage must still yield its declared icon;
+    a 600 KB "icon" is skipped as not-a-mark, and the verdict falls to the next candidate."""
+    big_html = ('<html><head><link rel="icon" href="/huge.png" sizes="512x512">'
+                '<link rel="icon" href="/icon.png" sizes="192x192"></head><body>' + "x" * 600_000 + "</body></html>")
+    fetch = _fetcher({"https://ex.test/": big_html.encode(),
+                      "https://ex.test/huge.png": b"\x89PNG" + b"0" * 600_000,      # declared bigger, but not an icon
+                      "https://ex.test/icon.png": _png(192, 192)})
+    r = pl.resolve("https://ex.test/", fetch, policy=_Allow(), limiter=_limiter())
+    assert r["status"] == "ok" and r["url"] == "https://ex.test/icon.png"

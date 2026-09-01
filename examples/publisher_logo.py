@@ -51,8 +51,14 @@ MIN_PX = 48
 #: Widest a "logo" may be before it is a banner. A wordmark is fine; a 1200x100 masthead is not.
 MAX_ASPECT = 4.0
 
-#: Byte cap per fetch — an icon is small; a "logo" larger than this is a photo or a mistake.
+#: Byte cap for an ICON — an icon is small; a "logo" larger than this is a photo or a mistake, and
+#: is skipped rather than fatal.
 MAX_BYTES = 512 * 1024
+
+#: Read cap for the HOMEPAGE. Its icon declarations live in <head>, at the top, so an oversize page
+#: is TRUNCATED and parsed, never refused: the first production pass recorded a third of outlets as
+#: `error` because a 512 KB cap treated an ordinary news homepage as a failure.
+HTML_MAX_BYTES = 2 * 1024 * 1024
 
 #: How many declared candidates to actually download per outlet. Declarations are cheap to read;
 #: each verification is a request to the publisher's origin.
@@ -230,16 +236,14 @@ def usable(dims: Optional[tuple]) -> bool:
 # Fetching — the crawler's chassis, byte-capped.
 # --------------------------------------------------------------------------- #
 def default_fetch_bytes(url: str, *, timeout: float = 15.0) -> bytes:
-    """GET through ``sources._request`` (429/5xx discipline) with the crawler's User-Agent, capped at
-    MAX_BYTES + 1 so an oversize response is detected without being read to the end."""
+    """GET through ``sources._request`` (429/5xx discipline) with the crawler's User-Agent. Reads at
+    most HTML_MAX_BYTES and never raises for size: a homepage past the cap is parsed truncated (its
+    <head> is at the top), and an icon past MAX_BYTES is judged — and skipped — by :func:`resolve`."""
     import sources                                       # lazy: see the import note above
-    data = sources._request(
-        url, read=lambda r: r.read(MAX_BYTES + 1),
+    return sources._request(
+        url, read=lambda r: r.read(HTML_MAX_BYTES),
         headers={"User-Agent": USER_AGENT, "Accept": "image/*, application/json;q=0.8, text/html;q=0.7, */*;q=0.5"},
         timeout=timeout)
-    if len(data) > MAX_BYTES:
-        raise ValueError(f"response exceeds {MAX_BYTES} bytes")
-    return data
 
 
 def _gate(url: str, policy, limiter) -> Optional[str]:
@@ -294,6 +298,8 @@ def resolve(site_url: str, fetch_bytes: Callable[[str], bytes], *, policy, limit
         try:
             data = fetch_bytes(c["url"])
         except Exception:
+            continue
+        if len(data) > MAX_BYTES:                          # a "logo" that big is a photo, not a mark
             continue
         dims = image_dims(data, c.get("mime"))
         if usable(dims):
