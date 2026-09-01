@@ -1129,19 +1129,27 @@ function SliderRow({
 }) {
   return (
     <div>
-      <div className="mb-3 flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
-            <Icon className="h-4 w-4" />
-          </span>
-          <div>
-            <p className="text-sm font-medium">{title}</p>
-            {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
+      {/* Title and value share ONE line; the description gets the FULL card width below them.
+          The old markup nested the description beside the badge in the header flex row, so a
+          long value chip ("Essential bridges only") squeezed one sentence into a six-line
+          ribbon on a phone with dead space to its right. `pl-11` = icon (h-8) + gap-3, so the
+          description stays on the title's left edge; text-xs is the card-hint scale the rest
+          of this page already uses for explanatory copy. */}
+      <div className="mb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+              <Icon className="h-4 w-4" />
+            </span>
+            <p className="min-w-0 text-sm font-medium">{title}</p>
           </div>
+          <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+            {valueLabel}
+          </span>
         </div>
-        <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-          {valueLabel}
-        </span>
+        {description && (
+          <p className="mt-1.5 pl-11 text-xs leading-relaxed text-muted-foreground">{description}</p>
+        )}
       </div>
       <Slider
         value={[value]}
