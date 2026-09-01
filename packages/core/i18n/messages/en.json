@@ -806,6 +806,7 @@
   "story.biasSummary": "{pct}% of the sources are {side}",
   "story.untrackedBias": "Untracked bias",
   "story.moreOutlets": "{n} more sources",
+  "story.openArticleFrom": "Open {publisher}'s article: {headline}",
   "story.related": "More stories",
   "story.registerSplit": "{reporting} reporting · {opinion} opinion",
   "story.noCoverage": "No {side} coverage yet",

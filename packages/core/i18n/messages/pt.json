@@ -806,6 +806,7 @@
   "story.biasSummary": "{pct}% das fontes são de {side}",
   "story.untrackedBias": "Viés não classificado",
   "story.moreOutlets": "{n} fontes a mais",
+  "story.openArticleFrom": "Abrir o artigo de {publisher}: {headline}",
   "story.related": "Mais notícias",
   "story.registerSplit": "{reporting} reportagem · {opinion} opinião",
   "story.noCoverage": "Ainda sem cobertura de {side}",

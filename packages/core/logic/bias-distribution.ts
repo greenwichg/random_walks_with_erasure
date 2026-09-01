@@ -16,8 +16,11 @@ import type { LeanBucket, StoryCoverage } from "../domain/types.ts";
 
 export interface OutletMark {
   publisher: string;
-  /** Any one of the outlet's article URLs — enough to derive its site icons (hostIconCandidates). */
+  /** The outlet's NEWEST article on this story (coverage is newest-first): the URL a chip opens,
+   *  and enough to derive its site icons (hostIconCandidates). */
   url?: string;
+  /** That article's headline — what a chip's tooltip promises before the click. */
+  headline?: string;
   /** The server-resolved mark when the row carries one (publisherLogo on story coverage rows):
    *  a URL known to exist and to be large enough, tried before any host-derived guess. */
   logo?: string;
@@ -27,15 +30,21 @@ export interface OutletMark {
 /** What a mark carries besides identity. First non-null wins per outlet, like the lean. */
 export interface MarkFields {
   url?: string;
+  headline?: string;
   logo?: string;
   logoFallbacks?: string[];
 }
 
 export function takeMarkFields(
   entry: MarkFields,
-  row: { url?: string; publisherLogo?: string; publisherLogoFallbacks?: string[] },
+  row: { url?: string; headline?: string; publisherLogo?: string; publisherLogoFallbacks?: string[] },
 ): void {
-  if (!entry.url && row.url) entry.url = row.url;
+  // URL and headline travel together: both describe the same first (newest) article, so a
+  // later row's headline is never paired with an earlier row's URL.
+  if (!entry.url && row.url) {
+    entry.url = row.url;
+    entry.headline = row.headline;
+  }
   if (!entry.logo && row.publisherLogo) {
     entry.logo = row.publisherLogo;
     if (row.publisherLogoFallbacks) entry.logoFallbacks = row.publisherLogoFallbacks;
@@ -46,6 +55,7 @@ export function takeMarkFields(
  *  exactly as before the logo tier existed. */
 export function toMark(publisher: string, f: MarkFields): OutletMark {
   const mark: OutletMark = { publisher, url: f.url };
+  if (f.headline) mark.headline = f.headline;
   if (f.logo) {
     mark.logo = f.logo;
     if (f.logoFallbacks) mark.logoFallbacks = f.logoFallbacks;

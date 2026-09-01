@@ -51,8 +51,8 @@ test("marks keep first-seen (newest-first) order and carry the outlet's first UR
     row("CNN", "left", "https://cnn.com/a2"),
     row("AP", "center", "https://apnews.com/a3"),
   ]);
-  assert.deepEqual(g.buckets.center, [{ publisher: "AP", url: "https://apnews.com/a1" }]);
-  assert.deepEqual(g.buckets.left, [{ publisher: "CNN", url: "https://cnn.com/a2" }]);
+  assert.deepEqual(g.buckets.center, [{ publisher: "AP", url: "https://apnews.com/a1", headline: "h" }]);
+  assert.deepEqual(g.buckets.left, [{ publisher: "CNN", url: "https://cnn.com/a2", headline: "h" }]);
 });
 
 test("dominant: an even split headlines center, and the share is an outlet share", () => {
@@ -102,9 +102,20 @@ test("a mark carries the row's server-resolved logo, first non-null, and no logo
   } as StoryCoverage;
   const g = groupOutletsByLean([row("BBC", "center", "https://bbc.com/a0"), withLogo, row("NPR", "left")]);
   assert.deepEqual(g.buckets.center, [{
-    publisher: "BBC", url: "https://bbc.com/a0",
+    publisher: "BBC", url: "https://bbc.com/a0", headline: "h",
     logo: "https://bbc.com/icon-192.png", logoFallbacks: ["https://bbc.com/apple-touch-icon.png"],
   }]);
-  // An outlet nobody resolved is exactly the mark it always was — no `logo: undefined` noise.
+  // An outlet nobody resolved is exactly the mark it always was — no `logo: undefined` noise,
+  // and no headline either: the headline only ever rides with the URL it belongs to.
   assert.deepEqual(g.buckets.left, [{ publisher: "NPR", url: undefined }]);
+});
+
+test("a mark's headline is the headline of the SAME row its URL came from", () => {
+  // Mutation ledger: taking the headline outside the URL guard (any row's headline overwrites)
+  // makes the mark promise "late" while opening "right" -> this fails.
+  const g = groupOutletsByLean([
+    { ...row("AP", "center", "https://apnews.com/a1"), headline: "right" } as StoryCoverage,
+    { ...row("AP", "center", "https://apnews.com/a2"), headline: "late" } as StoryCoverage,
+  ]);
+  assert.deepEqual(g.buckets.center, [{ publisher: "AP", url: "https://apnews.com/a1", headline: "right" }]);
 });

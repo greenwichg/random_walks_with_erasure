@@ -9,9 +9,16 @@ import { hostIconCandidates, logoCandidates } from "@ih/core/logic/publisher-log
 import { monogram } from "@ih/core/logic/placeholder-art";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { PublisherLogo } from "@/components/shared/publisher-logo";
+import { useReadArticleAction } from "@/components/shared/read-article-button";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useTranslation } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+
+/** Where a chip's read is recorded from — its own tag, so opens from the bias card can be told
+ *  apart from the coverage list's Read button in the same pipeline. */
+const OPENED_FROM = "story-bias";
+const CHIP = "grid h-7 w-7 place-items-center overflow-hidden rounded-full border-2 border-card bg-muted";
 
 const COLUMN_CHIPS = 5;
 const UNTRACKED_CHIPS = 8;
@@ -156,23 +163,12 @@ export function BiasDistribution({ groups }: { groups: BiasGroups }) {
           </div>
           <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-1">
             {openOutlets.map((o) => (
-              <li key={o.publisher}>
-                <Link
-                  href={`/publishers/${encodeURIComponent(o.publisher)}`}
-                  className="flex items-center gap-2.5 rounded-md px-2 py-2 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-muted">
-                    <OutletIcon outlet={o} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{o.publisher}</span>
-                  <span
-                    className="shrink-0 text-[0.68rem] font-medium"
-                    style={{ color: panel ? colorOf(panel) : undefined }}
-                  >
-                    {panel === "untracked" ? t("lean.unknown") : panel ? labelOf(panel) : ""}
-                  </span>
-                </Link>
-              </li>
+              <HiddenOutletRow
+                key={o.publisher}
+                outlet={o}
+                label={panel === "untracked" ? t("lean.unknown") : panel ? labelOf(panel) : ""}
+                color={panel ? colorOf(panel) : undefined}
+              />
             ))}
           </ul>
         </SheetContent>
@@ -200,14 +196,95 @@ function OutletIcon({ outlet, sizePx = 24 }: { outlet: OutletMark; sizePx?: numb
   );
 }
 
+/**
+ * One outlet's chip: a button that opens the outlet's NEWEST article on this story through the
+ * shared Read pipeline — recorded like every other read, tagged `story-bias` — with the headline
+ * in the tooltip so the promise is visible before the click. The mark itself is unchanged; the
+ * affordance is the cursor, a ring, and a slight lift on hover/focus. An outlet whose rows carried
+ * no URL stays a plain mark: no affordance is offered that cannot be kept.
+ */
 function OutletChip({ outlet }: { outlet: OutletMark }) {
+  const { t } = useTranslation();
+  const { actionable, opened, open } = useReadArticleAction(
+    { url: outlet.url, headline: outlet.headline },
+    OPENED_FROM,
+  );
+  if (!actionable) {
+    return (
+      <li title={outlet.publisher} className={cn(CHIP, "shrink-0")}>
+        <span className="sr-only">{outlet.publisher}</span>
+        <OutletIcon outlet={outlet} />
+      </li>
+    );
+  }
+  const label = t("story.openArticleFrom", { publisher: outlet.publisher, headline: outlet.headline ?? "" });
   return (
-    <li
-      title={outlet.publisher}
-      className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full border-2 border-card bg-muted"
-    >
-      <span className="sr-only">{outlet.publisher}</span>
-      <OutletIcon outlet={outlet} />
+    <li className="shrink-0">
+      <button
+        type="button"
+        onClick={open}
+        title={label}
+        aria-label={label}
+        aria-pressed={opened}
+        className={cn(
+          CHIP,
+          "cursor-pointer transition-[transform,box-shadow] hover:scale-110 hover:ring-2 hover:ring-ring",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          opened && "ring-2 ring-positive/60",
+        )}
+      >
+        <OutletIcon outlet={outlet} />
+      </button>
+    </li>
+  );
+}
+
+/**
+ * A hidden outlet in the +N sheet: the same article open as the chip, with the headline shown
+ * as a second line — for a capsule's overflow this IS the article list. An outlet with no URL
+ * falls back to its profile page, so the row is never a dead end.
+ */
+function HiddenOutletRow({ outlet, label, color }: { outlet: OutletMark; label: string; color?: string }) {
+  const { t } = useTranslation();
+  const { actionable, opened, open } = useReadArticleAction(
+    { url: outlet.url, headline: outlet.headline },
+    OPENED_FROM,
+  );
+  const body = (
+    <>
+      <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-muted">
+        <OutletIcon outlet={outlet} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{outlet.publisher}</span>
+        {outlet.headline && (
+          <span className="block truncate text-xs text-muted-foreground">{outlet.headline}</span>
+        )}
+      </span>
+      <span className="shrink-0 text-[0.68rem] font-medium" style={{ color }}>
+        {label}
+      </span>
+    </>
+  );
+  const rowClass =
+    "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  return (
+    <li>
+      {actionable ? (
+        <button
+          type="button"
+          onClick={open}
+          aria-pressed={opened}
+          title={t("story.openArticleFrom", { publisher: outlet.publisher, headline: outlet.headline ?? "" })}
+          className={rowClass}
+        >
+          {body}
+        </button>
+      ) : (
+        <Link href={`/publishers/${encodeURIComponent(outlet.publisher)}`} className={rowClass}>
+          {body}
+        </Link>
+      )}
     </li>
   );
 }
