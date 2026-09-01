@@ -10,7 +10,7 @@ import { LeanBadge } from "@/components/shared/article-badges";
 import { RecommendationCard } from "@/components/recommendations/recommendation-card";
 import { WeeklyReviewCard } from "@/components/coach/weekly-review-card";
 import { feedbackArticleId } from "@ih/core/api/services";
-import { citationLabelKey } from "@ih/core/logic/coach-presentation";
+import { citationLabelKey, citationsBeyondCard } from "@ih/core/logic/coach-presentation";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +34,7 @@ export function CoachMessageBubble({
   // dismissing an embedded card hides it from THIS bubble only (the ignore signal still fires)
   const [dismissed, setDismissed] = React.useState<Set<string>>(new Set());
   const cards = (message.cards ?? []).filter((c) => !dismissed.has(c.article.id));
+  const shownCitations = citationsBeyondCard(message.citations, message.weeklyReview);
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -70,9 +71,11 @@ export function CoachMessageBubble({
           </div>
         )}
 
-        {message.citations && message.citations.length > 0 && (
+        {/* Only the citations the Weekly Review card does not already render — the card IS the
+            structured form of those same facts, so showing both said everything twice. */}
+        {shownCitations.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {message.citations.map((c, i) => {
+            {shownCitations.map((c, i) => {
               // v1 cites report metrics (catalog label); v2 may cite any engine evidence key,
               // shown as the raw key — honest and greppable, never a broken catalog lookup.
               const labelKey = citationLabelKey(c.metric);

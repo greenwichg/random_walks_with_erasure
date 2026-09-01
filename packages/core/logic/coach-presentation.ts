@@ -119,3 +119,42 @@ export function weeklyInsights(review: {
   }
   return out.slice(0, 2);
 }
+
+/**
+ * Citations the Weekly Review card does NOT already render — the chips still worth showing under
+ * it. Without this the weekly reply says everything twice: the card's "5 Reads / 4 Outlets /
+ * 20 min" and its trend tiles, then the same numbers again as raw `totalReads: 5`,
+ * `healthImprovement.first: 67` chips (reported from production, 2026-09-01).
+ *
+ * Coverage is derived from the PAYLOAD, not from a hardcoded key list, so the rule stays literally
+ * "the card shows this": a fact the card omits (an unmeasured week renders fewer rows) keeps its
+ * chip, and a citation from some other tool is never silently swallowed. `.first` counts as
+ * covered because the tile renders the delta it feeds — the arithmetic is on screen even when the
+ * number is not.
+ *
+ * `review` absent (every non-weekly reply) ⇒ citations pass through untouched.
+ */
+export function citationsBeyondCard<C extends { metric: string }>(
+  citations: C[] | undefined,
+  review: {
+    reads: number | null;
+    outlets: number | null;
+    goalMinutes: number | null;
+    storedGoals: string[] | null;
+    topPublishers: { name: string }[];
+    trends: { metric: string }[];
+  } | null | undefined,
+): C[] {
+  if (!citations?.length) return [];
+  if (!review) return citations;
+  const covered = new Set<string>();
+  if (review.reads != null) covered.add("totalReads");
+  if (review.outlets != null) covered.add("distinctOutlets");
+  if (review.goalMinutes != null) covered.add("readingGoalMinutes");
+  if (review.storedGoals?.length) covered.add("coachGoals");
+  if (review.topPublishers.length) covered.add("topOutlets");
+  for (const t of review.trends) {
+    for (const suffix of ["first", "last", "points"]) covered.add(`${t.metric}.${suffix}`);
+  }
+  return citations.filter((c) => !covered.has(c.metric));
+}

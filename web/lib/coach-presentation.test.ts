@@ -21,6 +21,7 @@ import {
   trendLabelKey,
   weeklyTrendDelta,
   weeklyInsights,
+  citationsBeyondCard,
 } from "@ih/core/logic/coach-presentation";
 import type { CoachMessage } from "@ih/core/domain/types";
 
@@ -136,4 +137,63 @@ test("weeklyInsights: empty payload derives nothing (honest omission)", () => {
     }),
     [],
   );
+});
+
+// --------------------------------------------------------------------------- //
+// citationsBeyondCard — the weekly reply must not say everything twice.
+// --------------------------------------------------------------------------- //
+// Reported from production 2026-09-01: the Weekly Review card rendered "5 Reads / 4 Outlets /
+// 20 min" and its trend tiles, and directly beneath it the same numbers again as raw chips
+// (totalReads: 5, readingGoalMinutes: 20, healthImprovement.first: 67, …). Coverage is derived
+// from the payload, so these tests pin BOTH directions: a fact the card shows loses its chip, a
+// fact it cannot show keeps one.
+
+const REVIEW = {
+  reads: 5,
+  outlets: 4,
+  goalMinutes: 20,
+  storedGoals: null,
+  topPublishers: [{ name: "decider.com" }],
+  trends: [{ metric: "healthImprovement" }, { metric: "politicalDiversity" }],
+};
+
+test("a citation the Weekly Review card renders is dropped", () => {
+  const cites = [
+    { metric: "totalReads", value: 5 },
+    { metric: "distinctOutlets", value: 4 },
+    { metric: "readingGoalMinutes", value: 20 },
+    { metric: "topOutlets", value: "decider.com" },
+    { metric: "healthImprovement.first", value: 67 },
+    { metric: "healthImprovement.last", value: 68 },
+    { metric: "politicalDiversity.first", value: 64 },
+  ];
+  assert.deepEqual(citationsBeyondCard(cites, REVIEW), [],
+    "every chip in the screenshot is a fact the card already shows");
+});
+
+test("a citation the card does NOT render survives", () => {
+  const cites = [
+    { metric: "totalReads", value: 5 },
+    { metric: "sourceShare.NPR", value: "12%" },          // no card section renders this
+    { metric: "topicDiversity.last", value: 71 },          // a trend absent from this payload
+  ];
+  assert.deepEqual(citationsBeyondCard(cites, REVIEW).map((c) => c.metric),
+    ["sourceShare.NPR", "topicDiversity.last"],
+    "coverage is what the card shows — never a blanket suppression");
+});
+
+test("an unmeasured fact keeps its chip: coverage tracks the payload, not a key list", () => {
+  const thin = { ...REVIEW, reads: null, goalMinutes: null, topPublishers: [] };
+  const cites = [{ metric: "totalReads", value: 5 }, { metric: "readingGoalMinutes", value: 20 },
+                 { metric: "topOutlets", value: "x" }, { metric: "distinctOutlets", value: 4 }];
+  assert.deepEqual(citationsBeyondCard(cites, thin).map((c) => c.metric),
+    ["totalReads", "readingGoalMinutes", "topOutlets"],
+    "the card omits null rows, so those chips are the only place the fact appears");
+});
+
+test("every non-weekly reply passes its citations through untouched", () => {
+  const cites = [{ metric: "totalReads", value: 5 }, { metric: "echoChamber", value: 42 }];
+  assert.deepEqual(citationsBeyondCard(cites, null), cites, "v1/other intents are unchanged");
+  assert.deepEqual(citationsBeyondCard(cites, undefined), cites);
+  assert.deepEqual(citationsBeyondCard(undefined, REVIEW), [], "no citations, no chips");
 });
