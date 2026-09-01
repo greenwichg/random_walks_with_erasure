@@ -19,6 +19,7 @@ import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-
 import { CoverageList } from "@/components/stories/coverage-list";
 import { FramingComparison } from "@/components/stories/framing-comparison";
 import { StoryCoveragePanel } from "@/components/stories/story-coverage-panel";
+import { OwnershipPanel } from "@/components/stories/ownership-panel";
 import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
@@ -190,6 +191,7 @@ export default function StoryDetailPage() {
           <>
             <StoryIntelligencePanel storyId={story.id} />
             <StoryCoveragePanel distribution={story.distribution} coverage={panelCoverage} />
+            <OwnershipPanel coverage={panelCoverage} />
             <PublisherSpotlight
               publishers={publisherCounts}
               titleKey="story.publishersTitle"

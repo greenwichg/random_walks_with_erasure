@@ -253,13 +253,19 @@ def _low_credibility_publishers(members: list) -> list:
 
 
 def _coverage(members: list) -> list:
-    """One coverage entry per article, newest first — the canonical article list (carries the URL)."""
+    """One coverage entry per article, newest first — the canonical article list (carries the URL).
+
+    ``ownership`` is resolved HERE from the registry rather than stored at ingest, for the same
+    reason the credibility gate resolves live: a curation change takes effect on the next serve
+    instead of waiting for a backfill. ``None`` = uncurated/unknown (L2.2 — never ``other``);
+    the resolve memo makes the per-row call a dict hit after the first article of each outlet."""
     out = []
     for m in sorted(members, key=lambda m: (m["publishedAt"] or "", m["id"]), reverse=True):
         out.append({
             "publisher": m["publisher"], "headline": m["headline"], "lean": m["lean"],
             "leanBucket": m["leanBucket"], "register": m["register"], "emotion": m["emotion"],
             "url": m["url"], "publishedAt": m["publishedAt"],
+            "ownership": outlet_registry.ownership(m["publisher"]),
         })
     return out
 

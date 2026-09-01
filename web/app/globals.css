@@ -55,6 +55,18 @@
     --caution: 34 90% 44%;
     --negative: 356 72% 50%;
 
+    /* Ownership categorical palette (story Ownership panel). Fixed assignment — a hue always
+       means the same owner type. CVD-checked pairwise in ring order against this theme's card
+       surface (deutan/protan/tritan ΔE ≥ 12 for every adjacent pair); unknown reuses --center. */
+    --own-independent: 42 62% 42%;
+    --own-individual: 170 45% 36%;
+    --own-telecom: 199 72% 48%;
+    --own-government: 236 50% 38%;
+    --own-private-equity: 276 45% 52%;
+    --own-conglomerate: 345 55% 44%;
+    --own-corporation: 215 28% 45%;
+    --own-other: 330 55% 58%;
+
     --radius: 0.6rem;
   }
 
@@ -90,6 +102,15 @@
     --positive: 152 50% 50%;
     --caution: 36 90% 58%;
     --negative: 356 76% 63%;
+
+    --own-independent: 43 55% 58%;
+    --own-individual: 168 38% 52%;
+    --own-telecom: 199 65% 68%;
+    --own-government: 237 45% 55%;
+    --own-private-equity: 276 48% 70%;
+    --own-conglomerate: 345 50% 63%;
+    --own-corporation: 215 24% 60%;
+    --own-other: 330 50% 68%;
   }
 }
 

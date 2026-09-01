@@ -1297,6 +1297,9 @@ class StoryCoverageModel(BaseModel):
     # voted (no lean count, no membership, no id input). Absent (exclude_none) on every member
     # row, so the flag-off wire payload is byte-identical to before the field existed.
     tierB: Optional[bool] = None
+    # Controlling-owner type of the outlet (registry OWNERSHIPS vocabulary). Absent when the
+    # registry doesn't classify the outlet — unknown is unknown, never "other" (L2.2).
+    ownership: Optional[str] = None
 
 
 class TimelinePointModel(BaseModel):

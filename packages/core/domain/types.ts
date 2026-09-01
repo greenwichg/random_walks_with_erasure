@@ -409,6 +409,18 @@ export interface DashboardSummary {
   streakDays: number;
 }
 
+/** Controlling-owner type of an outlet — the registry's OWNERSHIPS vocabulary (sourced,
+ *  Ground News comparison adapted). An outlet the registry doesn't classify carries no value. */
+export type OwnershipCategory =
+  | "independent"
+  | "individual"
+  | "telecom"
+  | "government"
+  | "private_equity"
+  | "conglomerate"
+  | "corporation"
+  | "other";
+
 /** Reporting-vs-opinion register + emotion of an article. */
 export type Register = "reporting" | "opinion" | "mixed";
 
@@ -696,6 +708,9 @@ export interface StoryCoverage {
   emotion?: EmotionShare | null;
   url?: string;
   publishedAt: string;
+  /** Controlling-owner type of the outlet (registry OWNERSHIPS vocabulary, sourced rows only).
+   *  Absent when the registry doesn't classify the outlet — unknown, never "other" (L2.2). */
+  ownership?: OwnershipCategory | null;
   /** M4 — an ATTACHED Tier B row: coverage that never voted. The engine appends these after the
    *  member rows (the member list is a strict prefix), and every member-derived fact the client
    *  recomputes (publisher counts, register splits, framing) must exclude them — that is what

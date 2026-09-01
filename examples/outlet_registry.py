@@ -95,6 +95,30 @@ _ASOF_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: without someone deciding where its ratings can be read.
 FACTUALITY_SOURCE_SEARCH = {"mbfc": "https://mediabiasfactcheck.com/?s={domain}"}
 
+#: Legal values for the ``ownership`` column — WHO CONTROLS the outlet, by controlling-owner
+#: type (the Ground News comparison's taxonomy, adapted). Blank is legal and means UNCURATED —
+#: absence of a classification never becomes a category, exactly as absence of a lean never
+#: centres one (L2.2). Every category is a claim about a named news organisation, so the same
+#: provenance discipline as ``factuality`` applies: a set value requires ``ownership_source``
+#: and ``ownership_asof``, enforced by :func:`lint_registry`.
+#:
+#: ``independent``    self-owned newsroom, trust or nonprofit (AP's cooperative, Scott Trust)
+#: ``individual``     controlled by one person or family (Bloomberg L.P.)
+#: ``telecom``        a telecommunications parent (Comcast → NBCUniversal)
+#: ``government``     state-owned, state-funded or public-charter (Xinhua, BBC's Royal Charter)
+#: ``private_equity`` a financial sponsor / investment firm holds control
+#: ``conglomerate``   a large multi-brand media group (Fox Corporation, Warner Bros. Discovery)
+#: ``corporation``    a publicly traded company that is not primarily a media group
+#: ``other``          a documented structure none of the above describes
+OWNERSHIPS = ("independent", "individual", "telecom", "government",
+              "private_equity", "conglomerate", "corporation", "other")
+
+#: Who recorded an ownership classification. ``public_record`` = the controlling owner is the
+#: outlet's own public identity (its about page, its parent's filings) and undisputed; kept as a
+#: closed set like :data:`FACTUALITY_SOURCES` so a typo is a lint error rather than a new
+#: untraceable "source". A future licensed dataset joins as its own named value.
+OWNERSHIP_SOURCES = ("public_record",)
+
 #: Legal values for the ``kind`` column. Blank = an ordinary news outlet, which is the vast
 #: majority. Everything named here is a source that is NOT a newsroom covering a story, and each
 #: name records a different reason a lean would be the wrong question:
@@ -147,6 +171,10 @@ class Outlet:
     factuality: "str | None" = None
     factuality_source: "str | None" = None   # who said so — mandatory whenever `factuality` is set
     factuality_asof: "str | None" = None     # WHEN it was read (ISO date) — also mandatory
+    # Controlling-owner type — see OWNERSHIPS. Same sourced-or-absent contract as factuality.
+    ownership: "str | None" = None
+    ownership_source: "str | None" = None
+    ownership_asof: "str | None" = None
 
 
 def _fold(text: str) -> str:
@@ -278,6 +306,7 @@ class OutletRegistry:
                 lean = float(raw_lean) if raw_lean else float("nan")
                 cred = _opt(row, 8)
                 fact = _opt(row, 9)
+                own = _opt(row, 12)
                 outlets.append(Outlet(canonical=canonical, lean=lean,
                                       country=_opt(row, 3), region=_opt(row, 4),
                                       city=_opt(row, 5), scope=_opt(row, 6),
@@ -285,7 +314,10 @@ class OutletRegistry:
                                       credibility=cred.lower() if cred else None,
                                       factuality=fact.lower() if fact else None,
                                       factuality_source=_opt(row, 10),
-                                      factuality_asof=_opt(row, 11)))
+                                      factuality_asof=_opt(row, 11),
+                                      ownership=own.lower() if own else None,
+                                      ownership_source=_opt(row, 13),
+                                      ownership_asof=_opt(row, 14)))
                 aliases[canonical] = canonical      # the name itself resolves
                 if len(row) >= 3 and row[2].strip():
                     for alias in row[2].split("|"):
@@ -537,6 +569,13 @@ def credibility(text: "str | None") -> Optional[str]:
     return default_registry().credibility(text)
 
 
+def ownership(text: "str | None") -> Optional[str]:
+    """The curated controlling-owner type for ``text`` — one of :data:`OWNERSHIPS`, or ``None``
+    when the outlet is unknown OR the column is uncurated (unknown, never ``other``)."""
+    o = default_registry().resolve(text)
+    return o.ownership if o else None
+
+
 def is_low_credibility(text: "str | None") -> bool:
     """Convenience: :meth:`OutletRegistry.is_low_credibility` against the default registry."""
     return default_registry().is_low_credibility(text)
@@ -560,6 +599,9 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
       * ``unrated_low_credibility`` (warning) — a ``low`` row with no lean. Legal, but it means the
         row is asserting a caveat about a rating that is not there, which is almost always a
         half-finished edit: the point of ``low`` is to let the LEAN be recorded.
+      * factuality columns (10–12) and ownership columns (13–15) each enforce the sourced-or-absent
+        contract: value in the closed vocabulary, source mandatory and from the closed source set,
+        asof mandatory, ISO-dated, and never in the future.
     """
     path = path or _DATA
     issues: List[dict] = []
@@ -662,6 +704,52 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
             issues.append({"severity": "warning", "code": "asof_without_factuality", "line": lineno,
                            "message": f"line {lineno} ({canonical}): factuality_asof {fact_asof!r} "
                                       "with no factuality — a half-finished edit"})
+        # Ownership (columns 13–15) carries the same discipline as factuality, for the same reason:
+        # a controlling-owner type is a claim about a named news organisation, so it is either
+        # sourced and dated or absent. One deliberate difference: no future/format leniency —
+        # the asof checks are shared verbatim.
+        own = cells[12].strip().lower() if len(cells) > 12 else ""
+        own_src = cells[13].strip().lower() if len(cells) > 13 else ""
+        own_asof = cells[14].strip() if len(cells) > 14 else ""
+        if own and own not in OWNERSHIPS:
+            issues.append({"severity": "error", "code": "invalid_ownership", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): ownership {own!r} is not one of "
+                                      f"{'/'.join(OWNERSHIPS)} (blank = uncurated)"})
+        if own and not own_src:
+            issues.append({"severity": "error", "code": "ownership_without_source", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): ownership {own!r} with no "
+                                      "ownership_source — an unattributed classification cannot "
+                                      "be told apart from a guess"})
+        if own_src and own_src not in OWNERSHIP_SOURCES:
+            issues.append({"severity": "error", "code": "invalid_ownership_source", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): ownership_source {own_src!r} "
+                                      f"is not one of {'/'.join(OWNERSHIP_SOURCES)}"})
+        if own_src and not own:
+            issues.append({"severity": "warning", "code": "source_without_ownership", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): ownership_source {own_src!r} "
+                                      "with no ownership — a half-finished edit"})
+        if own and not own_asof:
+            issues.append({"severity": "error", "code": "ownership_without_asof", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): ownership {own!r} with no "
+                                      "ownership_asof — an undated classification cannot be told "
+                                      "apart from a current one"})
+        if own_asof:
+            bad = not _ASOF_RE.match(own_asof)
+            if not bad:
+                try:
+                    when = datetime.date(*(int(p) for p in own_asof.split("-")))
+                except ValueError:
+                    bad = True
+                else:
+                    if when > datetime.date.today():
+                        issues.append({"severity": "error", "code": "ownership_asof_in_future",
+                                       "line": lineno,
+                                       "message": f"line {lineno} ({canonical}): ownership_asof "
+                                                  f"{own_asof!r} is in the future"})
+            if bad:
+                issues.append({"severity": "error", "code": "invalid_ownership_asof", "line": lineno,
+                               "message": f"line {lineno} ({canonical}): ownership_asof "
+                                          f"{own_asof!r} is not an ISO date (YYYY-MM-DD)"})
         if canonical in seen_canonical:
             issues.append({"severity": "error", "code": "duplicate_canonical", "line": lineno,
                            "message": f"line {lineno}: canonical {canonical!r} already defined at "

@@ -2247,3 +2247,62 @@ def test_no_registered_alias_folds_to_a_degenerate_name_key(reg):
                 keys += [a.strip() for a in row[2].split("|") if a.strip()]
             degenerate += [k for k in keys if not (orx._name_key(k) or orx._looks_like_host(k))]
     assert degenerate == [], f"registry keys with empty name keys collide: {degenerate!r}"
+
+
+def test_ownership_is_sourced_or_absent_and_unknown_is_never_other(reg):
+    """The ownership column (Ground News comparison, adapted) carries the factuality contract:
+    a classification is either sourced+dated or absent, and an uncurated outlet answers None —
+    never folded into "other", exactly as an unrated lean is never centred (L2.2).
+
+    Mutation ledger (each red against the listed break of outlet_registry.py):
+      - loader reads column 11 instead of 12      -> BBC asserts fail (asof lands in ownership)
+      - `own.lower()` dropped                     -> vocabulary assert fails on no row here (the
+        bundled tranche is already lowercase; pinned instead by the lint test's vocabulary check)
+      - `ownership()` returns "other" on a miss   -> the wwd.com/None assert fails
+    """
+    # The 2026-09-01 public-record tranche: controlling-owner type is the outlet's own public
+    # identity. Alias forms resolve to the same row (the registry's normal resolution).
+    assert reg.resolve("BBC News").ownership == "government"
+    assert reg.resolve("BBC News").ownership_source == "public_record"
+    assert reg.resolve("BBC News").ownership_asof == "2026-09-01"
+    assert orx.ownership("Fox News") == "conglomerate"
+    assert orx.ownership("MSNBC") == "telecom"
+    assert orx.ownership("Bloomberg") == "individual"
+    assert orx.ownership("Associated Press") == "independent"
+    # Everything in the column speaks the closed vocabulary.
+    for o in reg._outlets.values():
+        if o.ownership is not None:
+            assert o.ownership in orx.OWNERSHIPS, (o.canonical, o.ownership)
+            assert o.ownership_source and o.ownership_asof, o.canonical
+    # Unknown is unknown: an unclassified outlet and an unregistered host both answer None.
+    assert orx.ownership("The Times of India") is None
+    assert orx.ownership("wwd.com") is None
+    assert orx.ownership(None) is None
+
+
+def test_lint_enforces_the_ownership_provenance_contract(tmp_path):
+    """One row per defect, every code asserted: an unattributed or undated ownership claim is
+    indistinguishable from a guess, so lint refuses each omission independently."""
+    p = tmp_path / "r.csv"
+    p.write_text(
+        "canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,"
+        "factuality_source,factuality_asof,ownership,ownership_source,ownership_asof\n"
+        "Widget Times,1,widgettimes.com,US,,,national,,,,,,oligarch,public_record,2026-09-01\n"
+        "Widget Post,-1,widgetpost.com,US,,,national,,,,,,government,,2026-09-01\n"
+        "Widget Sun,0,widgetsun.com,US,,,national,,,,,,government,my_hunch,2026-09-01\n"
+        "Widget Mail,0,widgetmail.com,US,,,national,,,,,,government,public_record,\n"
+        "Widget Star,0,widgetstar.com,US,,,national,,,,,,government,public_record,someday\n"
+        "Widget Moon,0,widgetmoon.com,US,,,national,,,,,,government,public_record,2999-01-01\n"
+        "Widget Sky,0,widgetsky.com,US,,,national,,,,,,,public_record,\n",
+        encoding="utf-8")
+    codes = {i["code"] for i in orx.lint_registry(str(p))}
+    assert {"invalid_ownership", "ownership_without_source", "invalid_ownership_source",
+            "ownership_without_asof", "invalid_ownership_asof", "ownership_asof_in_future",
+            "source_without_ownership"} <= codes
+    # And the clean form of the same row raises nothing.
+    p.write_text(
+        "canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,"
+        "factuality_source,factuality_asof,ownership,ownership_source,ownership_asof\n"
+        "Widget Times,1,widgettimes.com,US,,,national,,,,,,government,public_record,2026-09-01\n",
+        encoding="utf-8")
+    assert orx.lint_registry(str(p)) == []

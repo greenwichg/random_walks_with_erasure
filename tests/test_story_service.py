@@ -110,6 +110,23 @@ def test_distribution_excludes_unrated_publishers():
     assert unrated["lean"] is None and unrated["leanBucket"] is None
 
 
+def test_coverage_rows_carry_the_outlets_ownership_and_unknown_stays_absent():
+    """Ownership is resolved live from the registry at serve time (like the credibility gate),
+    one value per row, and an outlet the registry doesn't classify carries None — never "other"
+    (L2.2). NPR/Fox News here are real tranche rows, so this also pins the wire contract to the
+    bundled data. Mutation check: resolving from m["url"] instead of m["publisher"] leaves the
+    values intact (hosts resolve too) — the caught break is dropping the field or hardcoding it.
+    """
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate", days=1)
+    _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown", days=1)
+    _add(st, "https://obscure.example/a3", "Obscure Tribune", None,
+         "Senate passes funding bill to avert shutdown")
+    story = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
+    by_pub = {c["publisher"]: c["ownership"] for c in story["coverage"]}
+    assert by_pub == {"NPR": "independent", "Fox News": "conglomerate", "Obscure Tribune": None}
+
+
 def test_all_unrated_story_is_zero_distribution_no_blindspot():
     """A story covered only by unrated outlets shows an honestly empty distribution (all zero) and
     no blindspot — empty beats wrong, and nothing crashes on null buckets."""
