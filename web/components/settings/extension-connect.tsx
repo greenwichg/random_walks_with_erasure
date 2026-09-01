@@ -66,9 +66,16 @@ export function ExtensionConnect() {
         <p className="text-sm text-muted-foreground">{t("ext.signIn")}</p>
       ) : (
         <div className="space-y-5">
+          {/* One fact per line at the card-hint scale — the old single text-sm paragraph packed
+              all three into a five-line wall on phones. Same copy, split at its own sentence
+              boundaries (ext.privacy → What / Tokens / Revoke). */}
           <div className="flex items-start gap-3 rounded-lg bg-muted/50 p-3">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">{t("ext.privacy")}</p>
+            <div className="space-y-1 text-xs leading-relaxed text-muted-foreground">
+              <p>{t("ext.privacyWhat")}</p>
+              <p>{t("ext.privacyTokens")}</p>
+              <p>{t("ext.privacyRevoke")}</p>
+            </div>
           </div>
 
           {/* Freshly minted token — shown a single time */}
