@@ -441,3 +441,24 @@ def test_the_rating_link_uses_the_curated_domain_not_the_observed_host():
     bbc = reg.resolve("BBC")
     assert reg.domains(bbc.canonical)[0] == "bbc.com", "shortest curated domain leads"
     assert reg.rating_url(bbc).endswith("bbc.com")
+
+
+def test_a_classified_outlet_carries_its_ownership_type_with_provenance():
+    """Type + who-said-so + when travel together, the factuality shape minus a rating link (the
+    source IS the public record). NOT behind the factuality gate: this is our own curation of
+    public facts, not a licensed rating. The owner's NAME rides in the About block as its curated
+    `parent`, so one merge rule governs both halves of the Ownership card."""
+    st = store_mod.Store("sqlite://")
+    _npr_catalog(st)
+    p = ps.get_publisher(st, "NPR")
+    assert p["ownership"] == {"value": "independent", "source": "public_record", "asOf": "2026-09-01"}
+    assert p["about"]["parent"] == "National Public Radio, Inc."
+    assert p["about"]["sources"]["parent"] == "curated"
+
+
+def test_an_unclassified_outlet_omits_ownership_entirely():
+    """Unknown is ABSENCE — never null, never 'other' — exactly as it is for lean and factuality."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://unknown.example/1", "Totally Unknown Local Herald")
+    p = ps.get_publisher(st, "Totally Unknown Local Herald")
+    assert p is not None and "ownership" not in p

@@ -135,7 +135,7 @@
 # A row that is refreshed gets a NEW date in the same edit as the new verdict. Re-reading a page and
 # finding the rating unchanged is also a refresh: the date moves, the value does not.
 #
-canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,factuality_source,factuality_asof,ownership,ownership_source,ownership_asof
+canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,factuality_source,factuality_asof,ownership,ownership_source,ownership_asof,ownership_owner
 # --- left (-2) ---
 Mother Jones,-2,motherjones.com,US,,,national
 The Nation,-2,thenation.com,US,,,national,,,high,mbfc,2026-08-10
@@ -147,13 +147,13 @@ AlterNet,-2,alternet.org,US,,,national
 Democracy Now,-2,democracynow.org,US,,,national
 # --- lean left (-1) ---
 New York Times,-1,nytimes.com|NYT|The New York Times,US,New York,New York,national,,,high,mbfc,2026-08-10
-Washington Post,-1,washingtonpost.com|WaPo|The Washington Post,US,District of Columbia,Washington,national,,,mostly_factual,mbfc,2026-08-10,individual,public_record,2026-09-01
+Washington Post,-1,washingtonpost.com|WaPo|The Washington Post,US,District of Columbia,Washington,national,,,mostly_factual,mbfc,2026-08-10,individual,public_record,2026-09-01,Nash Holdings (Jeff Bezos)
 CNN,-1,cnn.com,US,,,national,,,mostly_factual,mbfc,2026-08-10,conglomerate,public_record,2026-09-01
-MSNBC,-1,msnbc.com,US,,,national,,,,,,telecom,public_record,2026-09-01
-NPR,-1,npr.org,US,,,national,,,high,mbfc,2026-08-10,independent,public_record,2026-09-01
-The Guardian,-1,theguardian.com|Guardian,GB,,London,international,,,high,mbfc,2026-08-10,independent,public_record,2026-09-01
-Politico,-1,politico.com,US,,,national,,,high,mbfc,2026-08-10,conglomerate,public_record,2026-09-01
-NBC News,-1,nbcnews.com|NBC,US,,,national,,,high,mbfc,2026-08-10,telecom,public_record,2026-09-01
+MSNBC,-1,msnbc.com,US,,,national,,,,,
+NPR,-1,npr.org,US,,,national,,,high,mbfc,2026-08-10,independent,public_record,2026-09-01,"National Public Radio, Inc."
+The Guardian,-1,theguardian.com|Guardian,GB,,London,international,,,high,mbfc,2026-08-10,independent,public_record,2026-09-01,Scott Trust Limited
+Politico,-1,politico.com,US,,,national,,,high,mbfc,2026-08-10,conglomerate,public_record,2026-09-01,Axel Springer SE
+NBC News,-1,nbcnews.com|NBC,US,,,national,,,high,mbfc,2026-08-10,telecom,public_record,2026-09-01,Comcast (NBCUniversal)
 ABC News,-1,abcnews.go.com|abcnews.com|ABC,US,,,national,,,high,mbfc,2026-08-10
 CBS News,-1,cbsnews.com|CBS,US,,,national,,,mostly_factual,mbfc,2026-08-10
 Vox,-1,vox.com,US,,,national
@@ -161,15 +161,15 @@ HuffPost,-1,huffpost.com|huffingtonpost.com|Huffington Post,US,,,national
 The Atlantic,-1,theatlantic.com|Atlantic,US,,,national
 Time,-1,time.com,US,,,national
 Slate,-1,slate.com,US,,,national
-Bloomberg,-1,bloomberg.com,US,,,national,,,mostly_factual,mbfc,2026-08-10,individual,public_record,2026-09-01
+Bloomberg,-1,bloomberg.com,US,,,national,,,mostly_factual,mbfc,2026-08-10,individual,public_record,2026-09-01,Bloomberg L.P. (Michael Bloomberg)
 Business Insider,-1,businessinsider.com|insider.com,US,,,national,,,mostly_factual,mbfc,2026-08-10
 CNBC,-1,cnbc.com,US,,,national,,,mostly_factual,mbfc,2026-08-10
-Al Jazeera,-1,aljazeera.com|Al Jazeera English,QA,,Doha,international,,,mixed,mbfc,2026-08-10,government,public_record,2026-09-01
+Al Jazeera,-1,aljazeera.com|Al Jazeera English,QA,,Doha,international,,,mixed,mbfc,2026-08-10,government,public_record,2026-09-01,Al Jazeera Media Network
 Los Angeles Times,-1,latimes.com|LA Times,US,California,Los Angeles,regional
 # --- center (0) ---
-Reuters,0,reuters.com,GB,,London,international,,,very_high,mbfc,2026-08-10,conglomerate,public_record,2026-09-01
-Associated Press,0,apnews.com|AP|ap.org,US,New York,New York,international,,,high,mbfc,2026-08-10,independent,public_record,2026-09-01
-BBC,0,bbc.com|bbc.co.uk|BBC News,GB,,London,international,,,mostly_factual,mbfc,2026-08-10,government,public_record,2026-09-01
+Reuters,0,reuters.com,GB,,London,international,,,very_high,mbfc,2026-08-10,conglomerate,public_record,2026-09-01,Thomson Reuters
+Associated Press,0,apnews.com|AP|ap.org,US,New York,New York,international,,,high,mbfc,2026-08-10,independent,public_record,2026-09-01,Associated Press (member cooperative)
+BBC,0,bbc.com|bbc.co.uk|BBC News,GB,,London,international,,,mostly_factual,mbfc,2026-08-10,government,public_record,2026-09-01,British Broadcasting Corporation (Royal Charter)
 The Hill,0,thehill.com,US,,,national,,,mostly_factual,mbfc,2026-08-10
 Axios,0,axios.com,US,,,national,,,high,mbfc,2026-08-10
 USA Today,0,usatoday.com|USA TODAY,US,,,national,,,mostly_factual,mbfc,2026-08-10
@@ -185,7 +185,7 @@ Reason,1,reason.com,US,,,national
 National Review,1,nationalreview.com,US,,,national
 The Epoch Times,1,theepochtimes.com|Epoch Times,US,,,national
 # --- right (2) ---
-Fox News,2,foxnews.com,US,,,national,,,low,mbfc,2026-08-10,conglomerate,public_record,2026-09-01
+Fox News,2,foxnews.com,US,,,national,,,low,mbfc,2026-08-10,conglomerate,public_record,2026-09-01,Fox Corporation
 Breitbart,2,breitbart.com,US,,,national
 Daily Wire,2,dailywire.com|The Daily Wire,US,,,national
 New York Post,2,nypost.com|NY Post,US,New York,New York,regional,,,mixed,mbfc,2026-08-10
@@ -649,7 +649,7 @@ Anadolu Agency,2,aa.com.tr|Anadolu,TR,,Ankara,international,,,mixed,mbfc,2026-07
 #   Global Times       : MBFC Left,         QUESTIONABLE
 #   RT                 : MBFC Right-Center, QUESTIONABLE, factual VERY LOW
 #   The Economic Times : MBFC Right-Center, QUESTIONABLE, LOW CREDIBILITY
-Xinhua,-2,xinhuanet.com|news.cn|Xinhua News Agency,CN,,,international,,low,,,,government,public_record,2026-09-01
+Xinhua,-2,xinhuanet.com|news.cn|Xinhua News Agency,CN,,,international,,low,,,,government,public_record,2026-09-01,State Council of the People's Republic of China
 Global Times,-2,globaltimes.cn,CN,,,national,,low
 RT (Russia Today),1,rt.com|RT|Russia Today,RU,,,international,,low
 The Economic Times,1,economictimes.indiatimes.com|economictimes.com,IN,,,national,,low
@@ -840,7 +840,7 @@ El Financiero,1,elfinanciero.com.mx,MX,,Mexico City,national
 # -- TASS "100% Russian propaganda", no sourcing; Sputnik factual VERY LOW, numerous failed fact
 # checks. Same treatment as RT: identity and country curated, lean withheld.
 Sputnik,1,sputnikglobe.com|sputniknews.com|Sputnik News,RU,,Moscow,international,,low
-TASS,1,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international,,low,,,,government,public_record,2026-09-01
+TASS,1,tass.com|tass.ru|Russian News Agency TASS,RU,,Moscow,international,,low,,,,government,public_record,2026-09-01,Government of Russia
 #
 # Eighth pass -- two outlets the PRODUCTION identity audit named, rather than a probe list. Both
 # arrived under two name forms each (Fortune.Com/Fortune, Watoday/Watoday.Com.Au), and Fortune was

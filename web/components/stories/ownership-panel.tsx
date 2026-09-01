@@ -11,24 +11,10 @@ import {
 import { SectionHeader } from "@/components/shared/section-header";
 import { InfoTooltip } from "@/components/shared/info-tooltip";
 import { useTranslation } from "@/lib/i18n";
+import { OWNERSHIP_META as META, ownershipColor as colorOf } from "@/lib/ownership-meta";
 import { cn } from "@/lib/utils";
 
 type CatKey = OwnershipSlice["category"];
-
-/** Fixed color + label assignment — a hue always means the same owner type (tokens are
- *  CVD-validated pairwise in ring order, both themes; `unknown` reuses the neutral center). */
-const META: Record<CatKey, { token: string; labelKey: string }> = {
-  independent: { token: "own-independent", labelKey: "own.independent" },
-  individual: { token: "own-individual", labelKey: "own.individual" },
-  telecom: { token: "own-telecom", labelKey: "own.telecom" },
-  government: { token: "own-government", labelKey: "own.government" },
-  private_equity: { token: "own-private-equity", labelKey: "own.privateEquity" },
-  conglomerate: { token: "own-conglomerate", labelKey: "own.conglomerate" },
-  corporation: { token: "own-corporation", labelKey: "own.corporation" },
-  other: { token: "own-other", labelKey: "own.other" },
-  unknown: { token: "center", labelKey: "own.unknown" },
-};
-const colorOf = (c: CatKey) => `hsl(var(--${META[c].token}))`;
 
 // Radial geometry (viewBox 240x240): category ring inside, one tick per outlet outside,
 // readout disc in the hole. Gaps are angular so they survive any radius.

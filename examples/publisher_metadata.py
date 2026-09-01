@@ -72,6 +72,11 @@ def curated_facts(outlet, *, site=None) -> dict:
         place = ", ".join(p for p in (_clean(city), _clean(region)) if p)
         if place:
             out["headquarters"] = ("curated", place)
+        # The controlling entity from the registry's ownership tranche. Curated, so it wins over
+        # a Wikidata "parent organization" claim — which names an org-chart parent, not always
+        # the controlling owner, and is exactly the field a human should get to overrule.
+        if _clean(getattr(outlet, "ownership_owner", None)):
+            out["parent"] = ("curated", _clean(outlet.ownership_owner))
     if _clean(site):
         out["website"] = ("counted", _clean(site))
     return out

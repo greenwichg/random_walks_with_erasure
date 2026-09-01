@@ -2506,3 +2506,30 @@ def test_search_facade_respects_the_shared_daily_budget(client, monkeypatch, tmp
     assert r.status_code == 200 and called == [], \
         "one account, one meter: the facade may not spend past the shared daily budget"
     assert "budget" in (r.json()["search_metadata"].get("note") or "")
+
+
+def test_publisher_profile_wire_carries_ownership_and_the_about_block(client):
+    """The profile's `response_model` silently DROPS any key it does not declare — which is how
+    the About block, built and tested service-side, never reached a browser. This pins the two
+    modules that ride that wire now: the sourced ownership type, and the About block whose
+    curated `parent` is the Ownership card's owner name. A service-level test cannot catch this
+    class of bug; only the HTTP boundary can."""
+    st = api_fastapi.state.store
+    u = "https://npr.org/wire-ownership-probe"
+    try:
+        st.upsert_feed_article(canonical_url=u, url=u, publisher="NPR", source_publisher="NPR",
+                               title="Senate passes the funding bill", description="", body=None,
+                               published_at="2026-09-01T12:00:00+00:00", source_feed="f",
+                               scored={"article_id": u, "outlet": "NPR", "lean": -1.0,
+                                       "category": "Politics"})
+        p = client.get("/api/publishers/NPR").json()
+        assert p["ownership"] == {"value": "independent", "source": "public_record",
+                                  "asOf": "2026-09-01"}
+        assert p["about"]["parent"] == "National Public Radio, Inc."
+        assert p["about"]["sources"]["parent"] == "curated"
+        # A registry outlet nobody has classified: the profile exists (the registry knows the
+        # name) and the module is ABSENT — not null, not "other".
+        toi = client.get("/api/publishers/The%20Times%20of%20India")
+        assert toi.status_code == 200 and "ownership" not in toi.json()
+    finally:
+        st.delete_feed_articles([u])                         # leave the shared store as we found it

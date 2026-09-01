@@ -236,6 +236,18 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
                     "asOf": outlet.factuality_asof,
                     "ratingUrl": outlet_registry.default_registry().rating_url(outlet),
                 }
+        # Controlling-owner TYPE with its provenance, the factuality shape minus the link: there
+        # is no rater's page to open, the source is the public record itself. Deliberately NOT
+        # behind the factuality gate — that gate exists because MBFC's verdicts are a licensed
+        # third-party product; this column is our own curation of public facts. Absent, never
+        # null, when the registry hasn't classified the outlet (L2.2). The owner's NAME travels
+        # in the About block as its curated `parent`, so both halves share one provenance rule.
+        if outlet.ownership:
+            profile["ownership"] = {
+                "value": outlet.ownership,
+                "source": outlet.ownership_source,
+                "asOf": outlet.ownership_asof,
+            }
     if stats:
         if stats["registers"] and stats["registers"]["n"] >= MIN_SIGNAL:
             profile["registers"] = stats["registers"]

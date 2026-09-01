@@ -253,3 +253,14 @@ def test_the_ensure_pass_is_idempotent(tmp_path):
     db = tmp_path / "twice.db"
     store_mod.Store(f"sqlite:///{db}").upsert_publisher_metadata("X", status="ok", reason="domain")
     assert store_mod.Store(f"sqlite:///{db}").publisher_metadata("X")["reason"] == "domain"
+
+
+def test_curated_owner_name_wins_over_wikidatas_parent_organization():
+    """The registry's ownership_owner is the About block's CURATED `parent`. Wikidata's parent
+    organization names an org-chart parent, not always the controlling owner, so a human's
+    entry overrules it — the same precedence country and headquarters already have. Where the
+    registry is blank, Wikidata still fills the gap, labelled as its own source."""
+    out = pm.merge(_outlet(ownership_owner="Fox Corporation"), _cached(parent="Fox News Media"))
+    assert out["parent"] == "Fox Corporation" and out["sources"]["parent"] == "curated"
+    out = pm.merge(_outlet(), _cached(parent="Fox News Media"))
+    assert out["parent"] == "Fox News Media" and out["sources"]["parent"] == "wikimedia"

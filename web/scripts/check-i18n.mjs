@@ -45,6 +45,7 @@ const DYNAMIC_PREFIXES = [
   "report.period.",        // t(`report.period.${period}.title|subtitle|suffix`) — components/report/period-analytics.tsx
   "publishers.factuality.level.",  // t(`publishers.factuality.level.${value}`) — components/shared/factuality-badge.tsx
   "publishers.factuality.source.", // t(`publishers.factuality.source.${source}`) — same component
+  "publishers.ownership.source.",  // t(`publishers.ownership.source.${type.source}`) — OwnershipCard in app/(app)/publishers/[name]/page.tsx
 ];
 
 /**
@@ -53,8 +54,7 @@ const DYNAMIC_PREFIXES = [
  */
 DYNAMIC_PREFIXES.push(
   "publishers.about.founded",       // ABOUT_ROWS in app/(app)/publishers/[name]/page.tsx
-  "publishers.about.headquarters",  // ditto
-  "publishers.about.parent",        // ditto
+  "publishers.about.headquarters",  // ditto — `parent` left the tuple for the Ownership card
 );
 
 /**

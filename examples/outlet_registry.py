@@ -175,6 +175,12 @@ class Outlet:
     ownership: "str | None" = None
     ownership_source: "str | None" = None
     ownership_asof: "str | None" = None
+    # The controlling entity by NAME ("Fox Corporation", "Scott Trust Limited"), display text.
+    # Optional even when the type is set: a type can be public knowledge while the exact entity
+    # is mid-restructuring (CNN, 2026) — then the type ships and the name stays blank rather
+    # than stale. Feeds the About block's `parent` as its CURATED candidate (publisher_metadata),
+    # so a Wikidata parent only ever fills a gap this column left.
+    ownership_owner: "str | None" = None
 
 
 def _fold(text: str) -> str:
@@ -317,7 +323,8 @@ class OutletRegistry:
                                       factuality_asof=_opt(row, 11),
                                       ownership=own.lower() if own else None,
                                       ownership_source=_opt(row, 13),
-                                      ownership_asof=_opt(row, 14)))
+                                      ownership_asof=_opt(row, 14),
+                                      ownership_owner=_opt(row, 15)))
                 aliases[canonical] = canonical      # the name itself resolves
                 if len(row) >= 3 and row[2].strip():
                     for alias in row[2].split("|"):
@@ -750,6 +757,13 @@ def lint_registry(path: "str | None" = None) -> List[dict]:
                 issues.append({"severity": "error", "code": "invalid_ownership_asof", "line": lineno,
                                "message": f"line {lineno} ({canonical}): ownership_asof "
                                           f"{own_asof!r} is not an ISO date (YYYY-MM-DD)"})
+        # An owner NAME with no owner TYPE is a half-finished edit: the name is only ever shown
+        # under the type's provenance (source + asof), so alone it would be an unsourced claim.
+        own_owner = cells[15].strip() if len(cells) > 15 else ""
+        if own_owner and not own:
+            issues.append({"severity": "warning", "code": "owner_without_ownership", "line": lineno,
+                           "message": f"line {lineno} ({canonical}): ownership_owner {own_owner!r} "
+                                      "with no ownership type — the name has no provenance without it"})
         if canonical in seen_canonical:
             issues.append({"severity": "error", "code": "duplicate_canonical", "line": lineno,
                            "message": f"line {lineno}: canonical {canonical!r} already defined at "

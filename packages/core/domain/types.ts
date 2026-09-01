@@ -165,6 +165,10 @@ export interface PublisherProfile {
    *  badge is not rendered — showing "Not rated" would be a claim about the outlet rather than
    *  about our configuration, and false for every outlet we do hold a verdict for. */
   factualityPublished?: boolean;
+  /** The registry's controlling-owner TYPE with its provenance (public record, dated). ABSENT
+   *  when the registry hasn't classified the outlet — unknown is absence, never "other". The
+   *  owner's NAME lives in `about.parent` (curated first, Wikidata otherwise), not here. */
+  ownership?: { value: OwnershipCategory; source: string; asOf: string };
   /** Majority article host as a URL — the publisher's own site, counted not curated. */
   site?: string;
   articles: { total: number; firstSeen?: string; lastSeen?: string; perDay?: number };

@@ -2266,7 +2266,7 @@ def test_ownership_is_sourced_or_absent_and_unknown_is_never_other(reg):
     assert reg.resolve("BBC News").ownership_source == "public_record"
     assert reg.resolve("BBC News").ownership_asof == "2026-09-01"
     assert orx.ownership("Fox News") == "conglomerate"
-    assert orx.ownership("MSNBC") == "telecom"
+    assert orx.ownership("NBC News") == "telecom"
     assert orx.ownership("Bloomberg") == "individual"
     assert orx.ownership("Associated Press") == "independent"
     # Everything in the column speaks the closed vocabulary.
@@ -2306,3 +2306,32 @@ def test_lint_enforces_the_ownership_provenance_contract(tmp_path):
         "Widget Times,1,widgettimes.com,US,,,national,,,,,,government,public_record,2026-09-01\n",
         encoding="utf-8")
     assert orx.lint_registry(str(p)) == []
+
+
+def test_ownership_owner_is_a_named_entity_that_needs_a_typed_row_to_stand_on(reg, tmp_path):
+    """The owner NAME (column 16) is display text carried under the type's provenance. It parses
+    with the row, is optional even when the type is set (CNN ships type-only while its parent
+    company restructures — a stale name would be worse than none), and a name with no type is
+    flagged as the half-finished edit it is."""
+    assert reg.resolve("Fox News").ownership_owner == "Fox Corporation"
+    assert reg.resolve("The Guardian").ownership_owner == "Scott Trust Limited"
+    cnn = reg.resolve("CNN")
+    assert cnn.ownership == "conglomerate" and cnn.ownership_owner is None
+    assert reg.resolve("wwd.com") is None or reg.resolve("wwd.com").ownership_owner is None
+    p = tmp_path / "r.csv"
+    p.write_text(
+        "canonical,lean,aliases,country,region,city,scope,kind,credibility,factuality,"
+        "factuality_source,factuality_asof,ownership,ownership_source,ownership_asof,ownership_owner\n"
+        "Widget Times,1,widgettimes.com,US,,,national,,,,,,,,,Widget Holdings\n",
+        encoding="utf-8")
+    issues = orx.lint_registry(str(p))
+    assert [i["code"] for i in issues] == ["owner_without_ownership"]
+    assert issues[0]["severity"] == "warning"
+
+
+def test_msnbc_is_deliberately_unclassified_until_its_owner_is_verified(reg):
+    """Withdrawn from the 2026-09-01 tranche: the outlet's 2025 spin-off out of Comcast makes the
+    earlier 'telecom' unverifiable from here, and unknown beats possibly-wrong (L2.2). Pinned so
+    a re-add is a deliberate, sourced act rather than a merge accident."""
+    o = reg.resolve("MSNBC")
+    assert o is not None and o.ownership is None and o.ownership_owner is None

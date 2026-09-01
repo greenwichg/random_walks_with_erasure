@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EMOTION_META } from "@ih/core/logic/metrics";
+import { OWNERSHIP_META, ownershipColor } from "@/lib/ownership-meta";
 
 // Publisher Intelligence — the profile of ONE publisher: curated registry facts (identity, lean,
 // locality) + counted catalog facts (volume, topics, event geography, tone-with-n) + its recent
@@ -31,8 +32,9 @@ import { EMOTION_META } from "@ih/core/logic/metrics";
 const EMOTIONS = ["fear", "outrage", "analysis", "positive", "neutral"] as const;
 
 // The About block's rows, in presentation order. `country` is rendered separately (it needs the
-// locale's region name), so it is not listed here.
-const ABOUT_ROWS = ["founded", "headquarters", "parent"] as const;
+// locale's region name), and `parent` now lives in the Ownership section beside the owner type
+// it belongs with — one home per fact, so it is not listed here.
+const ABOUT_ROWS = ["founded", "headquarters"] as const;
 
 export default function PublisherPage() {
   const params = useParams<{ name: string }>();
@@ -192,6 +194,7 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
         </div>
       </header>
 
+      <OwnershipCard profile={p} />
       <AboutCard about={p.about} />
 
       {total === 0 ? (
@@ -314,6 +317,82 @@ function Profile({ profile: p }: { profile: PublisherProfile }) {
         </div>
       )}
     </>
+  );
+}
+
+/** Day precision, like the factuality badge: the date says how stale the record is. */
+const OWNERSHIP_DATE: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" };
+
+// Who controls the outlet — the dedicated home for ownership facts, beside the header. Two
+// halves with one provenance rule each: the TYPE is the registry's sourced classification
+// (public record, dated — stated as "not yet classified" when absent, exactly as the lean
+// states "not rated", never a guessed "other"); the OWNER is the About merge's `parent` —
+// curated registry name first, Wikidata's parent organization only where curation is blank —
+// and names its source beside the value. Renders only for an outlet we know something about
+// (a registry row or a metadata match); a bare long-tail host gets no card of unknowns.
+function OwnershipCard({ profile: p }: { profile: PublisherProfile }) {
+  const { t, formatDate } = useTranslation();
+  if (!p.registry && !p.about) return null;
+
+  const type = p.ownership;
+  const owner = p.about?.parent;
+  const ownerSource = p.about?.sources?.parent;
+
+  return (
+    <SectionCard
+      title={t("publishers.ownership.title")}
+      info={t("publishers.ownership.info")}
+      className="mb-5"
+    >
+      <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+            {t("publishers.ownership.type")}
+          </dt>
+          <dd className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            {type ? (
+              <>
+                <span className="inline-flex items-center gap-1.5 font-medium">
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: ownershipColor(type.value) }}
+                  />
+                  {t(OWNERSHIP_META[type.value].labelKey)}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {t("publishers.ownership.asOf", {
+                    source: t(`publishers.ownership.source.${type.source}`),
+                    date: formatDate(type.asOf, OWNERSHIP_DATE),
+                  })}
+                </span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">{t("publishers.ownership.notClassified")}</span>
+            )}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+            {t("publishers.ownership.owner")}
+          </dt>
+          <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-sm">
+            {owner ? (
+              <>
+                <span className="font-medium">{owner}</span>
+                {ownerSource && (
+                  <span className="text-xs text-muted-foreground">
+                    {t(`publishers.about.source.${ownerSource}`)}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-muted-foreground">{t("publishers.ownership.unknownOwner")}</span>
+            )}
+          </dd>
+        </div>
+      </dl>
+    </SectionCard>
   );
 }
 

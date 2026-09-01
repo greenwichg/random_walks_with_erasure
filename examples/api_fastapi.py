@@ -1642,6 +1642,35 @@ class PublisherFactualityModel(BaseModel):
     ratingUrl: str      # the rater's own page/search for this outlet
 
 
+class PublisherOwnershipModel(BaseModel):
+    """The registry's controlling-owner TYPE with its provenance — the factuality shape without a
+    rating link, because the source is the public record rather than a rater's page. The owner's
+    name is not here: it is the About block's curated `parent`, one merge rule for both."""
+    value: str          # OWNERSHIPS: independent | individual | telecom | government | ...
+    source: str         # OWNERSHIP_SOURCES
+    asOf: str           # ISO date the classification was recorded
+
+
+class PublisherAboutModel(BaseModel):
+    """The About block: enrichment merged UNDER the curated registry (publisher_metadata.merge),
+    every field optional and each attributed in `sources` so the client labels who said it.
+
+    Built and tested service-side, but never declared here — and `response_model` silently
+    DROPS what it does not declare, so the block never reached a browser: the About card was
+    dead on the wire from the day it shipped. Declared now because the Ownership card's owner
+    name rides in `parent`; the About card revives as a side effect."""
+    description: Optional[str] = None
+    founded: Optional[str] = None
+    headquarters: Optional[str] = None
+    country: Optional[str] = None
+    website: Optional[str] = None
+    parent: Optional[str] = None
+    wikipediaUrl: Optional[str] = None
+    sources: Optional[dict[str, str]] = None   # field -> curated | counted | wikipedia | wikimedia
+    status: Optional[str] = None               # ok | no_match | ambiguous | error
+    refreshedAt: Optional[str] = None
+
+
 class PublisherProfileModel(BaseModel):
     """The Publisher Intelligence profile: curated registry facts + counted catalog facts.
     ``rated=false`` means the registry doesn't rate this outlet — lean/leanBucket are null
@@ -1665,6 +1694,13 @@ class PublisherProfileModel(BaseModel):
     # off", and rendering "Not rated" for the second case would state something false about 123
     # outlets we hold verdicts for.
     factualityPublished: Optional[bool] = None
+    # Controlling-owner type + provenance. Absent when the registry hasn't classified the outlet —
+    # unknown is absence (L2.2), and it is not gated: our own public-record curation, not a
+    # licensed third-party rating.
+    ownership: Optional[PublisherOwnershipModel] = None
+    # Curated-first enrichment with per-field provenance — see PublisherAboutModel for why this
+    # declaration is the difference between the About block existing and not.
+    about: Optional[PublisherAboutModel] = None
     site: Optional[str] = None
     articles: PublisherArticlesModel
     topics: list[LabelCountModel] = []
