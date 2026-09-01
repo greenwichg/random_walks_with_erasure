@@ -1,22 +1,26 @@
 "use client";
 
+import * as React from "react";
 import { EyeOff } from "lucide-react";
-import type { LeanBucket, StoryCoverage, ViewpointDistribution } from "@ih/core/domain/types";
+import type { StoryCoverage, ViewpointDistribution } from "@ih/core/domain/types";
+import { BIAS_BUCKETS, groupOutletsByLean } from "@ih/core/logic/bias-distribution";
 import { SectionHeader } from "@/components/shared/section-header";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
+import { BiasDistribution } from "@/components/stories/bias-distribution";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 
-const BUCKETS: LeanBucket[] = ["left", "center", "right"];
-
 /**
- * The story's coverage breakdown, as the rail's insight module: the L/C/R spectrum with its
- * labelled legend, an explicit callout for every side with ZERO articles (the story-level blind
- * spot, stated as a fact — "no left coverage yet" — rather than only implied by an empty bar
- * segment), and the reporting-vs-opinion split when the rows carry registers.
+ * The story's bias-distribution panel, as the rail's insight module: the headline share and
+ * L/C/R spectrum counted in OUTLETS, each side's outlets as logo marks, the untracked strip
+ * (outlets the registry doesn't rate — shown, never counted), an explicit callout for every
+ * side with ZERO outlets (the story-level blind spot, stated as a fact — "no left coverage
+ * yet" — rather than only implied by an empty capsule), and the reporting-vs-opinion split
+ * when the rows carry registers.
  *
- * Everything is counted from the story's own coverage rows / distribution; the reporting split and
- * the missing-side callouts are facts the old page computed nowhere.
+ * Everything is counted from the story's own MEMBER coverage rows; the engine's article-share
+ * `distribution` remains only as the fallback bar for the drift case where rows carry no lean
+ * at all. Callers pass `splitCoverage(...).panel` — attached Tier B rows never voted (M4).
  */
 export function StoryCoveragePanel({
   distribution,
@@ -26,9 +30,16 @@ export function StoryCoveragePanel({
   coverage: StoryCoverage[];
 }) {
   const { t, formatCompact } = useTranslation();
+  const groups = React.useMemo(() => groupOutletsByLean(coverage), [coverage]);
   const total = distribution.left + distribution.center + distribution.right;
 
-  const missing = BUCKETS.filter((b) => (distribution[b] ?? 0) === 0);
+  // Blind-spot callouts come from the same outlet counts the capsules draw, so the words and
+  // the picture can never disagree; the article-share fallback keeps the old rule.
+  const missing =
+    groups.ratedCount > 0
+      ? BIAS_BUCKETS.filter((b) => groups.buckets[b].length === 0)
+      : BIAS_BUCKETS.filter((b) => (distribution[b] ?? 0) === 0);
+
   let reporting = 0;
   let opinion = 0;
   for (const row of coverage) {
@@ -42,9 +53,10 @@ export function StoryCoveragePanel({
     <section aria-labelledby="story-breakdown-heading" className="rounded-lg border bg-card p-4">
       <SectionHeader id="story-breakdown-heading" title={t("story.breakdown")} className="mb-3" />
 
-      {total > 0 && <SpectrumBar distribution={distribution} height={10} />}
+      {groups.ratedCount === 0 && total > 0 && <SpectrumBar distribution={distribution} height={10} />}
+      <BiasDistribution groups={groups} />
 
-      {missing.length > 0 && total > 0 && (
+      {missing.length > 0 && (groups.ratedCount > 0 || total > 0) && (
         <ul className="mt-3 space-y-1.5">
           {missing.map((bucket) => (
             <li
