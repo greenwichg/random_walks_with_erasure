@@ -36,6 +36,7 @@ import discover                 # feed_article_to_article — the canonical Arti
 import media                    # publisher logo selection (curated -> enriched -> favicon)
 import outlet_registry
 import publisher_metadata       # curated/counted/wikipedia/wikimedia merge + per-field provenance
+import publisher_logo           # the verified SITE logo tier, below Commons and above guessed icons
 from pagination import OffsetPagination
 
 #: Publish third-party factuality verdicts to clients. Default OFF: the ratings are MBFC's
@@ -281,6 +282,13 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
     about = publisher_metadata.merge(outlet, cached, site=site)
     if about:
         profile["about"] = about
-    profile.update(media.pick_best_logo(display, site,
-                                        enriched=publisher_metadata.logo_from_cache(cached)))
+    # The mark: curated → Commons/Wikipedia → the verified SITE logo (publisher_logo.py) → the
+    # guessed site icons. Two caches, one reader — see PublisherLogo for why they are separate.
+    try:
+        site_logo = store_.publisher_logo(display) or store_.publisher_logo(stored_name)
+    except Exception:
+        site_logo = None
+    profile.update(media.pick_best_logo(
+        display, site,
+        enriched=publisher_logo.best_enriched(publisher_metadata.logo_from_cache(cached), site_logo)))
     return profile

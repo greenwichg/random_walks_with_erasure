@@ -93,3 +93,18 @@ test("splitAtCap: a group that fits has nothing hidden, so no chip is drawn", ()
   assert.deepEqual(splitAtCap(outlets, 5), { shown: outlets, hidden: [] });
   assert.deepEqual(splitAtCap([], 5), { shown: [], hidden: [] });
 });
+
+test("a mark carries the row's server-resolved logo, first non-null, and no logo keys otherwise", () => {
+  const withLogo = {
+    ...row("BBC", "center", "https://bbc.com/a1"),
+    publisherLogo: "https://bbc.com/icon-192.png",
+    publisherLogoFallbacks: ["https://bbc.com/apple-touch-icon.png"],
+  } as StoryCoverage;
+  const g = groupOutletsByLean([row("BBC", "center", "https://bbc.com/a0"), withLogo, row("NPR", "left")]);
+  assert.deepEqual(g.buckets.center, [{
+    publisher: "BBC", url: "https://bbc.com/a0",
+    logo: "https://bbc.com/icon-192.png", logoFallbacks: ["https://bbc.com/apple-touch-icon.png"],
+  }]);
+  // An outlet nobody resolved is exactly the mark it always was — no `logo: undefined` noise.
+  assert.deepEqual(g.buckets.left, [{ publisher: "NPR", url: undefined }]);
+});

@@ -207,6 +207,11 @@ services:
       RWE_PUBLISHER_WIKI: ${RWE_PUBLISHER_WIKI:-1}
       RWE_PUBLISHER_WIKI_BATCH: ${RWE_PUBLISHER_WIKI_BATCH:-5}
       RWE_PUBLISHER_WIKI_INTERVAL: ${RWE_PUBLISHER_WIKI_INTERVAL:-900}
+      # Verified site logos (publisher_logo.py): ON here, like the Wikipedia enricher — the
+      # module never fetches a publisher's origin merely because it was imported.
+      RWE_PUBLISHER_LOGOS: ${RWE_PUBLISHER_LOGOS:-1}
+      RWE_PUBLISHER_LOGOS_BATCH: ${RWE_PUBLISHER_LOGOS_BATCH:-10}
+      RWE_PUBLISHER_LOGOS_INTERVAL: ${RWE_PUBLISHER_LOGOS_INTERVAL:-900}
       RWE_WIKI_CONTACT: ${RWE_WIKI_CONTACT:-https://hidden-view.com}
       # --- shared HTTP resilience (every provider, not just GDELT) ------------------------------
       # Retries cover 5xx AND connection-level faults (SSL handshake, DNS, connect/read timeout,

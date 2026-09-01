@@ -83,6 +83,14 @@ export default function CrawlerPage() {
               feed costs you a <code>304</code> and no body. We read your <code>robots.txt</code>{" "}
               at most once a day and cache it, as RFC 9309 asks.
             </p>
+            <p className="mt-3">
+              To show your mark beside your articles we fetch your homepage once, read the icon it
+              declares (<code>&lt;link rel=&quot;icon&quot;&gt;</code>, the Apple touch icon, a web-app
+              manifest), and verify at most four of them. That fetch obeys the same{" "}
+              <code>robots.txt</code> rules and the same per-host pause as everything else, and its
+              verdict — including &ldquo;nothing usable&rdquo; — is kept for weeks, so it is not
+              repeated. We never store the image itself, only its address.
+            </p>
           </section>
 
           <section>

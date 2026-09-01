@@ -4,7 +4,7 @@ import * as React from "react";
 import { EyeOff } from "lucide-react";
 import type { LeanBucket, Story } from "@ih/core/domain/types";
 import { PublisherLogo } from "@/components/shared/publisher-logo";
-import { hostIconCandidates } from "@ih/core/logic/publisher-logo";
+import { hostIconCandidates, logoCandidates } from "@ih/core/logic/publisher-logo";
 import { monogram } from "@ih/core/logic/placeholder-art";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
@@ -52,12 +52,15 @@ export function CoveragePlate({
   const pct = (s: LeanBucket) => Math.round(share(s) * 100);
   const blind = story.blindspotSide;
 
-  // First article URL per publisher, for chip icon derivation — coverage is newest-first, and
-  // any one of the outlet's article hosts names the same site icons.
-  const urlOf = React.useMemo(() => {
-    const m = new Map<string, string>();
+  // First row per publisher, for chip icon derivation — coverage is newest-first, and any one of
+  // the outlet's article hosts names the same site icons. When the detail payload carried a
+  // server-resolved mark, that leads the walk; the host-derived guesses remain its fallbacks.
+  const markOf = React.useMemo(() => {
+    const m = new Map<string, string[]>();
     for (const c of story.coverage ?? []) {
-      if (c.publisher && c.url && !m.has(c.publisher)) m.set(c.publisher, c.url);
+      if (c.publisher && (c.url || c.publisherLogo) && !m.has(c.publisher)) {
+        m.set(c.publisher, logoCandidates(c.publisherLogo, c.publisherLogoFallbacks ?? hostIconCandidates(c.url)));
+      }
     }
     return m;
   }, [story.coverage]);
@@ -122,7 +125,7 @@ export function CoveragePlate({
         {chipNames.length > 0 && (
           <ul aria-hidden className="flex shrink-0 items-center pl-1">
             {chipNames.map((p) => {
-              const icons = hostIconCandidates(urlOf.get(p));
+              const icons = markOf.get(p) ?? [];
               return (
                 <li
                   key={p}

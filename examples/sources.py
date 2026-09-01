@@ -54,6 +54,7 @@ import storage_lifecycle  # reuse: the ONE bounded cleanup pass (catalog + deriv
 import story_service      # reuse: warm the clustered-story cache after ingest (off the request path)
 import gdelt_gkg       # reuse: the Phase-2 event-geography enrichment logic (offline-testable)
 import publisher_metadata  # reuse: the bounded Wikipedia/Wikidata publisher enrichment pass
+import publisher_logo      # reuse: the bounded site-logo resolution pass (same adapter shape)
 import publisher_wiki      # reuse: the Wikimedia-compliant User-Agent (their policy requires one)
 
 _USER_AGENT = "InformationHealth-Sources/0.1 (+https://code.claude.com)"
@@ -1516,8 +1517,75 @@ def default_registry(feeds_spec: Optional[str] = None, *, store_=None) -> Source
     for adapter in _crawl_adapters(store_):
         reg.register(adapter)
     reg.register(GDELTGKGEnricher())   # enrichment last: it annotates articles the others ingested
+    reg.register(PublisherLogoResolver())       # …this finds their marks, with the crawler's manners
     reg.register(PublisherMetadataEnricher())   # …and this annotates the publishers behind them
     return reg
+
+
+class PublisherLogoResolver(SourceAdapter):
+    """An ENRICHMENT source: resolves and caches each outlet's verified SITE logo
+    (``publisher_logo.py``) so the story page's chips and the Publisher page start from a mark that
+    is known to exist and to be large enough, instead of every reader's browser guessing.
+
+    An adapter for the same three reasons the Wikipedia enricher is one: its own cadence (a 90-day
+    TTL has no business in every ingest cycle), the poller's per-source health and backoff, and an
+    injectable fetch so the suite never touches a publisher's origin. Manners are the crawler's own
+    objects — one ``RobotsPolicy`` (absent policy = refusal) and one per-host ``RateLimiter``, kept
+    across cycles so a host's robots.txt is read once, not once per batch.
+
+    Idempotent by construction: :func:`publisher_logo.pending` skips every publisher whose verdict —
+    positive OR negative — is still fresh."""
+
+    provider = "Site logos"
+    source_type = "publisher-logo"
+
+    def __init__(self, fetch_bytes: Optional[Callable[[str], bytes]] = None, *,
+                 policy=None, limiter=None):
+        self._fetch_bytes = fetch_bytes                     # injectable (offline tests)
+        self._policy = policy
+        self._limiter = limiter
+
+    def enabled(self) -> bool:
+        return publisher_logo.enabled()
+
+    def interval(self) -> float:
+        return _float_env("RWE_PUBLISHER_LOGOS_INTERVAL", 900.0)
+
+    @property
+    def health_key(self) -> str:
+        return "site://publisher-logos"
+
+    def poll_once(self, store_, scorer, *, on_feed: Optional[Callable] = None) -> dict:
+        t0 = time.perf_counter()
+        error = None
+        stats: Optional[dict] = None
+        try:
+            if self._policy is None or self._limiter is None:
+                import crawler                              # lazy: crawler imports sources
+                self._policy = self._policy or crawler.RobotsPolicy()
+                self._limiter = self._limiter or crawler.RateLimiter()
+            stats = publisher_logo.run_resolution(
+                store_, fetch_bytes=self._fetch_bytes or publisher_logo.default_fetch_bytes,
+                policy=self._policy, limiter=self._limiter, log=_default_log)
+        except Exception as e:                              # store / parse error
+            error = e
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        agg = _agg(self.provider, self.source_type, None, None, latency_ms, error,
+                   key=self.health_key)
+        s = stats or {}
+        by_status = s.get("byStatus") or {}
+        # Resolution counters, same shape rule as the enricher: per-publisher outcomes are
+        # counters; `errors` stays the CYCLE's error list.
+        agg.update({"considered": s.get("considered", 0),
+                    "resolved": by_status.get("ok", 0),
+                    "noLogo": by_status.get("none", 0),
+                    "lookupErrors": by_status.get("error", 0)})
+        if on_feed is not None:
+            try:
+                on_feed(self.provider, self.health_key, stats, latency_ms, error)
+            except Exception:                               # health recording must never break polling
+                pass
+        return agg
 
 
 def _crawl_adapters(store_=None) -> list:

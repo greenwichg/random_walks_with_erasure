@@ -715,6 +715,11 @@ export interface StoryCoverage {
   /** Controlling-owner type of the outlet (registry OWNERSHIPS vocabulary, sourced rows only).
    *  Absent when the registry doesn't classify the outlet — unknown, never "other" (L2.2). */
   ownership?: OwnershipCategory | null;
+  /** The outlet's mark, resolved server-side (curated → Commons → verified site logo → guessed
+   *  icons) on the story DETAIL payload. Absent when nothing is known; the client then walks
+   *  its own host-derived guesses exactly as before. */
+  publisherLogo?: string;
+  publisherLogoFallbacks?: string[];
   /** M4 — an ATTACHED Tier B row: coverage that never voted. The engine appends these after the
    *  member rows (the member list is a strict prefix), and every member-derived fact the client
    *  recomputes (publisher counts, register splits, framing) must exclude them — that is what

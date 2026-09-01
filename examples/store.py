@@ -1093,6 +1093,38 @@ class PublisherMetadata(Base):
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
 
 
+class PublisherLogo(Base):
+    """The verified SITE logo per publisher — the cache behind ``publisher_logo.py``.
+
+    Its own table, not two more columns on :class:`PublisherMetadata`, because that table's writer
+    REPLACES every fact column on each Wikipedia refresh (deliberately — a dropped claim must drop
+    from the cache). A site logo living beside the Commons logo would be wiped by the next wiki
+    pass, and a site pass would have to know every wiki column to avoid wiping those. Two caches
+    with two writers and one reader (``publisher_logo.best_enriched``) cannot clobber each other.
+
+    ``status`` is what makes the pass idempotent and what makes a NEGATIVE result worth storing:
+
+        ok      a declared or conventional icon was fetched, decoded, and measured big enough
+        none    the site exposes nothing usable, or robots refuses us — re-asked monthly
+        error   the fetch itself failed — retried after a day
+
+    Same isolation as :class:`PublisherMetadata`: no foreign key, no influence on clustering,
+    recommendation, or ranking. It only ever changes which picture sits in a 24px circle.
+    """
+
+    __tablename__ = "publisher_logo"
+
+    publisher_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    publisher: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16), default="none", index=True)
+    url: Mapped[Optional[str]] = mapped_column(String(1024), default=None)
+    width: Mapped[Optional[int]] = mapped_column(default=None)
+    height: Mapped[Optional[int]] = mapped_column(default=None)
+    source: Mapped[str] = mapped_column(String(16), default="site")
+    reason: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    checked_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
+
+
 class StoryMember(Base):
     """article url -> the story id it was last served under. The memory that makes a story id stable.
 
@@ -2666,6 +2698,54 @@ class Store:
         with self.session() as s:
             rows = s.execute(select(PublisherMetadata.status, func.count())
                              .group_by(PublisherMetadata.status)).all()
+        counts = {str(k): int(n) for k, n in rows}
+        return {"total": sum(counts.values()), "byStatus": counts}
+
+    # -- publisher site logos (publisher_logo.py) ----------------------------- #
+    @staticmethod
+    def _publisher_logo_row(r: "PublisherLogo") -> dict:
+        return {"publisher": r.publisher, "status": r.status, "url": r.url, "width": r.width,
+                "height": r.height, "source": r.source, "reason": r.reason,
+                "checkedAt": r.checked_at.isoformat() if r.checked_at else None}
+
+    def upsert_publisher_logo(self, publisher: str, *, status: str, url: "str | None" = None,
+                              width: "int | None" = None, height: "int | None" = None,
+                              reason: "str | None" = None, source: str = "site",
+                              at: "datetime | None" = None) -> dict:
+        """Write one site-logo verdict. Replaces the whole row: a verdict is a verdict, and the
+        previous URL must not survive a later ``none`` (the icon it named is what went away)."""
+        key = self.publisher_key(publisher)
+        with self.session() as s:
+            row = s.get(PublisherLogo, key)
+            if row is None:
+                row = PublisherLogo(publisher_key=key, publisher=publisher)
+                s.add(row)
+            row.publisher, row.status, row.url = publisher, status, url
+            row.width, row.height, row.source, row.reason = width, height, source, reason
+            row.checked_at = at or _utcnow()
+            s.commit()
+            return self._publisher_logo_row(row)
+
+    def publisher_logo(self, publisher: str) -> "dict | None":
+        with self.session() as s:
+            row = s.get(PublisherLogo, self.publisher_key(publisher))
+            return self._publisher_logo_row(row) if row is not None else None
+
+    def publisher_logo_many(self, publishers) -> dict:
+        """``{publisher_key: row}`` in one query — the scheduler and the story serializer both
+        read in bulk."""
+        keys = {self.publisher_key(p) for p in publishers if (p or "").strip()}
+        if not keys:
+            return {}
+        with self.session() as s:
+            rows = s.scalars(select(PublisherLogo)
+                             .where(PublisherLogo.publisher_key.in_(keys))).all()
+            return {r.publisher_key: self._publisher_logo_row(r) for r in rows}
+
+    def publisher_logo_stats(self) -> dict:
+        with self.session() as s:
+            rows = s.execute(select(PublisherLogo.status, func.count())
+                             .group_by(PublisherLogo.status)).all()
         counts = {str(k): int(n) for k, n in rows}
         return {"total": sum(counts.values()), "byStatus": counts}
 

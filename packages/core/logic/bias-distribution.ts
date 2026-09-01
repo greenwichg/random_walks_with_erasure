@@ -18,6 +18,39 @@ export interface OutletMark {
   publisher: string;
   /** Any one of the outlet's article URLs — enough to derive its site icons (hostIconCandidates). */
   url?: string;
+  /** The server-resolved mark when the row carries one (publisherLogo on story coverage rows):
+   *  a URL known to exist and to be large enough, tried before any host-derived guess. */
+  logo?: string;
+  logoFallbacks?: string[];
+}
+
+/** What a mark carries besides identity. First non-null wins per outlet, like the lean. */
+export interface MarkFields {
+  url?: string;
+  logo?: string;
+  logoFallbacks?: string[];
+}
+
+export function takeMarkFields(
+  entry: MarkFields,
+  row: { url?: string; publisherLogo?: string; publisherLogoFallbacks?: string[] },
+): void {
+  if (!entry.url && row.url) entry.url = row.url;
+  if (!entry.logo && row.publisherLogo) {
+    entry.logo = row.publisherLogo;
+    if (row.publisherLogoFallbacks) entry.logoFallbacks = row.publisherLogoFallbacks;
+  }
+}
+
+/** The mark itself. Logo keys appear only when known — a mark is `{publisher, url}` otherwise,
+ *  exactly as before the logo tier existed. */
+export function toMark(publisher: string, f: MarkFields): OutletMark {
+  const mark: OutletMark = { publisher, url: f.url };
+  if (f.logo) {
+    mark.logo = f.logo;
+    if (f.logoFallbacks) mark.logoFallbacks = f.logoFallbacks;
+  }
+  return mark;
 }
 
 export interface BiasGroups {
@@ -37,7 +70,7 @@ const DOMINANT_ORDER: readonly LeanBucket[] = ["center", "left", "right"];
 export function groupOutletsByLean(coverage: StoryCoverage[]): BiasGroups {
   // Map insertion order = first-seen order, and coverage arrives newest-first — so the marks
   // rendered when a list is capped are the outlets most recently on the story.
-  const byPublisher = new Map<string, { bucket: LeanBucket | null; url?: string }>();
+  const byPublisher = new Map<string, { bucket: LeanBucket | null } & MarkFields>();
   for (const row of coverage) {
     if (!row.publisher) continue;
     let entry = byPublisher.get(row.publisher);
@@ -45,16 +78,16 @@ export function groupOutletsByLean(coverage: StoryCoverage[]): BiasGroups {
       entry = { bucket: null };
       byPublisher.set(row.publisher, entry);
     }
-    // First non-null wins on both fields: the outlet's house lean doesn't change row to row,
+    // First non-null wins on every field: the outlet's house lean doesn't change row to row,
     // but individual rows can omit it — a null row must never unrate an already-rated outlet.
     if (entry.bucket === null && row.leanBucket) entry.bucket = row.leanBucket;
-    if (!entry.url && row.url) entry.url = row.url;
+    takeMarkFields(entry, row);
   }
 
   const buckets: Record<LeanBucket, OutletMark[]> = { left: [], center: [], right: [] };
   const untracked: OutletMark[] = [];
-  for (const [publisher, { bucket, url }] of byPublisher) {
-    (bucket ? buckets[bucket] : untracked).push({ publisher, url });
+  for (const [publisher, entry] of byPublisher) {
+    (entry.bucket ? buckets[entry.bucket] : untracked).push(toMark(publisher, entry));
   }
   return {
     buckets,

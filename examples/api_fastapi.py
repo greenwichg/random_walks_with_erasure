@@ -69,6 +69,7 @@ import discover               # Discover: product-layer exploration over the Fee
 import search                 # live full-text + faceted search over the FeedArticle catalog (Commit 6)
 import story_service          # the single owner of Story construction (Discover + Stories consume it)
 import publisher_service      # Publisher Intelligence: counted catalog + curated registry profile
+import publisher_logo         # verified site logos → story coverage rows (attach_coverage_logos)
 import story_intelligence     # deterministic intelligence computed ON TOP of Story objects (Commit 10)
 import article_analyzer       # anonymous URL analysis (A1 service: catalog-first, fetchless, zero-write)
 import analysis_enrichment    # A3: reader-relative explanation + recommendation layered on an analysis
@@ -1300,6 +1301,11 @@ class StoryCoverageModel(BaseModel):
     # Controlling-owner type of the outlet (registry OWNERSHIPS vocabulary). Absent when the
     # registry doesn't classify the outlet — unknown is unknown, never "other" (L2.2).
     ownership: Optional[str] = None
+    # The outlet's mark, resolved server-side (curated → Commons → verified site logo → guessed
+    # icons; publisher_logo.attach_coverage_logos) so the story page's chips start from a URL known
+    # to exist. Absent when nothing is known — the client then walks its own guesses as before.
+    publisherLogo: Optional[str] = None
+    publisherLogoFallbacks: Optional[list[str]] = None
 
 
 class TimelinePointModel(BaseModel):
@@ -2971,9 +2977,16 @@ def stories(
 def story_single(story_id: str) -> dict:
     """One Story by its stable id (anchored to the representative article, so it survives new coverage
     of the same event). Consumes the Story Service — no independent Story construction."""
-    s = story_service.get_story(_require_store(), story_id)
+    st = _require_store()
+    s = story_service.get_story(st, story_id)
     if s is None:
         raise HTTPException(status_code=404, detail="Story not found.")
+    # Marks for the detail page's chips: two bulk cache reads, fail-soft — a store without the
+    # logo table (a not-yet-migrated deploy) leaves the rows exactly as the Story Service built them.
+    try:
+        publisher_logo.attach_coverage_logos(st, s.get("coverage") or [])
+    except Exception:
+        pass
     return s
 
 

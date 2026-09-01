@@ -6,7 +6,7 @@ import { ChevronDown } from "lucide-react";
 import type { LeanBucket, Register, StoryCoverage } from "@ih/core/domain/types";
 import { splitCoverage } from "@ih/core/logic/story-attached";
 import { collapseConsecutive } from "@ih/core/logic/coverage-groups";
-import { hostIconCandidates } from "@ih/core/logic/publisher-logo";
+import { hostIconCandidates, logoCandidates } from "@ih/core/logic/publisher-logo";
 import { monogram } from "@ih/core/logic/placeholder-art";
 import { SectionHeader } from "@/components/shared/section-header";
 import { LeanBadge } from "@/components/shared/article-badges";
@@ -245,7 +245,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
  */
 function CoverageRow({ row, badge }: { row: StoryCoverage; badge: React.ReactNode }) {
   const { t, timeAgo } = useTranslation();
-  const icons = hostIconCandidates(row.url);
+  const icons = logoCandidates(row.publisherLogo, row.publisherLogoFallbacks ?? hostIconCandidates(row.url));
   return (
     <div className="group">
       <div className="-mx-3 rounded-lg px-3 py-3.5 transition-colors hover:bg-accent/30">

@@ -1,5 +1,6 @@
 import type { OwnershipCategory, StoryCoverage } from "../domain/types.ts";
-import type { OutletMark } from "./bias-distribution.ts";
+import type { MarkFields, OutletMark } from "./bias-distribution.ts";
+import { takeMarkFields, toMark } from "./bias-distribution.ts";
 
 /**
  * Ownership distribution — who CONTROLS the outlets on a story, aggregated like the bias
@@ -35,7 +36,7 @@ const VALID = new Set<string>(OWNERSHIP_ORDER);
 export function groupOutletsByOwnership(coverage: StoryCoverage[]): OwnershipGroups {
   // Map insertion order = first-seen order (coverage arrives newest-first), same as the bias
   // grouping — the marks kept when a list is capped are the outlets most recently on the story.
-  const byPublisher = new Map<string, { category: OwnershipCategory | null; url?: string }>();
+  const byPublisher = new Map<string, { category: OwnershipCategory | null } & MarkFields>();
   for (const row of coverage) {
     if (!row.publisher) continue;
     let entry = byPublisher.get(row.publisher);
@@ -48,14 +49,14 @@ export function groupOutletsByOwnership(coverage: StoryCoverage[]): OwnershipGro
     if (entry.category === null && row.ownership && VALID.has(row.ownership)) {
       entry.category = row.ownership;
     }
-    if (!entry.url && row.url) entry.url = row.url;
+    takeMarkFields(entry, row);
   }
 
   const of = new Map<OwnershipCategory | "unknown", OutletMark[]>();
-  for (const [publisher, { category, url }] of byPublisher) {
-    const key = category ?? "unknown";
+  for (const [publisher, entry] of byPublisher) {
+    const key = entry.category ?? "unknown";
     const list = of.get(key) ?? [];
-    list.push({ publisher, url });
+    list.push(toMark(publisher, entry));
     of.set(key, list);
   }
 

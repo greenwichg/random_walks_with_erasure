@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { LeanBucket } from "@ih/core/domain/types";
 import type { BiasGroups, OutletMark } from "@ih/core/logic/bias-distribution";
 import { BIAS_BUCKETS, dominantBucket, splitAtCap } from "@ih/core/logic/bias-distribution";
-import { hostIconCandidates } from "@ih/core/logic/publisher-logo";
+import { hostIconCandidates, logoCandidates } from "@ih/core/logic/publisher-logo";
 import { monogram } from "@ih/core/logic/placeholder-art";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { PublisherLogo } from "@/components/shared/publisher-logo";
@@ -181,9 +181,10 @@ export function BiasDistribution({ groups }: { groups: BiasGroups }) {
   );
 }
 
-/** The outlet's mark at chip size — the shared fallback walk, monogram terminal. */
+/** The outlet's mark at chip size — the server-resolved logo first when the row carried one,
+ *  then the shared host-derived walk, monogram terminal. */
 function OutletIcon({ outlet, sizePx = 24 }: { outlet: OutletMark; sizePx?: number }) {
-  const icons = hostIconCandidates(outlet.url);
+  const icons = logoCandidates(outlet.logo, outlet.logoFallbacks ?? hostIconCandidates(outlet.url));
   return (
     <PublisherLogo
       logo={icons[0]}
