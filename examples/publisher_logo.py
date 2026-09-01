@@ -206,18 +206,69 @@ def parse_manifest(text: str, base_url: str) -> list:
 # --------------------------------------------------------------------------- #
 # Verification — measure what actually came back.
 # --------------------------------------------------------------------------- #
+def _header_dims(data: bytes) -> Optional[tuple]:
+    """Dimensions read straight from the container header — PNG, GIF, JPEG, ICO, WebP — with no
+    imaging library. The production image ships no Pillow, and the first pass proved it: every
+    raster icon decoded as "not an image" and the only marks found were SVGs. A header read is
+    also all a verdict needs; nothing here ever decodes pixels."""
+    n = len(data)
+    if n >= 24 and data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+        return (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"))
+    if n >= 10 and data[:6] in (b"GIF87a", b"GIF89a"):
+        return (int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little"))
+    if n >= 6 and data[:4] == b"\x00\x00\x01\x00":                   # ICO directory: keep the largest frame
+        count = int.from_bytes(data[4:6], "little")
+        best = None
+        for i in range(min(count, 64)):
+            e = 6 + 16 * i
+            if e + 16 > n:
+                break
+            w, h = data[e] or 256, data[e + 1] or 256                # 0 encodes 256
+            if best is None or w * h > best[0] * best[1]:
+                best = (w, h)
+        return best
+    if n >= 4 and data[:2] == b"\xff\xd8":                            # JPEG: walk markers to a SOF
+        i = 2
+        while i + 9 < n:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            seg = int.from_bytes(data[i + 2:i + 4], "big")
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                return (int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big"))
+            i += 2 + seg
+        return None
+    if n >= 30 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        chunk = data[12:16]
+        if chunk == b"VP8X":
+            return (int.from_bytes(data[24:27], "little") + 1, int.from_bytes(data[27:30], "little") + 1)
+        if chunk == b"VP8 ":
+            return (int.from_bytes(data[26:28], "little") & 0x3FFF, int.from_bytes(data[28:30], "little") & 0x3FFF)
+        if chunk == b"VP8L":
+            bits = int.from_bytes(data[21:25], "little")
+            return ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+    return None
+
+
 def image_dims(data: bytes, mime: Optional[str] = None) -> Optional[tuple]:
     """``(width, height)`` of an image payload, the SVG sentinel for vectors, ``None`` for anything
-    that is not an image — an HTML error page served with a 200 is the common case."""
+    that is not an image — an HTML error page served with a 200 is the common case. Container
+    headers first (no dependency); Pillow only as an optional extra for formats they miss."""
     if not data:
         return None
     head = data[:512].lstrip().lower()
     if (mime and "svg" in mime) or head.startswith(b"<svg") or (head.startswith(b"<?xml") and b"<svg" in data[:4096].lower()):
         return (_SVG_PX, _SVG_PX)
+    dims = _header_dims(data)
+    if dims and dims[0] > 0 and dims[1] > 0:
+        return (int(dims[0]), int(dims[1]))
     try:
-        from PIL import Image
+        from PIL import Image                                     # optional, absent in production
         with Image.open(io.BytesIO(data)) as im:
-            # An .ico is a container; PIL opens its largest frame, which is the one we want.
             w, h = im.size
         return (int(w), int(h)) if w and h else None
     except Exception:

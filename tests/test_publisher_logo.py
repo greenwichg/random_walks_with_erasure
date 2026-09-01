@@ -306,3 +306,26 @@ def test_a_large_homepage_is_parsed_not_refused_and_an_oversize_icon_is_skipped(
                       "https://ex.test/icon.png": _png(192, 192)})
     r = pl.resolve("https://ex.test/", fetch, policy=_Allow(), limiter=_limiter())
     assert r["status"] == "ok" and r["url"] == "https://ex.test/icon.png"
+
+
+def test_dimensions_come_from_container_headers_with_no_imaging_library(monkeypatch):
+    """The production image ships no Pillow. The first live pass proved what that meant: every
+    PNG/ICO icon decoded as "not an image" and the only marks found were SVGs. Every format an
+    icon is served in must measure from its header alone — this test hides PIL to make sure."""
+    import sys
+    from PIL import Image
+    def enc(fmt, size=(180, 180), **kw):
+        buf = io.BytesIO(); Image.new("RGB", size, (200, 30, 30)).save(buf, fmt, **kw); return buf.getvalue()
+    fixtures = {"PNG": enc("PNG"), "JPEG": enc("JPEG"), "GIF": enc("GIF"),
+                "ICO": enc("ICO", size=(64, 64), sizes=[(16, 16), (64, 64)])}
+    try:
+        fixtures["WEBP"] = enc("WEBP")
+    except Exception:
+        pass
+    monkeypatch.setitem(sys.modules, "PIL", None)               # `from PIL import Image` now fails
+    monkeypatch.setitem(sys.modules, "PIL.Image", None)
+    for fmt, data in fixtures.items():
+        dims = pl.image_dims(data)
+        expected = (64, 64) if fmt == "ICO" else (180, 180)
+        assert dims == expected, (fmt, dims)
+    assert pl.image_dims(b"<html>not an image</html>") is None
