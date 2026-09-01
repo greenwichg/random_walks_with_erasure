@@ -119,6 +119,28 @@ def test_seeding_refreshes_evidence_but_never_downgrades_state(seeded):
     assert row["probeCount"] == 1 and row["requestsSpent"] == 1, "seeding reset probe accounting"
 
 
+def test_reseeding_never_renames_a_publisher(seeded):
+    """FIRST label wins, like the channel column. The seed pass reads its publisher label off
+    catalogue rows the crawler itself wrote, so an overwriting seed closed a loop — config label
+    -> crawled articles -> seed -> a different config label at the next restart. Measured on
+    production 2026-09-01: 43 label variants across 35 crawled hosts (dantri.com.vn ingested 253
+    articles under the feed's title and 167 under the bare host). A blank still FILLS: knowing
+    nothing is the one state an update improves.
+
+    Mutation check: restoring `if pub and pub != row.publisher` fails the rename half below."""
+    seeded.record_admission_candidates([_cand("omega.example", 10, publisher="Omega Daily")])
+    seeded.record_admission_candidates([_cand("omega.example", 20, publisher="omega.example")])
+    row = seeded.admission_row("omega.example")
+    assert row["publisher"] == "Omega Daily", "a re-seed renamed an outlet"
+    assert row["articles"] == 20, "the article count must still refresh"
+
+    seeded.record_admission_candidates([{"host": "psi.example", "articles": 5, "language": "en",
+                                         "publishers": [], "eligible": True}])
+    seeded.record_admission_candidates([_cand("psi.example", 6, publisher="Psi Post")])
+    assert seeded.admission_row("psi.example")["publisher"] == "Psi Post", \
+        "a blank publisher must fill on the next seed that knows one"
+
+
 def test_a_host_the_offline_gates_reject_is_never_seeded(seeded):
     """`source_discovery` already decided against it. A row in the queue is a request waiting to be
     made, and this one is not justified."""

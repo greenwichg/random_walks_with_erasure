@@ -819,7 +819,13 @@ class PublisherCrawler:
                 report.already_in_catalog += sum(1 for c, _ in staged if c in known)
                 staged = [(c, e) for c, e in staged if c not in known]
         for _canon, e in staged:
-            e.publisher_hint = e.publisher_hint or self.config.publisher
+            # The CONFIG name, unconditionally — never a per-document hint. No discovery rung
+            # sets one today (discover_rss deliberately discards the channel title), so this line
+            # is a belt: if a future rung starts hinting, one host must still be one label. The
+            # production label splits (43 variants across 35 hosts, 2026-09-01) came from the
+            # OTHER end — the seed pass rewriting the admission publisher off catalogue rows,
+            # fixed first-knower-wins in `store.record_admission_candidates`.
+            e.publisher_hint = self.config.publisher
             e.source_type = "crawl"
             e.source_provider = self.config.publisher
         return [e for _c, e in staged]

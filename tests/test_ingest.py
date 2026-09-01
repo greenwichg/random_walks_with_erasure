@@ -85,6 +85,25 @@ def test_unknown_outlet_ingests_successfully():
     assert r.article_id == "https://indie-daily.example/story" and r.title == "t"
 
 
+def test_an_unresolvable_display_name_does_not_defeat_a_registered_host():
+    """The URL fallback fires only when the supplied name resolves to nothing.
+
+    A registered host can arrive under a display label the registry cannot key — non-Latin names
+    fold to empty name keys, so production stored alkhaleej.ae's rows as "جريدة الخليج" even after
+    the host had a registry row (2026-09-01). Identity must then come from the URL; a name that DOES
+    resolve keeps winning, so a masthead's obituary subdomain still lands on the masthead.
+
+    Mutation check: dropping the `if out is None` URL retry in `_resolve_outlet` fails the first
+    assert (the label falls back verbatim, NaN and all — which is exactly the pre-fix behaviour)."""
+    r = ingest.Scorer().score(ingest.RawRead(
+        url="https://www.alkhaleej.ae/2026/09/01/x", outlet="جريدة الخليج", title="t"))
+    assert r.outlet == "Al Khaleej", "the registered host must supply the identity"
+    # And the fallback cannot OVERRIDE: a resolvable name wins even on someone else's URL.
+    r2 = ingest.Scorer().score(ingest.RawRead(
+        url="https://www.alkhaleej.ae/2026/09/01/y", outlet="Fox News", title="t"))
+    assert r2.outlet == "Fox News"
+
+
 def test_source_fields_override_heuristics():
     r = ingest.Scorer().score(ingest.RawRead(
         url="https://foxnews.com/a", outlet="Fox News", category="Science", political=False))

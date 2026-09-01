@@ -3072,7 +3072,14 @@ class Store:
                     row.articles, changed = arts, True
                 if lang and lang != row.language:
                     row.language, changed = lang, True
-                if pub and pub != row.publisher:
+                # FIRST publisher label wins, like the channel below. The seed pass reads its
+                # label off catalogue rows the crawler itself wrote, so overwriting here closed a
+                # loop: config label -> articles -> seed -> new config label at the next restart.
+                # Measured on production 2026-09-01 as 43 label variants across 35 crawled hosts
+                # (dantri.com.vn ingested 253 articles as "Báo Điện Tử Dân Trí" and 167 as the
+                # bare host). Identity upgrades belong to the registry at ingest, which renames
+                # consistently; this field only FILLS when it knows nothing yet.
+                if pub and not row.publisher:
                     row.publisher, changed = pub, True
                 # FIRST channel wins, and it is never overwritten. Dedup is by host, so a host three
                 # channels find is one row — and the question the column answers is "which channel

@@ -589,6 +589,18 @@ def test_the_unrated_set_is_exactly_the_documented_one(reg):
         # The Billboard/Saturday Paper rule, third occurrence: AllSides rates Hankyoreh Left but
         # marks its own confidence LOW (initial, May 2026), and there is no confidence column here.
         "The Hankyoreh",
+        # The crawl-campaign tranche (2026-09-01): identity + country for every host the
+        # publisher-crawl campaign carries, so its 43 stored label variants converge to one
+        # canonical per host. All foreign or local outlets with no page at a rater this file
+        # accepts; blank lean is the honest value, and the CSV tranche comment says so.
+        "Etoday", "Kenh14", "Al Khaleej", "Youm7", "Thanh Nien", "Pravda.ru",
+        "Media Indonesia", "Dan Tri", "VG", "Navbharat Times", "Ilta-Sanomat",
+        "Rhein-Zeitung", "24 Chasa", "L'Avenir", "ANGOP", "BN DeStem",
+        "Eindhovens Dagblad", "Kazinform", "VnExpress", "Diari d'Andorra",
+        "Magyar Hirlap", "The South African", "UNIAN", "Novinky.cz", "Portfolio.hu",
+        "24.hu", "Prensa Latina", "The Spokesman-Review", "Diario do Grande ABC",
+        "MassisPost", "The Armenian Weekly", "RFE/RL", "Palo Alto Online",
+        "Decider", "KWCH", "KAIT",
     }
 
 
@@ -2184,3 +2196,54 @@ def test_kinds_outside_the_three_map_to_nothing(reg):
     assert set(orx.SOURCE_TYPES) == {"news", "research", "community"}
     # Every value the mapping can emit is one the UI offers — no orphan type can reach a chip.
     assert set(orx._TYPE_OF_KIND.values()) <= set(orx.SOURCE_TYPES)
+
+
+# --------------------------------------------------------------------------- #
+# Crawl-campaign identity rows (2026-09-01) — locality-only, and label variants CONVERGE.
+# --------------------------------------------------------------------------- #
+def test_crawl_campaign_hosts_resolve_and_their_label_variants_converge(reg):
+    """Every host the publisher-crawl campaign carries resolves, and the publisher-label variants
+    production actually stored (feed title vs bare host, per discovery-document type) resolve to
+    the SAME canonical — one host, one outlet. Lean stays NaN on all of them: identity rows must
+    not smuggle in a bias claim no rater made."""
+    variants = {
+        "VG": ["vg.no"],
+        "Ilta-Sanomat": ["is.fi", "Ilta-sanomat"],
+        "Dan Tri": ["dantri.com.vn", "Báo Điện Tử Dân Trí"],
+        "Youm7": ["youm7.com"],
+        "Novinky.cz": ["novinky.cz", "Novinky"],
+        "The Spokesman-Review": ["spokesman.com", "Spokesman"],
+        "Kenh14": ["kenh14.vn"],
+        "Etoday": ["etoday.co.kr"],
+        "ANGOP": ["angop.ao", "Angop - Angola Press Agency"],
+        "Kazinform": ["inform.kz", "Inform"],
+    }
+    for canonical, forms in variants.items():
+        for form in forms:
+            o = reg.resolve(form)
+            assert o is not None and o.canonical == canonical, (form, o and o.canonical)
+            assert math.isnan(o.lean), f"{canonical}: identity row must carry NO lean"
+    # A sibling on a shared parent domain must NOT be swallowed by the full-host alias.
+    assert reg.resolve("navbharattimes.indiatimes.com").canonical == "Navbharat Times"
+    assert reg.resolve("timesofindia.indiatimes.com").canonical == "The Times of India"
+
+
+def test_no_registered_alias_folds_to_a_degenerate_name_key(reg):
+    """Aliases whose `_name_key` is empty collide in the alias map and hijack each other —
+    observed while curating: the Korean alias "이투데이" resolved to Youm7, because both it and an
+    Arabic alias fold to ''. Non-Latin display labels therefore stay OUT of the alias column
+    (host-based resolution covers their rows); this pins the invariant for every future row."""
+    csv_path = pathlib.Path(__file__).resolve().parent.parent / "examples" / "data" / "outlet_registry.csv"
+    import csv as _csv
+    degenerate = []
+    with open(csv_path, encoding="utf-8") as f:
+        rows = _csv.reader(l for l in f if l.strip() and not l.lstrip().startswith("#"))
+        next(rows, None)                                        # the column header
+        for row in rows:
+            if len(row) < 2 or not row[0].strip():
+                continue
+            keys = [row[0].strip()]
+            if len(row) >= 3 and row[2].strip():
+                keys += [a.strip() for a in row[2].split("|") if a.strip()]
+            degenerate += [k for k in keys if not (orx._name_key(k) or orx._looks_like_host(k))]
+    assert degenerate == [], f"registry keys with empty name keys collide: {degenerate!r}"

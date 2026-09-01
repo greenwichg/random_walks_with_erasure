@@ -524,10 +524,19 @@ class Scorer:
         return self.enricher.enrich(scored, raw) if self.enricher is not None else scored
 
     def _resolve_outlet(self, raw: RawRead):
-        """Canonical outlet + AllSides lean via the registry — resolving a source-supplied outlet
-        name if present, else the URL. Unknown -> (the source's label or the bare domain, NaN), so
-        the read still ingests, just without a lean."""
+        """Canonical outlet + AllSides lean via the registry — the outlet name first, then the URL.
+
+        The URL fallback fires ONLY when the supplied name resolves to nothing, so it can attach
+        identity but never override one: an obituary arriving under its masthead's name still
+        resolves by that name. It exists because a registered HOST can arrive under a display name
+        the registry cannot key — non-Latin labels fold to empty name keys (alkhaleej.ae's rows
+        carried "جريدة الخليج", etoday.co.kr's "이투데이"; production 2026-09-01) — and a host alias
+        that loses to the very label it was meant to heal is a registry row that does nothing.
+        Unknown on both -> (the source's label or the bare domain, NaN): the read still ingests,
+        just without a lean."""
         out = self.registry.resolve(raw.outlet or raw.url)
+        if out is None and raw.outlet and raw.url:
+            out = self.registry.resolve(raw.url)
         if out is not None:
             return out.canonical, out.lean
         return (raw.outlet or _domain_of(raw.url)), float("nan")

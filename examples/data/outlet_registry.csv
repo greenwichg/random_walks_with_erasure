@@ -1974,3 +1974,45 @@ CafeF,,cafef.vn,VN,,,national
 CafeBiz,,cafebiz.vn,VN,,,national
 Soha,,soha.vn,VN,,,national
 Yahoo! Japan News,,news.yahoo.co.jp,JP,,,national,aggregator
+# --- crawl-campaign outlets (2026-09-01) -- locality-only rows: identity + country, NO lean ---
+# One row per host the publisher-crawl campaign has admitted (incl. the two withdrawn ones,
+# whose articles remain in the catalog). Blank lean is deliberate: these are foreign/local
+# outlets no licensed rater covers, and identity must not smuggle in a bias claim. Aliases
+# carry the host plus every publisher-label variant observed in production crawl rows, so
+# ingest resolution converges the split labels ("vg" vs "vg.no") onto one canonical name.
+Etoday,,etoday.co.kr,KR,,,national
+Kenh14,,kenh14.vn|Kenh14.vn,VN,,,national
+Al Khaleej,,alkhaleej.ae,AE,,,national
+Youm7,,youm7.com,EG,,,national
+Thanh Nien,,thanhnien.vn|Thanhnien Vn,VN,,,national
+Pravda.ru,,pravda.ru,RU,,,national
+Media Indonesia,,mediaindonesia.com|Mediaindonesia,ID,,,national
+Dan Tri,,dantri.com.vn|Báo Điện Tử Dân Trí,VN,,,national
+VG,,vg.no,NO,,,national
+Navbharat Times,,navbharattimes.indiatimes.com,IN,,,national
+Ilta-Sanomat,,is.fi|Ilta-sanomat,FI,,,national
+Rhein-Zeitung,,rhein-zeitung.de,DE,Rhineland-Palatinate,Koblenz,regional
+24 Chasa,,24chasa.bg,BG,,,national
+L'Avenir,,lavenir.net|Lavenir Net,BE,,,regional
+ANGOP,,angop.ao|Angop - Angola Press Agency,AO,,,national
+BN DeStem,,bndestem.nl|Bn Destem.nl,NL,North Brabant,Breda,regional
+Eindhovens Dagblad,,ed.nl,NL,North Brabant,Eindhoven,regional
+Kazinform,,inform.kz|Inform,KZ,,,national
+VnExpress,,vnexpress.net,VN,,,national
+Diari d'Andorra,,diariandorra.ad,AD,,,national
+Magyar Hirlap,,magyarhirlap.hu|Magyar Hírlap,HU,,,national
+The South African,,thesouthafrican.com,ZA,,,national
+UNIAN,,unian.ua|Unian,UA,,,national
+Novinky.cz,,novinky.cz|Novinky,CZ,,,national
+Portfolio.hu,,portfolio.hu,HU,,,national
+24.hu,,,HU,,,national
+Prensa Latina,,prensa-latina.cu,CU,,,national
+The Spokesman-Review,,spokesman.com|Spokesman,US,Washington,Spokane,regional
+Diario do Grande ABC,,dgabc.com.br|Diário Do Grande Abc,BR,São Paulo,Santo André,regional
+MassisPost,,massispost.com|Daily Armenian News from Around the World • MassisPost,US,,,national
+The Armenian Weekly,,armenianweekly.com|The Armenian Weekly: Home,US,Massachusetts,Watertown,national
+RFE/RL,,rferl.org|Armenia News & Features - RFE/RL,US,,,international
+Palo Alto Online,,paloaltoonline.com,US,California,Palo Alto,local
+Decider,,decider.com,US,,,national
+KWCH,,kwch.com,US,Kansas,Wichita,local
+KAIT,,kait8.com,US,Arkansas,Jonesboro,local

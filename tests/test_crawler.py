@@ -265,10 +265,23 @@ def test_articles_already_in_the_catalog_are_dropped_before_anything_else_happen
 
 
 def test_every_accepted_entry_is_attributed_to_the_configured_publisher():
-    """`publisher_hint` is what resolves the outlet — and therefore the lean — downstream."""
+    """`publisher_hint` is what resolves the outlet — and therefore the lean — downstream.
+
+    The CONFIG name must win on every discovery document. Today no rung sets a per-entry hint
+    (discover_rss discards the channel title — "NPR News" in the fixture below), so both stamp
+    forms behave identically and a mutation between them cannot fail; the feed half pins the
+    INVARIANT — one host, one label — against any future rung that starts hinting. The production
+    label splits (43 variants / 35 hosts, 2026-09-01) were the admission-seed rename loop, pinned
+    with its own mutation in test_source_admission."""
     entries, _ = _crawl({"https://www.npr.org/s.xml": _fx("news_sitemap.xml")})
     assert entries and all(e.publisher_hint == "NPR" for e in entries)
     assert all(e.source_type == "crawl" for e in entries)
+
+    cfg = _cfg(sources=(crawler.DiscoverySource("rss", "https://www.npr.org/f.xml"),))
+    entries, _ = _crawl({"https://www.npr.org/f.xml": _fx("feed.xml")}, cfg)
+    assert entries, "the feed fixture must yield entries for this test to mean anything"
+    assert all(e.publisher_hint == "NPR" for e in entries), \
+        "the feed said 'NPR News'; one host must not become two publishers"
 
 
 # --------------------------------------------------------------------------- #
