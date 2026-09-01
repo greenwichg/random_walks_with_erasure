@@ -281,3 +281,15 @@ def test_the_adapter_reports_resolution_counters_and_fails_soft():
     # A per-publisher failure is a counter; the cycle succeeded.
     assert agg["errors"] == [] and agg["ok"] == 1
     assert adapter.health_key == "site://publisher-logos"
+
+
+def test_an_outlet_is_never_given_our_own_mark_at_resolution_or_at_serving():
+    """An outlet's logo is the outlet's. A page that (somehow) declares an icon on our host is
+    skipped without a request; a stored row pointing at us is served as nothing at all."""
+    html = '<html><head><link rel="icon" href="https://hidden-view.com/icon.png" sizes="192x192"></head></html>'
+    fetch = _fetcher({"https://ex.test/": html.encode(), "https://hidden-view.com/icon.png": _png(192, 192)})
+    r = pl.resolve("https://ex.test/", fetch, policy=_Allow(), limiter=_limiter())
+    assert r["status"] == "none" and "https://hidden-view.com/icon.png" not in fetch.calls
+    assert pl.logo_tuple({"status": "ok", "url": "https://app.hidden-view.com/x.png"}) is None
+    assert pl.logo_tuple({"status": "ok", "url": "http://localhost:3100/x.png"}) is None
+    assert pl.logo_tuple({"status": "ok", "url": "https://ex.test/icon.png"}) == ("https://ex.test/icon.png", "site")

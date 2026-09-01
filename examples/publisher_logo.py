@@ -68,6 +68,17 @@ DEFAULT_BATCH = 10
 #: publisher's origin and identifies itself exactly as every other fetch of that origin does.
 USER_AGENT = robots.user_agent("Crawler")
 
+#: Hosts a logo must NEVER come from — ours. An outlet's mark is the outlet's; the only ways our
+#: own icon could end up cached against a publisher are a bug or a test stand-in, and neither may
+#: reach a reader. Refused at resolution AND at serving, so an old row cannot leak either.
+OWN_HOSTS = ("hidden-view.com", "localhost", "127.0.0.1")
+
+
+def is_our_host(url: Optional[str]) -> bool:
+    host = (urllib.parse.urlsplit(url or "").hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in OWN_HOSTS)
+
+
 #: Vector marks scale to any box; reported at this sentinel size so the client's too-small rule
 #: never rejects one.
 _SVG_PX = 1024
@@ -276,7 +287,7 @@ def resolve(site_url: str, fetch_bytes: Callable[[str], bytes], *, policy, limit
     for c in expanded:
         if verified >= MAX_VERIFY:
             break
-        if _gate(c["url"], policy, limiter):
+        if is_our_host(c["url"]) or _gate(c["url"], policy, limiter):
             continue
         verified += 1
         tried += 1
@@ -430,7 +441,7 @@ def run_resolution(store_, *, fetch_bytes: Callable[[str], bytes], limit: Option
 # --------------------------------------------------------------------------- #
 def logo_tuple(row: Optional[dict]) -> Optional[tuple]:
     """``(url, "site")`` for a positive cached verdict, else None."""
-    if row and row.get("status") == "ok" and row.get("url"):
+    if row and row.get("status") == "ok" and row.get("url") and not is_our_host(row["url"]):
         return (row["url"], SOURCE)
     return None
 
