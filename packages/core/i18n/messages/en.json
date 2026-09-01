@@ -812,6 +812,7 @@
   "story.beyondPanel": "From beyond the panel ({n})",
   "story.beyondPanelBadge": "Beyond the panel",
   "story.beyondPanelNote": "Outlets we carry but don't rate for lean. Their articles add coverage to this story and never count toward its balance.",
+  "story.moreFrom": "+{n} earlier from {publisher}",
   "story.publishersTitle": "Publishers on this story",
   "story.coverageMasthead": "Coverage",
   "storyIntel.joinedGroup": "{n} publishers joined the coverage",

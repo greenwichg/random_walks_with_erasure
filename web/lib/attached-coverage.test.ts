@@ -45,8 +45,15 @@ const STUBS: Record<string, unknown> = {
     __esModule: true,
     default: (p: any) => React.createElement("a", { href: p.href }, p.children),
   },
-  // The REAL split rule — stubbing it would test the stub.
+  // The REAL split rule — stubbing it would test the stub. Same for the run grouping: the
+  // attached group must render one row per attached article, and a stubbed grouper could
+  // collapse them without the assertions noticing.
   "@ih/core/logic/story-attached": transpile("../packages/core/logic/story-attached.ts"),
+  "@ih/core/logic/coverage-groups": transpile("../packages/core/logic/coverage-groups.ts"),
+  "@ih/core/logic/publisher-logo": transpile("../packages/core/logic/publisher-logo.ts"),
+  "@ih/core/logic/placeholder-art": transpile("../packages/core/logic/placeholder-art.ts"),
+  "lucide-react": new Proxy({}, { get: () => () => null }),
+  "@/components/shared/publisher-logo": { PublisherLogo: () => null },
   "@/components/shared/section-header": {
     SectionHeader: (p: any) => React.createElement("h2", { id: p.id }, p.title),
   },

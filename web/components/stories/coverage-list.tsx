@@ -2,10 +2,15 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { ChevronDown } from "lucide-react";
 import type { LeanBucket, Register, StoryCoverage } from "@ih/core/domain/types";
 import { splitCoverage } from "@ih/core/logic/story-attached";
+import { collapseConsecutive } from "@ih/core/logic/coverage-groups";
+import { hostIconCandidates } from "@ih/core/logic/publisher-logo";
+import { monogram } from "@ih/core/logic/placeholder-art";
 import { SectionHeader } from "@/components/shared/section-header";
-import { LeanBadge, RegisterBadge } from "@/components/shared/article-badges";
+import { LeanBadge } from "@/components/shared/article-badges";
+import { PublisherLogo } from "@/components/shared/publisher-logo";
 import { ContinuationStrip } from "@/components/shared/continuation-strip";
 import { ReadArticleButton } from "@/components/shared/read-article-button";
 import { SaveButton } from "@/components/shared/save-button";
@@ -15,23 +20,26 @@ import { useTranslation } from "@/lib/i18n";
 
 const LEAN_FILTERS: ("all" | LeanBucket)[] = ["all", "left", "center", "right"];
 
-// Rows rendered before "Load more". Cluster size is long-tailed — the catalog median story is 2
+// Groups rendered before "Load more". Cluster size is long-tailed — the catalog median story is 2
 // articles and p90 is 7, but the largest measured cluster is 318, and every row here mounts a Read
 // button and a Save button. Batching keeps the worst case off the first paint without changing what
-// the page contains; the count line below still reports the true total.
+// the page contains; the count line below still reports the true article total.
 const PAGE = 40;
 
 /**
- * The story's article coverage as a FILTERABLE list — the "how is it covered, and by whom" section.
+ * The story's article coverage as a FILTERABLE list — the "how is it covered, and by whom" section,
+ * on the Ground News comparison's reading rhythm: WHO first (publisher mark + name, with the lean
+ * badge as its counterweight), the headline as the row's one big line, then a quiet metadata line
+ * whose actions stay ghost-subtle (hover-revealed on desktop, always present on touch).
  *
  * Every filter is backed by a field the coverage rows actually carry: political lean
- * (left/center/right), register (reporting/opinion/mixed — offered only when present), and
- * publication order. Nothing here fabricates facets: there is no factuality/ownership/geography
- * data in the contract, so there are no such filters.
+ * (left/center/right), register (reporting/opinion/mixed — offered only when present, and worn as
+ * plain text in the meta line, not a pill), and publication order. Nothing here fabricates facets.
  *
- * Rows follow the home page's list language (dense hover rows in a divide-y run, not a stack of
- * shadowed cards): provenance line → headline → actions. Read/Save reuse the existing pipeline
- * components, so recording a read here is byte-identical to every other surface.
+ * Repetition is grouped where it actually occurs: an outlet filing several updates IN A ROW (the
+ * liveblog cadence) collapses to its newest row plus a "+N earlier" expander — consecutive runs
+ * only, so the chronological order the sort promises is never reshuffled (coverage-groups.ts).
+ * Literal reposts were never rows here at all: ingest dedupes by canonical URL.
  *
  * Attached Tier B rows (M4) render as their own labeled group BELOW the panel rows — "from beyond
  * the panel": outlets we carry but whose articles never voted in this story. They stay out of the
@@ -73,6 +81,8 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
     );
   }, [panel, lean, register, oldestFirst]);
 
+  const groups = React.useMemo(() => collapseConsecutive(rows), [rows]);
+
   const attachedRows = React.useMemo(
     () =>
       [...attached].sort((a, b) =>
@@ -84,15 +94,18 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
   );
   const showAttached = attachedRows.length > 0 && lean === "all" && register === "all";
 
-  // Any filter or order change starts the batch over — otherwise "Load more" would carry a
-  // previous filter's depth into a shorter result set.
+  // Any filter or order change starts the batch AND the expanded runs over — otherwise "Load more"
+  // would carry a previous filter's depth into a shorter result set, and an expander would stay
+  // open on a group that no longer holds the same rows.
   const [visible, setVisible] = React.useState(PAGE);
+  const [openRuns, setOpenRuns] = React.useState<Set<string>>(() => new Set());
   React.useEffect(() => {
     setVisible(PAGE);
+    setOpenRuns(new Set());
   }, [lean, register, oldestFirst]);
 
-  const shown = rows.slice(0, visible);
-  const hasMore = visible < rows.length;
+  const shown = groups.slice(0, visible);
+  const hasMore = visible < groups.length;
 
   const reset = () => {
     setLean("all");
@@ -106,7 +119,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
       <div
         role="toolbar"
         aria-label={t("stories.coverageAcross")}
-        className="mb-2 flex flex-wrap items-center gap-2"
+        className="mb-3 flex flex-wrap items-center gap-2"
       >
         {LEAN_FILTERS.map((value) => (
           <FilterChip
@@ -149,48 +162,31 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
         </div>
       ) : (
         <ul className="divide-y">
-          {shown.map((row, i) => (
-            <li key={`${row.publisher}-${row.publishedAt}-${i}`} className="group">
-              <div className="-mx-2 flex flex-col gap-3 rounded-md px-2 py-3 transition-colors hover:bg-accent/40 sm:flex-row sm:items-center">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    <Link
-                      href={`/publishers/${encodeURIComponent(row.publisher)}`}
-                      className="font-medium text-foreground hover:text-primary hover:underline"
-                    >
-                      {row.publisher}
-                    </Link>
-                    <LeanBadge lean={row.lean} bucket={row.leanBucket} />
-                    {row.register && <RegisterBadge register={row.register} />}
-                    {row.publishedAt && <span>{timeAgo(row.publishedAt)}</span>}
-                  </div>
-                  <h3 className="mt-1 line-clamp-2 text-sm font-semibold leading-snug tracking-tight">
-                    {row.headline}
-                  </h3>
-                </div>
-                <div className="flex shrink-0 items-center gap-2 self-start sm:self-center">
-                  <ReadArticleButton article={{ url: row.url, headline: row.headline }} openedFrom="stories" />
-                  {row.url && (
-                    <SaveButton
-                      article={{
-                        id: row.url,
-                        url: row.url,
-                        headline: row.headline,
-                        publisher: row.publisher,
-                        publishedAt: row.publishedAt,
-                      }}
-                    />
-                  )}
-                </div>
-              </div>
-
-              {/* Story Continuation. This is the surface with the best odds by construction —
-                  every row here is already a cluster member, so the membership gate that rejects
-                  ~4 in 5 Discover cards passes automatically. The "all outlets" link is suppressed:
-                  it would point at this very page. */}
-              {row.url ? <ContinuationStrip anchorUrl={row.url} showAllOutlets={false} surface="story" /> : null}
-            </li>
-          ))}
+          {shown.map((group, i) => {
+            const runKey = `${group.lead.publisher}|${group.lead.publishedAt}`;
+            const open = openRuns.has(runKey);
+            return (
+              <li key={`${runKey}-${i}`} className="py-1">
+                <CoverageRow row={group.lead} badge={<LeanBadge lean={group.lead.lean} bucket={group.lead.leanBucket} />} />
+                {group.rest.length > 0 && !open && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenRuns((s) => new Set(s).add(runKey))}
+                    className="mb-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                    {t("story.moreFrom", { n: formatCompact(group.rest.length), publisher: group.lead.publisher })}
+                  </button>
+                )}
+                {open &&
+                  group.rest.map((row, j) => (
+                    <div key={`${row.publishedAt}-${j}`} className="border-l-2 pl-3">
+                      <CoverageRow row={row} badge={<LeanBadge lean={row.lean} bucket={row.leanBucket} />} />
+                    </div>
+                  ))}
+              </li>
+            );
+          })}
         </ul>
       )}
       {hasMore && (
@@ -213,40 +209,15 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
           <p className="mt-1 text-xs text-muted-foreground">{t("story.beyondPanelNote")}</p>
           <ul className="mt-1 divide-y">
             {attachedRows.map((row, i) => (
-              <li key={`${row.publisher}-${row.publishedAt}-${i}`} className="group">
-                <div className="-mx-2 flex flex-col gap-3 rounded-md px-2 py-3 transition-colors hover:bg-accent/40 sm:flex-row sm:items-center">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                      <Link
-                        href={`/publishers/${encodeURIComponent(row.publisher)}`}
-                        className="font-medium text-foreground hover:text-primary hover:underline"
-                      >
-                        {row.publisher}
-                      </Link>
-                      <span className="inline-flex items-center rounded-full border border-dashed px-2 py-0.5 text-[0.65rem] font-medium text-muted-foreground">
-                        {t("story.beyondPanelBadge")}
-                      </span>
-                      {row.publishedAt && <span>{timeAgo(row.publishedAt)}</span>}
-                    </div>
-                    <h4 className="mt-1 line-clamp-2 text-sm font-semibold leading-snug tracking-tight">
-                      {row.headline}
-                    </h4>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2 self-start sm:self-center">
-                    <ReadArticleButton article={{ url: row.url, headline: row.headline }} openedFrom="stories" />
-                    {row.url && (
-                      <SaveButton
-                        article={{
-                          id: row.url,
-                          url: row.url,
-                          headline: row.headline,
-                          publisher: row.publisher,
-                          publishedAt: row.publishedAt,
-                        }}
-                      />
-                    )}
-                  </div>
-                </div>
+              <li key={`${row.publisher}-${row.publishedAt}-${i}`} className="py-1">
+                <CoverageRow
+                  row={row}
+                  badge={
+                    <span className="inline-flex items-center rounded-full border border-dashed px-2 py-0.5 text-[0.65rem] font-medium text-muted-foreground">
+                      {t("story.beyondPanelBadge")}
+                    </span>
+                  }
+                />
               </li>
             ))}
           </ul>
@@ -256,3 +227,82 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
   );
 }
 
+/**
+ * One coverage row, GN-rhythm: publisher pill + its badge counterweight, the headline as the
+ * dominant line, then one quiet meta line that also carries the actions — ghost-subtle, revealed
+ * on hover/focus on desktop and always present on touch, where there is no hover to reveal them.
+ * The pill's icon walks the same site-icon chain every logo surface uses (monogram terminal).
+ */
+function CoverageRow({ row, badge }: { row: StoryCoverage; badge: React.ReactNode }) {
+  const { t, timeAgo } = useTranslation();
+  const icons = hostIconCandidates(row.url);
+  return (
+    <div className="group">
+      <div className="-mx-3 rounded-lg px-3 py-3.5 transition-colors hover:bg-accent/30">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+          <Link
+            href={`/publishers/${encodeURIComponent(row.publisher)}`}
+            className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted/70 py-1 pl-1 pr-2.5 text-xs font-medium transition-colors hover:bg-muted"
+          >
+            <span className="grid h-[18px] w-[18px] shrink-0 place-items-center overflow-hidden rounded-full bg-card">
+              <PublisherLogo
+                logo={icons[0]}
+                fallbacks={icons.slice(1)}
+                sizePx={16}
+                className="h-4 w-4"
+                fallbackNode={
+                  <span aria-hidden className="text-[0.5rem] font-bold text-muted-foreground">
+                    {monogram(row.publisher)}
+                  </span>
+                }
+              />
+            </span>
+            <span className="truncate">{row.publisher}</span>
+          </Link>
+          {badge}
+        </div>
+
+        <h3 className="mt-2 line-clamp-2 text-[0.95rem] font-semibold leading-snug tracking-tight">
+          {row.headline}
+        </h3>
+
+        <div className="mt-1.5 flex min-h-7 items-center gap-2 text-xs text-muted-foreground">
+          {row.publishedAt && <span>{timeAgo(row.publishedAt)}</span>}
+          {row.register && (
+            <>
+              <span aria-hidden>·</span>
+              <span>{t(`register.${row.register}`)}</span>
+            </>
+          )}
+          <span className="flex-1" />
+          <div className="flex shrink-0 items-center gap-1.5 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 sm:group-focus-within:opacity-100">
+            <ReadArticleButton
+              article={{ url: row.url, headline: row.headline }}
+              openedFrom="stories"
+              variant="soft"
+              className="h-7 px-2.5"
+            />
+            {row.url && (
+              <SaveButton
+                compact
+                article={{
+                  id: row.url,
+                  url: row.url,
+                  headline: row.headline,
+                  publisher: row.publisher,
+                  publishedAt: row.publishedAt,
+                }}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Story Continuation. This is the surface with the best odds by construction —
+          every row here is already a cluster member, so the membership gate that rejects
+          ~4 in 5 Discover cards passes automatically. The "all outlets" link is suppressed:
+          it would point at this very page. */}
+      {row.url ? <ContinuationStrip anchorUrl={row.url} showAllOutlets={false} surface="story" /> : null}
+    </div>
+  );
+}

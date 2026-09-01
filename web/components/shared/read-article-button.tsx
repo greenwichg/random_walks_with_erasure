@@ -70,6 +70,7 @@ export function ReadArticleButton({
   openedFrom,
   onOpen,
   label,
+  variant = "solid",
   className,
 }: {
   article: ReadableArticle;
@@ -77,6 +78,10 @@ export function ReadArticleButton({
   onOpen?: () => void;
   /** Context-aware CTA label (Commit 22, recommendations); defaults to the shared "Read article". */
   label?: string;
+  /** `soft` = the quiet tinted treatment for dense list rows, where a solid primary pill on every
+   *  row is a wall of CTA. Opened/disabled states are identical in both variants — only the
+   *  unopened actionable look changes, so the Read pipeline reads the same everywhere. */
+  variant?: "solid" | "soft";
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -94,7 +99,9 @@ export function ReadArticleButton({
         opened
           ? "bg-positive/15 text-positive"
           : actionable
-            ? "bg-primary text-primary-foreground hover:bg-primary/90"
+            ? variant === "soft"
+              ? "bg-primary/10 text-primary hover:bg-primary/20"
+              : "bg-primary text-primary-foreground hover:bg-primary/90"
             : "cursor-not-allowed bg-muted text-muted-foreground",
         className,
       )}

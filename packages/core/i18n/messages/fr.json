@@ -812,6 +812,7 @@
   "story.beyondPanel": "Au-delà du panel ({n})",
   "story.beyondPanelBadge": "Hors panel",
   "story.beyondPanelNote": "Des médias que nous suivons sans noter leur orientation. Leurs articles ajoutent de la couverture à cette actualité et ne comptent jamais dans son équilibre.",
+  "story.moreFrom": "+{n} plus anciens de {publisher}",
   "story.publishersTitle": "Médias sur ce sujet",
   "story.coverageMasthead": "Couverture",
   "storyIntel.joinedGroup": "{n} médias ont rejoint la couverture",
