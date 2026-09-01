@@ -1020,17 +1020,22 @@ function ToggleRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
-          <Icon className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{title}</p>
-          {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
+    // Same fix as SliderRow: the description used to sit beside the switch column, wrapping one
+    // sentence into a tall narrow ribbon on phones. Title + switch share the header line; the
+    // description takes the FULL row width below at the page's card-hint scale, on the title edge.
+    <div className="py-4 first:pt-0 last:pb-0">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+            <Icon className="h-4 w-4" />
+          </span>
+          <p className="min-w-0 text-sm font-medium">{title}</p>
         </div>
+        <Switch checked={checked} onCheckedChange={onChange} aria-label={title} />
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} aria-label={title} />
+      {description && (
+        <p className="mt-1.5 pl-11 text-xs leading-relaxed text-muted-foreground">{description}</p>
+      )}
     </div>
   );
 }
