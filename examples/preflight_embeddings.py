@@ -14,6 +14,17 @@ unless ``--keep`` is passed.
     dc run --rm -T api python examples/preflight_embeddings.py --dry-run          # plan only
     python examples/preflight_embeddings.py --model-dir DIR                       # files in hand
 
+On a SECOND, bare instance (no production stack, no database) — the way to size a bigger box
+without touching the one that serves: export the sample from production, copy two files over,
+run there. Only this script and the text file are needed; nothing else from the repo.
+
+    dc run --rm -T api python examples/preflight_embeddings.py --export-texts /app/data/preflight_texts.txt
+    scp /opt/ih/data/preflight_texts.txt examples/preflight_embeddings.py ubuntu@NEW-BOX:~
+    python3 preflight_embeddings.py --install --texts preflight_texts.txt        # on the new box
+
+A bare box has no stack using memory, so its headroom line is read AFTER subtracting the
+stack's measured footprint; the report says so and prints the arithmetic.
+
 The bars (registered here, not tuned to fit a result), in two groups because they answer two
 different questions — whether THIS BOX can carry the encoder, and whether THIS MODEL does what
 Stage 1 needs — and a bigger instance changes the answer to the first only:
@@ -81,6 +92,10 @@ BAR_XLING = 0.50
 PER_DAY_ARTICLES = 5000        # docs/CAPACITY_AND_COST.md: ~5,000 net-new/day
 CATALOG_CAP = 150000           # RWE_RETENTION_MAX_COUNT in deploy/.env.production.example
 DOWNLOAD_CAP = 600 * MB        # no candidate is allowed to pull more than this
+#: What the production stack (engine, web, poller, story build over a 45k window) held on the
+#: t3.medium when the 2026-09-02 preflight read the box BEFORE loading anything: 3,832 MB total
+#: minus 1,183 MB available. A bare box's headroom is read after subtracting this.
+STACK_FOOTPRINT_MB = 2649.0
 
 HF = "https://huggingface.co/{repo}/resolve/main/{path}"
 
@@ -370,6 +385,40 @@ def sample_texts(store_, n: int) -> "tuple[list, dict]":
     return texts, {"window": len(rows), "langs": langs}
 
 
+def export_texts(store_, path: str, n: int) -> dict:
+    """Write the sample :func:`sample_texts` would encode, one article per line, so a box
+    without the database can measure on the same real headline mix. Newlines inside a text
+    are flattened; the language mix is written as a first-line comment for the report."""
+    texts, facts = sample_texts(store_, n)
+    with open(path, "w", encoding="utf-8") as f:
+        langs = ",".join(f"{k}:{v}" for k, v in sorted(facts.get("langs", {}).items()))
+        f.write(f"# window={facts.get('window', 0)} langs={langs}\n")
+        for t in texts:
+            f.write(" ".join(t.split()) + "\n")
+    return {"path": path, "n": len(texts), **facts}
+
+
+def load_texts(path: str) -> "tuple[list, dict]":
+    """The inverse of :func:`export_texts`."""
+    texts, facts = [], {"window": 0, "langs": {}, "offline": True}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line.startswith("#"):
+                for part in line[1:].split():
+                    if part.startswith("window="):
+                        facts["window"] = int(part[7:] or 0)
+                    elif part.startswith("langs="):
+                        for kv in part[6:].split(","):
+                            if ":" in kv:
+                                k, v = kv.split(":", 1)
+                                facts["langs"][k] = int(v)
+                continue
+            if line.strip():
+                texts.append(line)
+    return texts, facts
+
+
 def measure_encode(encoder, texts: list, batch: int = 32) -> dict:
     """Warm up on one batch (session initialisation is not the steady state), then time the
     whole sample. Returns mean ms/article, tokens/article and the elapsed seconds."""
@@ -436,6 +485,9 @@ def decide(rep: dict) -> "tuple[Optional[bool], list]":
             checks.append((group, name, ok, detail))
 
     res_bar, head_bar = memory_bars((rep.get("host") or {}).get("memTotalMB") or 0.0)
+    if rep.get("offline"):
+        # A bare box: judge the headroom the STACK would leave, not the idle box's.
+        head_bar = head_bar + STACK_FOOTPRINT_MB
     image = rep.get("imageMB")
     bar("box", "image", image, image is not None and image <= BAR_IMAGE_MB,
         f"{image:.0f} MB (deps + model, numpy excluded) <= {BAR_IMAGE_MB:.0f} MB" if image is not None
@@ -446,8 +498,10 @@ def decide(rep: dict) -> "tuple[Optional[bool], list]":
         else "model not loaded")
     avail = rep.get("availAfterMB")
     bar("box", "headroom", avail, avail is not None and avail >= head_bar,
-        f"{avail:.0f} MB available with the model loaded >= {head_bar:.0f} MB (25% of the box, "
-        f"floor {BAR_AVAIL_AFTER_MB:.0f})" if avail is not None else "/proc/meminfo unreadable")
+        (f"{avail:.0f} MB available with the model loaded >= {head_bar:.0f} MB (25% of the box, "
+         f"floor {BAR_AVAIL_AFTER_MB:.0f}"
+         + (f", plus the {STACK_FOOTPRINT_MB:.0f} MB stack this bare box is not running" if rep.get("offline") else "")
+         + ")") if avail is not None else "/proc/meminfo unreadable")
     ms = (rep.get("encode1") or {}).get("ms")
     bar("box", "encode", ms, ms is not None and ms <= BAR_ENCODE_MS,
         f"{ms:.1f} ms/article at 1 thread <= {BAR_ENCODE_MS:.0f} ms" if ms is not None
@@ -528,6 +582,12 @@ def render(rep: dict) -> str:
                  f"(RSS {rep['rssBeforeMB']:.0f} -> {rep['rssAfterMB']:.0f} MB; peak {rep['peakMB']:.0f} MB)")
         L.append(f"  box headroom        : MemAvailable {h.get('memAvailMB', 0):.0f} -> "
                  f"{rep['availAfterMB']:.0f} MB with the model loaded")
+        if rep.get("offline"):
+            after_stack = rep["availAfterMB"] - STACK_FOOTPRINT_MB
+            L.append(f"  bare box, no stack  : the production stack held {STACK_FOOTPRINT_MB:.0f} MB "
+                     f"on the t3.medium (2026-09-02), so read the headroom as "
+                     f"{rep['availAfterMB']:.0f} - {STACK_FOOTPRINT_MB:.0f} = {after_stack:.0f} MB "
+                     f"with the stack AND the model loaded")
     s = rep.get("sample") or {}
     e1, e2 = rep.get("encode1"), rep.get("encode2")
     if e1:
@@ -610,6 +670,7 @@ def host_facts(target: str, mem_reader: Callable = meminfo) -> dict:
 
 def run(*, target: str, install: bool, only: Optional[str], model_dir: Optional[str],
         sample: int, batch: int, max_len: int, dry_run: bool, db: Optional[str] = None,
+        texts_path: Optional[str] = None,
         installer: Optional[Callable] = None, fetch: Optional[Callable] = None,
         encoder_factory: Optional[Callable] = None, store_factory: Optional[Callable] = None,
         mem: Callable = meminfo, rss: Callable = rss_mb, peak: Callable = peak_rss_mb) -> dict:
@@ -678,14 +739,20 @@ def run(*, target: str, install: bool, only: Optional[str], model_dir: Optional[
     rep["peakMB"] = peak()
     rep["residentMB"] = max(0.0, rep["rssAfterMB"] - rep["rssBeforeMB"])
     rep["availAfterMB"] = mem().get("MemAvailable", 0.0)
-    # 4. encode the real window sample
+    # 4. encode the real window sample — from the database, or from an exported file on a
+    #    box that has none
     texts, sample_facts = [], {}
     try:
-        import store as store_mod
-        st = store_factory() if store_factory else store_mod.Store(db)
-        texts, sample_facts = sample_texts(st, sample)
+        if texts_path:
+            texts, sample_facts = load_texts(texts_path)
+            texts = texts[:sample] if sample else texts
+        else:
+            import store as store_mod
+            st = store_factory() if store_factory else store_mod.Store(db)
+            texts, sample_facts = sample_texts(st, sample)
     except Exception as e:                               # noqa: BLE001
         rep["sampleError"] = f"{type(e).__name__}: {e}"
+    rep["offline"] = bool(texts_path)
     rep["sample"] = sample_facts
     rep["encode1"] = measure_encode(enc, texts, batch) if texts else None
     if texts and (rep["host"]["cpus"] or 1) >= 2:
@@ -718,12 +785,25 @@ def main(argv=None) -> int:
     ap.add_argument("--max-len", type=int, default=128, help="token truncation per article")
     ap.add_argument("--dry-run", action="store_true", help="print host facts and the plan only")
     ap.add_argument("--keep", action="store_true", help="leave --target in place afterwards")
+    ap.add_argument("--export-texts", default=None, metavar="PATH",
+                    help="write the window sample (one article per line) to PATH and exit — "
+                         "the input for a run on a box that has no database")
+    ap.add_argument("--texts", default=None, metavar="PATH",
+                    help="encode the articles in PATH (from --export-texts) instead of the "
+                         "database; marks the run as a bare-box run")
     args = ap.parse_args(argv)
 
+    if args.export_texts:
+        import store as store_mod
+        facts = export_texts(store_mod.Store(args.db), args.export_texts, args.sample)
+        print(f"wrote {facts['n']} of {facts.get('window', 0):,} window articles to "
+              f"{args.export_texts}")
+        return 0
     try:
         rep = run(target=args.target, install=args.install, only=args.model,
                   model_dir=args.model_dir, sample=args.sample, batch=args.batch,
-                  max_len=args.max_len, dry_run=args.dry_run, db=args.db)
+                  max_len=args.max_len, dry_run=args.dry_run, db=args.db,
+                  texts_path=args.texts)
         print(render(rep))
         if rep.get("dryRun"):
             return 0

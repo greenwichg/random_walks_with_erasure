@@ -295,6 +295,41 @@ def test_a_slow_encoder_is_a_box_no_go_with_the_model_verdict_intact(tmp_path, m
     assert "NO-GO —" in text and "box   : NO-GO" in text and "model : GO" in text
 
 
+def test_export_and_texts_round_trip_and_the_bare_box_headroom_arithmetic(tmp_path, monkeypatch,
+                                                                            capsys):
+    """A second, bare instance has no database and no production stack: the sample travels
+    as a file, and the headroom bar is raised by the stack's measured footprint so an idle
+    8 GiB box cannot pass on emptiness."""
+    import story_service
+    monkeypatch.setattr(story_service, "_fetch", lambda st: _rows(120))
+    path = tmp_path / "texts.txt"
+    # 120 rows sampled 50 strides by 2, so the fixture's every-third-row Vietnamese lands
+    # 17 times. (A stride that divides the fixture's period — 120 rows sampled 40 — would
+    # pick one language only; that is the sampler being deterministic, not a defect, but it
+    # makes a poor round-trip fixture.)
+    facts = pf.export_texts(FakeStore(), str(path), 50)
+    assert facts["n"] == 50 and facts["window"] == 120
+    texts, loaded = pf.load_texts(str(path))
+    assert len(texts) == 50 and loaded["window"] == 120 and loaded["offline"] is True
+    assert loaded["langs"] == {"en": 33, "vi": 17}
+    # main --export-texts writes and exits 0 without measuring anything.
+    monkeypatch.setattr(pf, "install_deps", lambda target: (_ for _ in ()).throw(AssertionError("no")))
+    rc = pf.main(["--export-texts", str(tmp_path / "again.txt"), "--sample", "5", "--db", "sqlite://"])
+    assert rc == 0 and "wrote 5 of 120" in capsys.readouterr().out
+    # The offline run: headroom is judged after the stack's footprint.
+    rep = {"host": {"memTotalMB": 7800.0}, "offline": True, "imageMB": 200.0, "residentMB": 414.0,
+           "availAfterMB": 7000.0, "encode1": {"ms": 40.0},
+           "semantics": {"same": 0.7, "different": 0.27, "template": 0.4, "xling_vi": 0.65,
+                         "xling_ko": 0.55}}
+    go, checks = pf.decide(rep)
+    assert go is True
+    head = next(d for _, n, _, d in checks if n == "headroom")
+    assert "stack this bare box is not running" in head and ">= 4599 MB" in head
+    rep["availAfterMB"] = 4500.0
+    assert pf.verdicts(pf.decide(rep)[1])["box"] is False, \
+        "7,800 * 25% + 2,649 = 4,599 MB is the bar an idle box must clear"
+
+
 def test_main_exit_codes_and_cleanup(tmp_path, monkeypatch, capsys):
     """0 = GO, 2 = NO-GO, 1 = undetermined; the throwaway target is removed unless --keep."""
     import story_service
