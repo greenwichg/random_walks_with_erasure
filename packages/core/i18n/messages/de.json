@@ -816,7 +816,6 @@
   "story.beyondPanelNote": "Quellen, die wir führen, deren Ausrichtung wir aber nicht bewerten. Ihre Artikel ergänzen die Berichterstattung und zählen nie zur Ausgewogenheit dieser Story.",
   "story.moreFrom": "+{n} weitere von {publisher}",
   "story.readMore": "Mehr anzeigen ({n})",
-  "story.publishersTitle": "Medien zu diesem Thema",
   "story.coverageMasthead": "Berichterstattung",
   "storyIntel.joinedGroup": "{n} Medien kamen zur Berichterstattung hinzu",
   "storyIntel.showAllEvents": "Alle {n} Ereignisse anzeigen",

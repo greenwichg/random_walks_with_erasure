@@ -22,7 +22,6 @@ import { StoryCoveragePanel } from "@/components/stories/story-coverage-panel";
 import { OwnershipPanel } from "@/components/stories/ownership-panel";
 import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
-import { PublisherSpotlight } from "@/components/home/publisher-spotlight";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
 import { track, urlHost } from "@/lib/analytics";
@@ -165,14 +164,6 @@ export default function StoryDetailPage() {
   // full list — members THEN the labeled addenda — belongs to CoverageList alone.
   const { panel: panelCoverage } = splitCoverage(story.coverage);
   const publisherCount = story.publisherCount ?? new Set(panelCoverage.map((c) => c.publisher)).size;
-  const publisherCounts = (() => {
-    const counts = new Map<string, number>();
-    for (const row of panelCoverage) counts.set(row.publisher, (counts.get(row.publisher) ?? 0) + 1);
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 8)
-      .map(([publisher, articles]) => ({ publisher, stories: articles }));
-  })();
 
   return (
     <PageContainer>
@@ -192,11 +183,9 @@ export default function StoryDetailPage() {
             <StoryIntelligencePanel storyId={story.id} />
             <StoryCoveragePanel distribution={story.distribution} coverage={panelCoverage} />
             <OwnershipPanel coverage={panelCoverage} />
-            <PublisherSpotlight
-              publishers={publisherCounts}
-              titleKey="story.publishersTitle"
-              countKey="stories.articlesCount"
-            />
+            {/* No per-publisher tally here: the coverage list below names every publisher with its
+                own headline and lean, and the panels above already carry the aggregate shape. A
+                ranked repeat of the same names said nothing the page had not said twice. */}
             {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
           </>
         }

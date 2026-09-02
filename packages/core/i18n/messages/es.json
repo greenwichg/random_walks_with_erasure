@@ -816,7 +816,6 @@
   "story.beyondPanelNote": "Medios que incluimos pero cuya inclinación no calificamos. Sus artículos añaden cobertura a esta historia y nunca cuentan para su equilibrio.",
   "story.moreFrom": "+{n} anteriores de {publisher}",
   "story.readMore": "Leer más ({n})",
-  "story.publishersTitle": "Medios en esta noticia",
   "story.coverageMasthead": "Cobertura",
   "storyIntel.joinedGroup": "{n} medios se unieron a la cobertura",
   "storyIntel.showAllEvents": "Mostrar los {n} eventos",

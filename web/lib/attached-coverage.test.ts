@@ -140,10 +140,13 @@ test("the group is gated on filters at rest, and the page derives from the panel
   );
   const page = readFileSync(join(WEB, "app/(app)/stories/[id]/page.tsx"), "utf8");
   assert.ok(page.includes("splitCoverage(story.coverage)"), "the page splits once, at the top");
+  // One pin per surviving panel-derived fact. The per-publisher tally that a third pin covered
+  // ("for (const row of panelCoverage)") was removed with the story page's publisher panel — the
+  // coverage list already names every publisher — so pinning it now would pin a derivation that
+  // no longer exists. Containment is unchanged for what remains.
   for (const pin of [
     "coverage={panelCoverage} />", // StoryCoveragePanel + FramingComparison
     "new Set(panelCoverage.map((c) => c.publisher)).size",
-    "for (const row of panelCoverage)",
   ]) {
     assert.ok(page.includes(pin), `page must derive from the panel half: missing ${pin}`);
   }
