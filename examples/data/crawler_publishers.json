@@ -48,7 +48,24 @@
     "HuffPost's ToS could not be located automatically (none of the seven conventional paths hit) \u2014",
     "it still needs reading by hand, and BuzzFeed's terms may be the operative ones.",
     "",
-    "Nothing here is wired into a poller: every publisher in this file is plan-mode only."
+    "Nothing here is wired into a poller: every publisher in this file is plan-mode only.",
+    "",
+    "`tier: \"A\"` (2026-09-02). The poller refuses to crawl a publisher nobody has assigned to a",
+    "lane, so an outlet is never promoted into story clustering by omission. But a lane applies to",
+    "the outlet's whole identity, so the only way to crawl AP, Reuters or CNN -- Tier A outlets",
+    "whose aggregator-delivered articles already form and vote in stories -- was to assign them a",
+    "lane and demote every article they have. The key is the explicit decision the guard asks",
+    "for, made here and nowhere else: the admission table cannot emit it. It is declared only for",
+    "registry-rated outlets (lint enforces it).",
+    "",
+    "Why these three: the freshness audit measured their articles arriving 5-12 h after",
+    "publication because the only paths to them were GNews / NewsData (12 h delay) and Google",
+    "News RSS. All three ship `enabled: false`. AP's robots allowed our user-agent on 2026-08-15,",
+    "but the bar an enabled publisher must clear (tests/test_crawl_adapter_wiring.py) is the LIVE",
+    "probe's evidence recorded in the tests -- sample article URLs the sitemap actually returned --",
+    "and none of the three has it yet. Reuters' robots policy is restrictive and may refuse.",
+    "Run `verify_crawler_config.py --publisher <name>` on a host with egress, record the returned",
+    "URLs beside KAIT's and KWCH's, and only then flip `enabled`."
   ],
   "publishers": [
     {
@@ -143,9 +160,47 @@
         }
       ],
       "article_pattern": "/article/[a-z0-9-]+",
+      "max_age_days": 7,
       "max_urls": 40,
       "min_interval": 3.0,
-      "enabled": false
+      "enabled": false,
+      "tier": "A"
+    },
+    {
+      "publisher": "Reuters",
+      "domains": [
+        "reuters.com"
+      ],
+      "sources": [
+        {
+          "kind": "sitemap",
+          "url": "https://www.reuters.com/arc/outboundfeeds/news-sitemap-index/?outputType=xml"
+        }
+      ],
+      "article_pattern": "-\\d{4}-\\d{2}-\\d{2}/?$",
+      "max_age_days": 7,
+      "max_urls": 60,
+      "min_interval": 3.0,
+      "enabled": false,
+      "tier": "A"
+    },
+    {
+      "publisher": "CNN",
+      "domains": [
+        "cnn.com"
+      ],
+      "sources": [
+        {
+          "kind": "sitemap",
+          "url": "https://www.cnn.com/sitemap/news.xml"
+        }
+      ],
+      "article_pattern": "/\\d{4}/\\d{2}/\\d{2}/",
+      "max_age_days": 7,
+      "max_urls": 60,
+      "min_interval": 3.0,
+      "enabled": false,
+      "tier": "A"
     },
     {
       "publisher": "HuffPost",

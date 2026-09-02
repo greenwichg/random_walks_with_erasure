@@ -7,7 +7,10 @@ is the set of things that must be **impossible to get wrong**, not merely docume
 1. **Off by default.** Deploying the wiring changes nothing until an operator says so.
 2. **A crawled source must be in the shadow lane.** `corpus.DEFAULT_TIER` is `"A"`, so an outlet
    nobody put in `RWE_CORPUS_SHADOW` does not land somewhere neutral — its articles go straight into
-   the clustering corpus and start voting in stories. That is promotion by omission.
+   the clustering corpus and start voting in stories. That is promotion by omission. The one
+   exception is promotion by DECISION: `tier: "A"` written on a hand-verified config (never
+   derivable from the admission table), which exists so an outlet that already clusters — AP,
+   Reuters, CNN — can be crawled without first demoting every article it has.
 3. **The six publishers that shipped in the config are unverified and must not run.**
 4. **No article bodies.** The crawler fetches discovery documents, never an article page.
 5. **A broken crawl config must not take the RSS poller down** — a supplement that can break the
@@ -76,6 +79,23 @@ def test_a_crawled_source_must_be_in_the_shadow_lane(monkeypatch):
     monkeypatch.setenv("RWE_CORPUS_SHADOW", "kait8.com,kwch.com")
     corpus._index.cache_clear()
     assert [a.provider for a in _adapters() if a.enabled()] == ["KAIT", "KWCH"]
+
+
+def test_tier_a_by_decision_runs_without_a_lane_and_the_shipped_decisions_still_wait(monkeypatch):
+    """The exception to the precondition, and its limit. A config that DECLARES `tier: "A"` is a
+    decision, so it runs with no lane assigned; the three shipped configs that carry it are all
+    `enabled: false` until the live probe has returned sample URLs for them, so the enabled set
+    the test above pins is unchanged. Mutation check: dropping the `tier == "A"` branch in
+    `CrawlAdapter.in_shadow` fails the first assertion."""
+    monkeypatch.setenv("RWE_CRAWL_ENABLED", "1")
+    decided = crawler.CrawlAdapter(crawler.PublisherCrawlConfig(
+        publisher="Reuters", domains=("reuters.com",), tier="A", enabled=True,
+        sources=(crawler.DiscoverySource("sitemap", "https://www.reuters.com/s.xml"),)))
+    assert decided.enabled() is True and decided.shadow_warning() is None
+    shipped = [c for c in crawler.load_config() if c.tier == "A"]
+    assert {c.publisher for c in shipped} == {"Associated Press", "Reuters", "CNN"}
+    assert all(c.enabled is False for c in shipped)
+    assert [a.provider for a in _adapters() if a.enabled()] == []
 
 
 def test_the_default_tier_really_is_A_so_the_precondition_is_load_bearing():

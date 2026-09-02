@@ -833,6 +833,88 @@ def test_every_configured_publisher_resolves_to_a_registry_canonical_name(monkey
         corpus._index.cache_clear()
 
 
+def _adapter(**over) -> crawler.CrawlAdapter:
+    base = dict(publisher="Reuters", domains=("reuters.com",),
+                sources=(crawler.DiscoverySource("sitemap", "https://www.reuters.com/s.xml"),),
+                article_pattern=r"-\d{4}-\d{2}-\d{2}/?$", enabled=True)
+    base.update(over)
+    return crawler.CrawlAdapter(crawler.PublisherCrawlConfig(**base))
+
+
+def test_an_unassigned_publisher_is_refused_and_tier_a_is_the_decision_that_admits_it(monkeypatch):
+    """The guard: an outlet nobody has assigned is NOT crawled, because Tier A is the default and
+    crawling it would promote it by omission. `tier: "A"` is the other way to have decided.
+
+    Mutation checks: dropping the `tier == "A"` branch in `in_shadow` fails the second block;
+    making the branch `tier is not None` lets `tier: "B"` through and fails the third."""
+    import corpus
+    monkeypatch.setenv("RWE_CRAWL_ENABLED", "1")
+    monkeypatch.delenv("RWE_CORPUS_SHADOW", raising=False)
+    monkeypatch.delenv("RWE_CORPUS_TIER_B", raising=False)
+    corpus._index.cache_clear()
+    try:
+        plain = _adapter()
+        assert plain.enabled() is False
+        assert "promotion by omission" in plain.shadow_warning()
+
+        decided = _adapter(tier="A")
+        assert decided.enabled() is True
+        assert decided.shadow_warning() is None
+
+        # A lane is never declared here; only the one value the key means is honoured.
+        assert _adapter(tier="B").enabled() is False
+        # And the global switch still rules: a decision to crawl is not a decision to crawl NOW.
+        monkeypatch.setenv("RWE_CRAWL_ENABLED", "0")
+        assert _adapter(tier="A").enabled() is False
+    finally:
+        corpus._index.cache_clear()
+
+
+def test_lint_allows_only_tier_a_and_only_for_a_rated_outlet():
+    """Mutation checks: dropping the `invalid_tier` branch fails the first; dropping the
+    `tier_a_requires_registry` branch fails the second; a rated outlet with the key lints clean."""
+    lane = _cfg(tier="B", min_interval=2.0)
+    assert {p["code"] for p in crawler.lint_config([lane])} == {"invalid_tier"}
+    unrated = _cfg(publisher="Somebody's Substack", domains=("example.org",), tier="A",
+                   min_interval=2.0)
+    codes = {p["code"] for p in crawler.lint_config([unrated])}
+    assert "tier_a_requires_registry" in codes and "invalid_tier" not in codes
+    assert crawler.lint_config([_cfg(tier="A", min_interval=2.0)]) == []
+
+
+def test_the_admission_table_can_never_grant_tier_a():
+    """`crawl_config_fields` is the only path from a table row to a config, and it must not emit
+    the key — a probe, a campaign or a hand-edited row would otherwise be a promotion path with no
+    review. Mutation check: adding `"tier": "A"` to the fields dict fails this."""
+    import source_admission
+    row = {"host": "example.org", "publisher": "Reuters", "feedUrl": "https://example.org/feed",
+           "discoveredVia": "news sitemap", "articlePattern": "", "crawlIntervalSeconds": None,
+           "tier": "A", "crawlTier": "A"}                       # even a row that CLAIMS it
+    fields = source_admission.crawl_config_fields(row)
+    assert "tier" not in fields
+    fields["sources"] = ()
+    assert crawler.PublisherCrawlConfig(**fields).tier is None
+
+
+def test_the_three_majors_carry_the_tier_a_decision_but_stay_off_until_the_live_probe():
+    """The decision is recorded; the switch waits for evidence. An enabled publisher must carry
+    sample URLs the live probe returned (tests/test_crawl_adapter_wiring.py pins the enabled set
+    to exactly those), and none of the three has them yet. Flip `enabled` only with that report;
+    this pin makes an unverified flip a deliberate edit rather than a slip."""
+    by_name = {c.publisher: c for c in crawler.load_config()}
+    for name in ("Associated Press", "Reuters", "CNN"):
+        c = by_name[name]
+        assert c.tier == "A" and c.max_age_days == 7 and c.enabled is False, name
+        assert c.sources and c.sources[0].kind == "sitemap", name
+    # The patterns match the URL shapes these newsrooms actually publish.
+    assert re.search(by_name["Reuters"].article_pattern,
+                     "https://www.reuters.com/world/europe/talks-resume-2026-09-02/")
+    assert not re.search(by_name["Reuters"].article_pattern, "https://www.reuters.com/world/europe/")
+    assert re.search(by_name["CNN"].article_pattern,
+                     "https://www.cnn.com/2026/09/02/politics/senate-vote/index.html")
+    assert not re.search(by_name["CNN"].article_pattern, "https://www.cnn.com/politics")
+
+
 def test_the_poc_covers_at_least_three_publishers_with_more_than_one_discovery_shape():
     configs = crawler.load_config()
     assert len(configs) >= 3

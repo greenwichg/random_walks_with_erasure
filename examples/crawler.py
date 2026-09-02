@@ -150,6 +150,18 @@ class PublisherCrawlConfig:
     #: :meth:`CrawlAdapter.interval`, so no stored value can cycle a publisher faster than
     #: ``MIN_CRAWL_INTERVAL`` allows.
     interval_seconds: "int | None" = None
+    #: An EXPLICIT decision to crawl this publisher into the clustering corpus. ``"A"`` is the
+    #: only value; ``None`` (the default) means the crawl guard applies unchanged — the publisher
+    #: must sit in an assigned lane (shadow or Tier B) or it is not crawled at all.
+    #:
+    #: Why it exists: the guard in :meth:`CrawlAdapter.in_shadow` refuses Tier A so that no outlet
+    #: is *promoted by omission*. But a lane is assigned to an outlet's IDENTITY, so the only way
+    #: to crawl an outlet that is ALREADY Tier A — AP, Reuters, CNN, whose aggregator-delivered
+    #: articles form and vote in stories today — was to assign it a lane and thereby demote every
+    #: article it has. This key is the decision the guard asks for, made in the one place a human
+    #: reviews: the hand-verified JSON. `source_admission.crawl_config_fields` never emits it, so
+    #: no table row, probe or campaign can grant it (pinned by test).
+    tier: "str | None" = None
 
     @property
     def pattern(self):
@@ -314,6 +326,19 @@ def lint_config(configs) -> "list[dict]":
         if c.min_interval < 1.0:
             problems.append({"code": "interval_too_low", "publisher": c.publisher,
                              "detail": f"{c.min_interval}s between requests is not polite"})
+        if c.tier is not None and c.tier != "A":
+            # The key means one thing. A lane ("shadow", "B") is assigned through the admission
+            # table or the RWE_CORPUS_* lists, never here — accepting it would make this file a
+            # second, unreviewed tier policy.
+            problems.append({"code": "invalid_tier", "publisher": c.publisher,
+                             "detail": f"tier {c.tier!r}: only \"A\" may be declared here; lanes "
+                                       f"are assigned by admission"})
+        elif c.tier == "A" and canon is None:
+            # Tier A is the clustering corpus and a lean is what a story is described by. An
+            # outlet the registry cannot rate has nothing to say there, whoever decided.
+            problems.append({"code": "tier_a_requires_registry", "publisher": c.publisher,
+                             "detail": "tier A declared for an outlet the registry does not "
+                                       "rate — it would cluster with no lean"})
     return problems
 
 
@@ -908,7 +933,14 @@ class CrawlAdapter(sources.SourceAdapter):
         neither can reach the story builder, and Tier A is still refused.
 
         The name is kept because `sources.config_warnings` and the wiring tests reach for it, and a
-        rename would be churn against a method whose meaning widened rather than changed."""
+        rename would be churn against a method whose meaning widened rather than changed.
+
+        ``tier: "A"`` on the config is the other way to have decided. It is a decision, not an
+        omission — written in the hand-verified JSON, never derivable from the admission table —
+        and it is the only way to crawl an outlet whose articles already cluster without first
+        demoting them. See `PublisherCrawlConfig.tier`."""
+        if self.config.tier == "A":
+            return True
         import corpus
         host = self.config.domains[0] if self.config.domains else self.config.publisher
         return corpus.is_assigned(self.config.publisher, f"https://{host}/")
