@@ -130,6 +130,17 @@ def to_utc_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
+def _ingest_max_age_days() -> float:
+    """``RWE_INGEST_MAX_AGE_DAYS``: a FEED entry published longer ago than this is dropped before
+    scoring, counted as ``too_old``. 0/unset = off, the shipped behaviour. Read per call, not at
+    import, so a test or an operator can change it without a restart."""
+    try:
+        v = float(os.environ.get("RWE_INGEST_MAX_AGE_DAYS", "").strip() or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return v if v > 0 else 0.0
+
+
 def _to_iso(value: str) -> Optional[str]:
     """Normalise an RSS ``pubDate`` (RFC 822) or Atom timestamp (RFC 3339) to a **UTC** ISO string,
     or ``None`` if it can't be parsed.
@@ -462,7 +473,16 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
     RSS callers pass neither and their entries carry no per-entry values, so behaviour is unchanged."""
     stats = {"entries": 0, "new": 0, "duplicates": 0, "skipped": 0, "blocked": 0,
              "missing_metadata": 0, "unknown_outlet": 0, "unknown_outlets": {},
-             "future_dated": 0, "newest": None, "oldest": None}
+             "future_dated": 0, "too_old": 0, "newest": None, "oldest": None}
+    # The mirror of the future clamp below: a FEED entry published longer ago than
+    # RWE_INGEST_MAX_AGE_DAYS is not news, and admitting it is worse than useless. CNN's
+    # top-stories RSS (production 2026-09-02) still lists April-2023 articles; each poll inserted
+    # them as new rows dated 3.4 years old, retention pruned them as the oldest rows in the
+    # catalog, and the next poll inserted them again — 53 rows a day of churn that could never
+    # reach a story. Off (0) by default so nothing changes until an operator sets it; a reader's
+    # own article (the browser extension) is never judged on age, because "you read this" is
+    # true however old the page is. (The cutoff is computed below, once `now_utc` exists.)
+    max_age_days = _ingest_max_age_days()
     # An article cannot be published AFTER we observed it. Some publishers stamp local wall-clock
     # time as UTC — youm7.com (+3) and kenh14.vn (+7), production 2026-09-01 — so their rows
     # "published" hours into the future and then surfaced at the top of every recency-sorted
@@ -474,6 +494,8 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
     now_utc = datetime.now(timezone.utc)
     horizon = (now_utc + timedelta(minutes=10)).isoformat()
     now_iso = now_utc.isoformat()
+    too_old_before = ((now_utc - timedelta(days=max_age_days)).isoformat()
+                      if max_age_days > 0 else None)
     for e in entries:
         stats["entries"] += 1
         if not (e.title or "").strip() or not (e.published_at or "").strip():
@@ -481,6 +503,10 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
         if e.published_at and e.published_at > horizon:     # both ISO-UTC: lexical == chronological
             e.published_at = now_iso
             stats["future_dated"] += 1
+        if (too_old_before is not None and e.published_at and e.published_at < too_old_before
+                and (e.source_type or source_type or "").lower() != "extension"):
+            stats["too_old"] += 1
+            continue
         iso = e.published_at            # already ISO (see _to_iso); lexical min/max within a feed
         if iso:
             if stats["newest"] is None or iso > stats["newest"]:

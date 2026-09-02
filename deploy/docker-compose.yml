@@ -47,6 +47,12 @@ services:
       RWE_FEED_MAX_INTERVAL: ${RWE_FEED_MAX_INTERVAL:-}
       RWE_FEED_SPEEDUP: ${RWE_FEED_SPEEDUP:-}
       RWE_FEED_SLOWDOWN: ${RWE_FEED_SLOWDOWN:-}
+      # A FEED entry published longer ago than this many days is dropped before scoring (counted
+      # as too_old per feed). Default off. Production 2026-09-02: CNN's top-stories RSS still
+      # lists April-2023 articles; each poll inserted them, retention pruned them as the oldest
+      # rows, the next poll inserted them again — 53 rows/day of churn that could never reach a
+      # story. Articles a reader opened (the browser extension) are never judged on age.
+      RWE_INGEST_MAX_AGE_DAYS: ${RWE_INGEST_MAX_AGE_DAYS:-}
       # The background poller resolves its feeds from RWE_RSS_FEEDS — the SAME list the `ingest` service
       # uses. WITHOUT this (and the matching mount below) the poller loads ZERO feeds and silently no-ops,
       # so the catalog only ever refreshes at `up` time. Keep this pair in sync with the ingest service.

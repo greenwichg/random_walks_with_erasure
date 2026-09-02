@@ -707,6 +707,16 @@ class PublisherCrawler:
         if not accepted and report.errors:
             report.error = report.errors[0]
         if len(accepted) > self.config.max_urls:
+            # NEWEST FIRST before the cap. `_filter` keeps document order, and a sitemap is
+            # conventionally oldest-first, so capping in that order drains a backlog from the
+            # wrong end: each cycle takes the 60 OLDEST unseen URLs and today's articles wait
+            # behind yesterday's. Measured on production 2026-09-02 — The Spokesman-Review's 82
+            # rows in one day were all a day or more old at first sight (median 28.6 h), UNIAN's
+            # p90 lag was 21.6 h — on hosts polled every 15 minutes without a single failure.
+            # Same key as the sitemap-index descent above: dated newest-first, undated last. A
+            # stable sort, so a rung that already lists newest-first is untouched.
+            accepted.sort(key=lambda e: _published_utc(e.published_at) or _UNDATED_SORTS_LAST,
+                          reverse=True)
             report.capped = len(accepted) - self.config.max_urls
             accepted = accepted[:self.config.max_urls]
         report.accepted = len(accepted)

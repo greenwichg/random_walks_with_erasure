@@ -541,6 +541,39 @@ def test_a_future_publish_claim_is_clamped_to_the_observation_time(store):
         "inside the skew allowance the publisher's own timestamp stands"
 
 
+def test_a_feed_entry_older_than_the_ingest_limit_is_dropped_before_it_costs_a_row(store, monkeypatch):
+    """The mirror of the future clamp. CNN's top-stories RSS (production 2026-09-02) still lists
+    April-2023 articles: every poll inserted them as rows dated 3.4 years old, retention pruned
+    them as the oldest rows in the catalog, the next poll inserted them again — 53 rows a day of
+    churn that could never reach a story. A reader's own article (the browser extension) is never
+    judged on age: "you read this" is true however old the page is. Off by default.
+
+    Mutation checks: dropping the `continue` stores the 2023 row and `too_old` still counts (the
+    second assertion fails); dropping the extension exemption fails the last one; reading the
+    knob at import instead of per call fails all of them under monkeypatch."""
+    from datetime import datetime, timedelta, timezone
+    monkeypatch.setenv("RWE_INGEST_MAX_AGE_DAYS", "30")
+    ancient = "2023-04-18T12:00:00+00:00"
+    recent = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    stats = ri.ingest_entries(
+        [ri.FeedEntry(url="https://dead.example/2023", title="t", published_at=ancient),
+         ri.FeedEntry(url="https://dead.example/now", title="t", published_at=recent),
+         ri.FeedEntry(url="https://read.example/2023", title="t", published_at=ancient,
+                      source_type="extension")],
+        "P", "feed://p", ri.make_scorer(), store)
+    assert stats["too_old"] == 1 and stats["new"] == 2
+    assert store.get_feed_article("https://dead.example/2023") is None
+    assert store.get_feed_article("https://dead.example/now") is not None
+    assert store.get_feed_article("https://read.example/2023") is not None, \
+        "an article a reader opened is recorded whatever its date"
+
+    monkeypatch.delenv("RWE_INGEST_MAX_AGE_DAYS")
+    stats = ri.ingest_entries(
+        [ri.FeedEntry(url="https://dead.example/2023-b", title="t", published_at=ancient)],
+        "P", "feed://p", ri.make_scorer(), store)
+    assert stats["too_old"] == 0 and stats["new"] == 1, "unset = the shipped behaviour"
+
+
 def test_existing_upsert_without_source_params_is_unchanged(store):
     # calling upsert_feed_article the old way (no source_type/provider/external_id) still works
     created = store.upsert_feed_article(

@@ -176,6 +176,41 @@ def test_first_poll_is_never_overflow_but_a_repeat_all_new_poll_is():
     assert [r["feedUrl"] for r in c["overflowSuspects"]] == ["https://b/rss"]
 
 
+def test_crawl_rows_are_judged_against_the_admission_table():
+    """Production 2026-09-02: 11 of 45 crawl health rows read as silent hosts. The crawl status
+    join showed all 32 admitted hosts polled minutes earlier — the 11 were rows under keys nothing
+    writes any more (labels changed, hosts withdrawn). Orphans and paused hosts are reported as
+    what they are, never as off-schedule; a host with its own interval is held to that interval.
+
+    Mutation checks: dropping the orphan branch counts 3 off-schedule; dropping the paused branch
+    counts 2; ignoring crawlIntervalSeconds counts 1."""
+    health = [_health("crawl://live", 5),
+              _health("crawl://slow-by-policy", 100),        # 100 min old, but polled hourly
+              _health("crawl://paused-host", 3000),
+              _health("crawl://old-label", 3000),
+              _health("crawl://withdrawn", 3000)]
+    expected = {"crawl://live": {"host": "live.example"},
+                "crawl://slow-by-policy": {"host": "slow.example", "crawlIntervalSeconds": 3600},
+                "crawl://paused-host": {"host": "p.example", "crawlPausedAt": "2026-09-01T00:00:00+00:00"}}
+    c = af.cadence_report(health, now=NOW, poll_interval_s=600, crawl_interval_s=900,
+                          expected_crawl=expected)["crawl"]
+    assert c["tracked"] == 2 and c["notOnSchedule"] == 0
+    assert [r["feedUrl"] for r in c["orphanRows"]] == ["crawl://old-label", "crawl://withdrawn"]
+    assert [r["feedUrl"] for r in c["pausedRows"]] == ["crawl://paused-host"]
+    # Without the table (a store without admissions) every crawl row is judged on the interval.
+    c2 = af.cadence_report(health, now=NOW, poll_interval_s=600, crawl_interval_s=900)["crawl"]
+    assert c2["tracked"] == 5 and c2["notOnSchedule"] == 4
+
+
+def test_reingestion_per_day_uses_each_feeds_own_interval_under_the_scheduler():
+    # A feed the scheduler settled at 300 s re-polls 288 times a day; one at 3600 s, 24 times.
+    h = [dict(_health("https://a/rss", 1, imported=0, duplicate=10), intervalS=300.0),
+         dict(_health("https://b/rss", 1, imported=0, duplicate=10), intervalS=3600.0),
+         _health("https://c/rss", 1, imported=0, duplicate=10)]          # unmet: the sweep
+    r = af.reingest_report(h, [], poll_interval_s=600)
+    assert r["duplicatesPerDay"] == pytest.approx(10 * 288 + 10 * 24 + 10 * 144)
+
+
 def test_failing_and_off_schedule_rows_are_listed_worst_first():
     h = [_health("https://a/rss", 30, fails=1), _health("https://b/rss", 200, fails=4),
          _health("https://c/rss", 3)]

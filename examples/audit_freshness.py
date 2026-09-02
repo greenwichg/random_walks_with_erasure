@@ -203,6 +203,21 @@ def scheduler_state(store_, health: list) -> list:
     return out
 
 
+def crawl_expectations(store_) -> dict:
+    """``{health key: admission row}`` for every admitted crawl host — what a ``crawl://`` health
+    row is judged AGAINST. A row whose key matches nothing here is an orphan: the label that
+    named it changed (publisher identity, 2026-08-31) or the host was withdrawn, and the row
+    simply stopped being written. Eleven of production's 45 crawl rows were orphans on the first
+    run of this audit and were reported as silent hosts; the crawl status join says they never
+    were. A paused host is judged as paused, not as off-schedule."""
+    try:
+        import crawler
+        rows = store_.admission_rows(states=["admitted"], limit=0)
+    except Exception:
+        return {}
+    return {crawler.crawl_health_key(r.get("publisher") or r["host"]): r for r in rows}
+
+
 def suspect_dates_report(rows: list, *, limit: int = 8) -> list:
     """Rows dated ``SUSPECT_DATE_DAYS`` or more before first sight, grouped by the feed/provider
     that supplied them — the list of who is stamping dates we cannot use."""
@@ -301,7 +316,8 @@ def source_kind(feed_url: str) -> str:
 
 
 def cadence_report(health: Iterable[dict], *, now: datetime, poll_interval_s: float,
-                   crawl_interval_s: float, gdelt_interval_s: Optional[float] = None) -> dict:
+                   crawl_interval_s: float, gdelt_interval_s: Optional[float] = None,
+                   expected_crawl: Optional[dict] = None) -> dict:
     """Per source kind: how many, how many failing, how many not polled on schedule, and for RSS
     the last sweep's wall time and the gap since it finished.
 
@@ -312,8 +328,18 @@ def cadence_report(health: Iterable[dict], *, now: datetime, poll_interval_s: fl
     granularity the overflow flag needs."""
     gdelt_interval_s = gdelt_interval_s if gdelt_interval_s is not None else poll_interval_s
     groups = {"rss": [], "crawl": [], "api": []}
+    orphans, paused = [], []
     for r in health:
-        groups[source_kind(r.get("feedUrl"))].append(r)
+        kind = source_kind(r.get("feedUrl"))
+        if kind == "crawl" and expected_crawl is not None:
+            adm = expected_crawl.get(r.get("feedUrl"))
+            if adm is None:
+                orphans.append(r)                 # nothing writes this key any more
+                continue
+            if adm.get("crawlPausedAt"):
+                paused.append(r)                  # not polled BY DECISION, not by fault
+                continue
+        groups[kind].append(r)
     interval_for = {"rss": poll_interval_s, "crawl": crawl_interval_s, "api": poll_interval_s}
     out = {}
     for kind, rows in groups.items():
@@ -326,6 +352,10 @@ def cadence_report(health: Iterable[dict], *, now: datetime, poll_interval_s: fl
             held = interval_for_key(r.get("feedUrl"), poll_interval_s=poll_interval_s,
                                     crawl_interval_s=crawl_interval_s,
                                     gdelt_interval_s=gdelt_interval_s)
+            if kind == "crawl" and expected_crawl is not None:
+                custom = (expected_crawl.get(r.get("feedUrl")) or {}).get("crawlIntervalSeconds")
+                if custom:
+                    held = max(300.0, float(custom))     # crawler.MIN_CRAWL_INTERVAL
             judged.append((r, age, held))
         ages = [a for _r, a, _h in judged if a is not None]
         never = sum(1 for _r, a, _h in judged if a is None)
@@ -351,6 +381,9 @@ def cadence_report(health: Iterable[dict], *, now: datetime, poll_interval_s: fl
                 and int(r.get("imported") or 0) >= OVERFLOW_MIN_IMPORTED
                 and int(r.get("duplicate") or 0) == 0]
             entry["missingMetadata"] = sum(int(r.get("missingMetadata") or 0) for r in rows)
+        if kind == "crawl":
+            entry["orphanRows"] = sorted(orphans, key=lambda r: r.get("feedUrl") or "")
+            entry["pausedRows"] = sorted(paused, key=lambda r: r.get("feedUrl") or "")
         out[kind] = entry
     return out
 
@@ -359,11 +392,18 @@ def cadence_report(health: Iterable[dict], *, now: datetime, poll_interval_s: fl
 # 3. Repeated re-ingestion — counters and catalog, both.
 # --------------------------------------------------------------------------- #
 def reingest_report(health: Iterable[dict], rows: list, *, poll_interval_s: float) -> dict:
+    """Per-feed: a feed under the scheduler re-polls on ITS interval, not the sweep's, so the
+    per-day figure sums ``duplicate * 86400 / interval`` feed by feed — the sweep interval is
+    only the fallback for a feed the scheduler has not met."""
     rss = [r for r in health if source_kind(r.get("feedUrl")) == "rss" and r.get("lastSuccessAt")]
     imported = sum(int(r.get("imported") or 0) for r in rss)
     duplicate = sum(int(r.get("duplicate") or 0) for r in rss)
     processed = imported + duplicate
-    per_day = duplicate * 86400.0 / poll_interval_s if poll_interval_s > 0 else 0.0
+    per_day = 0.0
+    for r in rss:
+        iv = float(r.get("intervalS") or 0) or poll_interval_s
+        if iv > 0:
+            per_day += int(r.get("duplicate") or 0) * 86400.0 / iv
     retouched = [r for r in rows if r.get("fetched") and r.get("created")
                  and (r["fetched"] - r["created"]).total_seconds() > RETOUCH_AFTER_H * 3600.0]
     longest = max(((r["fetched"] - r["created"]).total_seconds() / 3600.0 for r in retouched),
@@ -517,6 +557,15 @@ def render(cfg: list, lag: dict, outlets: list, cadence: dict, reingest: dict, v
         for r in c["staleRows"][:8]:
             L.append(f"      off-schedule  last ok {r.get('lastSuccessAt')}  "
                      f"{(r.get('name') or r.get('feedUrl') or '')[:50]}")
+        if kind == "crawl":
+            if c.get("pausedRows"):
+                L.append(f"      paused by policy: "
+                         f"{', '.join((r.get('name') or r.get('feedUrl') or '')[:30] for r in c['pausedRows'][:12])}")
+            if c.get("orphanRows"):
+                L.append(f"      {len(c['orphanRows'])} orphan health row(s) no adapter writes any more "
+                         f"(label changed or host withdrawn) — not silent hosts:")
+                for r in c["orphanRows"][:12]:
+                    L.append(f"        {r.get('feedUrl')}  last ok {str(r.get('lastSuccessAt') or '-')[:19]}")
 
     L.append("\n=== 3. repeated re-ingestion ===")
     if reingest["feeds"]:
@@ -564,7 +613,7 @@ def run(store_, *, hours: float = 24.0, top: int = 25, now: Optional[datetime] =
     lag = lag_report(rows, since=since)
     outlets = outlet_report(rows, now=now, since=since, hours=hours, poll_interval_s=pi)
     cadence = cadence_report(health, now=now, poll_interval_s=pi, crawl_interval_s=ci,
-                             gdelt_interval_s=gi)
+                             gdelt_interval_s=gi, expected_crawl=crawl_expectations(store_))
     reingest = reingest_report(health, rows, poll_interval_s=pi)
     suspect = suspect_dates_report(rows)
     verdicts = findings(lag, outlets, cadence, reingest, hours=hours, poll_interval_s=pi,

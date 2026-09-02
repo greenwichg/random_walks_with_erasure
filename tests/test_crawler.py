@@ -428,6 +428,24 @@ def test_max_urls_caps_a_cycle_and_says_how_much_it_dropped():
     assert report.accepted == 1 and report.capped == 1
 
 
+def test_the_cap_keeps_the_newest_articles_not_the_first_listed():
+    """A sitemap is conventionally oldest-first, so capping in document order drains a backlog
+    from the wrong end — production 2026-09-02: The Spokesman-Review's 82 rows in a day were ALL
+    a day or more old at first sight, on a host polled every 15 minutes without a failure.
+
+    Mutation check: removing the sort before the cap keeps `/2026/08/17/` (listed first) and
+    drops `/2026/08/20/` — the second assertion fails. Undated entries sort last, so they are
+    the first to be dropped, never the dated ones."""
+    body = _aged_sitemap("2026-08-17T09:00:00Z", None, "2026-08-20T09:00:00Z", "2026-08-19T09:00:00Z")
+    cfg = _cfg(max_urls=2, max_age_days=0, article_pattern="")
+    c = crawler.PublisherCrawler(cfg, robots=_policy(ALLOW), limiter=_no_wait(),
+                                 fetch=_fetcher({"https://www.npr.org/s.xml": body}),
+                                 now=lambda: _NOW)
+    entries, report = c.crawl()
+    assert report.capped == 2 and report.accepted == 2
+    assert [e.published_at[:10] for e in entries] == ["2026-08-20", "2026-08-19"]
+
+
 def test_the_report_accounts_for_every_discovered_url():
     """A cycle that returns nothing must say WHICH gate closed. The fixture has 4 URLs: 2 good,
     1 off-domain, 1 that fails the article pattern."""
