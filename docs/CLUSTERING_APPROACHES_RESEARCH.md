@@ -602,6 +602,20 @@ number. Every production run is from a container carrying the deploy environment
 
 ### Stage 1 — one dependency decision: sentence embeddings at ingest
 
+**Gate first (built 2026-09-02): `examples/preflight_embeddings.py`.** The first dependency ever
+added to the serving image lands on a 2-vCPU / 4 GiB box, so the decision is measured on that
+box rather than estimated: a throwaway `pip --target` install of ONNX Runtime + tokenizers, one
+candidate encoder downloaded (the box's CPU flags pick the quantised file), the session loaded
+with memory read before and after, 500 real window headlines encoded at one thread, and the
+two semantic properties Stage 1 spends embeddings on checked on fixed exhibits. Bars,
+registered in the script before any number: image growth ≤ 500 MB, resident ≤ 400 MB,
+MemAvailable with the model loaded ≥ 1 GiB, ≤ 50 ms/article, paraphrase margin ≥ 0.15,
+cross-lingual cosine ≥ 0.5. The template-trap cosine (eye drops vs fruit bars) is printed and
+deliberately not barred: it reads high, and that number is the standing reason embeddings are
+a second channel and never sole evidence. Run: `dc run --rm -T api python
+examples/preflight_embeddings.py --install` (exit 0 GO, 2 NO-GO, 1 undetermined; nothing is
+changed either way).
+
 Choose a small multilingual encoder run through ONNX Runtime (a quantised
 paraphrase-multilingual-MiniLM or E5-small class model), encode title + dek **at ingest**, store
 the vector on the article row, version it. Then, in order:
