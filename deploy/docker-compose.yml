@@ -616,18 +616,14 @@ services:
       # weld): measured against the live catalog, the ONE split was that exact story shedding its
       # one foreign article, at 0.0% dropped coverage and an untouched independent signal.
       RWE_CLUSTER_TEMPLATE_LEXICONS: ${RWE_CLUSTER_TEMPLATE_LEXICONS:-announce,tracker,preview,recall}
-      # Stage 0 candidates (docs/CLUSTERING_APPROACHES_RESEARCH.md §4) — both OFF until measured
-      # with audit_clustering_change.py against their pre-registered bars. Forwarded now, default
-      # off, for the reason the Unicode line above records: a flag that is not in this allowlist
-      # never reaches the process, and a null result then reads as a measurement.
-      #   ANCHOR_VETO (story_service.anchor_veto): refuse an edge or merge whose sides carry the
-      #   same instance slot — an explicit date, week/game/episode/season/Q1-Q4/2nd Test — with no
-      #   value in common. The numbered-template class the digit-drop leaves open ("Wordle hints
-      #   for Sept 2" vs "…Sept 3" are Jaccard 1.00 today). 1 enables.
-      #   TIME_DECAY (story_service.time_decay): extra similarity required per day of publication
-      #   gap, inside the unchanged 6-day window (0.02 = a 3-day pair needs 0.34 against 0.28).
-      RWE_CLUSTER_ANCHOR_VETO: ${RWE_CLUSTER_ANCHOR_VETO:-0}
-      RWE_CLUSTER_TIME_DECAY: ${RWE_CLUSTER_TIME_DECAY:-0}
+      # Two Stage 0 candidates (docs/CLUSTERING_APPROACHES_RESEARCH.md §4) were forwarded here,
+      # MEASURED 2026-09-02 against their pre-registered bars, and REJECTED — so they are no
+      # longer forwarded (tests/test_env_hygiene.AUDIT_ONLY_CLUSTER_FLAGS names the measurements;
+      # the records live on the story_service functions):
+      #   RWE_CLUSTER_ANCHOR_VETO — 0.3% dropped, but the story count fell 2,410 -> 2,405 and two
+      #   welds were manufactured downstream (story_service.anchor_veto).
+      #   RWE_CLUSTER_TIME_DECAY — 7.5% dropped at 0.02 against the 1% bar; the sagas fragmented
+      #   and re-welded into same-actor blobs (story_service.time_decay). Not to be titrated.
       # Banded semantic event-identity (event_identity.py) — OFF until the pre-registered V1
       # bars (docs/EVENT_IDENTITY_RUBRIC.md) and the clustering counterfactual say the judge
       # earns edges. The build never waits on it: verdicts persist in the store, unjudged

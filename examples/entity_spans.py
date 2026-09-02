@@ -89,9 +89,25 @@ _NOISE_SPANS = frozenset({
 })
 
 _WORD_RE = re.compile(r"[^\W\d_][\w'’.\-]*", re.UNICODE)
-#: Segment boundaries: sentence ends, headline separators (" - ", " | ", ": ") — each segment's
-#: first word is position-capitalised.
-_SEGMENT_RE = re.compile(r"(?:[.!?]+\s+|:\s+|\s+[-–—|]\s+|\s*\|\s*|\s*[;]\s+)")
+#: Segment boundaries: sentence ends, headline separators (" - ", " | ", ": "), and — measured
+#: on the first production backfill — COMMAS and semicolons. Without them a cast list is one
+#: "name" ("Julia Stiles, Jenna Dewan, Harry Shum Jr" came back as a single 26-character span),
+#: which can never corroborate and only pads the count. A comma ends a run; "Washington, D.C."
+#: loses its span to that rule and the trade is taken knowingly. Each segment's first word is
+#: position-capitalised.
+_SEGMENT_RE = re.compile(r"(?:[.!?]+\s+|[:;,]\s*|\s+[-–—|]\s+|\s*\|\s*)")
+
+#: Words trimmed from a name's ENDS after the run is formed: calendar words ("Tuesday Sept 2"
+#: yielded the pseudo-name "tuesday sept" on the first backfill — and a dateline is exactly the
+#: kind of string that corroborates ACROSS unrelated stories, which is the one failure the
+#: consumers cannot absorb) and the series/format words a headline capitalises beside a real
+#: name ("‘Dancing With the Stars’ Season 35" is about the show, not about "the stars season").
+_TRIM_WORDS = frozenset("""
+monday tuesday wednesday thursday friday saturday sunday january february march april may june
+july august september october november december jan feb mar apr jun jul aug sep sept oct nov
+dec today tonight yesterday tomorrow season episode live update updates review recap preview
+report exclusive video photos photo watch breaking
+""".split())
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 _POSSESSIVE_RE = re.compile(r"['’]s$")
 
@@ -125,9 +141,12 @@ def _normalise(words: list) -> str:
         w = _POSSESSIVE_RE.sub("", w.lower()).strip(".-'’")
         if w:
             parts.append(w)
-    while parts and parts[0] in _CONNECTORS:
+    # Connectors and calendar/format words cannot BEGIN or END a name; trimmed until a real
+    # word holds each end, so "tuesday sept" empties out and "dancing with the stars season"
+    # keeps the show.
+    while parts and (parts[0] in _CONNECTORS or parts[0] in _TRIM_WORDS):
         parts.pop(0)
-    while parts and parts[-1] in _CONNECTORS:
+    while parts and (parts[-1] in _CONNECTORS or parts[-1] in _TRIM_WORDS):
         parts.pop()
     return " ".join(parts)
 

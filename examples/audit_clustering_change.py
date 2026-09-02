@@ -89,7 +89,7 @@ _DEPLOY_CLUSTER_ENV = (
     "RWE_CLUSTER_TEMPLATE_LEXICONS",                      # lexicon set, adopted 2026-08-24
     "RWE_CLUSTER_MIN_SUPPORT", "RWE_CLUSTER_SUPPORT_SCOPE",   # merge support breadth
     "RWE_STORY_ENTITY_VETO",                              # X5c entity disagreement
-    "RWE_CLUSTER_ANCHOR_VETO", "RWE_CLUSTER_TIME_DECAY",  # Stage 0.1 / 0.2 candidates
+    "RWE_STORY_ENTITY_SPANS",                             # Stage 0.3 candidate (read switch)
 )
 
 

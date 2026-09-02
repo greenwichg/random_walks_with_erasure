@@ -69,9 +69,31 @@ def test_noun_capitalising_languages_are_skipped():
     assert X("Bundeskanzler Merz kündigt Neue Regeln an", "", language="en") != []
 
 
+def test_a_comma_ends_a_run_so_a_cast_list_is_several_names():
+    """From the first production backfill: 'Julia Stiles, Jenna Dewan, Harry Shum Jr' came back
+    as ONE 26-character span, which can never corroborate and only pads the count."""
+    assert X("‘Dancing With the Stars’ Season 35 cast revealed: Julia Stiles, Jenna Dewan, "
+             "Harry Shum Jr.", "") == ["dancing with the stars", "julia stiles", "jenna dewan",
+                                       "harry shum jr"]
+
+
+def test_calendar_and_format_words_cannot_begin_or_end_a_name():
+    """'tuesday sept' was extracted from a premiere dateline on the first backfill — a string
+    that would corroborate ACROSS unrelated stories, the one failure the consumers cannot
+    absorb. Calendar words are trimmed from a name's ends; a run of nothing else vanishes."""
+    assert X("Premiere set for Tuesday Sept 2 after the finale", "") == []
+    assert X("Monday Night Football returns with Jane Doe on the call", "") == \
+        ["night football", "jane doe"]
+    assert X("Storm hits coast", "Live Updates from Mayor Ana Lopez continued.") == \
+        ["mayor ana lopez"]
+
+
 def test_and_is_not_a_connector_and_furniture_is_dropped():
     assert X("Trump and Putin to meet", "") == []
-    assert X("Live Updates: Hurricane Season begins", "") == ["hurricane season"]
+    assert X("Live Updates: Hurricane Elsa nears Florida Keys", "") == \
+        ["hurricane elsa", "florida keys"]
+    assert X("Live Updates: Hurricane Season begins", "") == [], \
+        "'season' is a format word: trimmed, and the lone 'hurricane' left is not a name"
     assert "breaking news" not in X("Breaking News: Storm Elsa nears Florida Keys", "")
 
 

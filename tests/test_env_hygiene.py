@@ -617,6 +617,13 @@ AUDIT_ONLY_CLUSTER_FLAGS = {
         "covered), story count FELL 1,516 -> 1,511",
     "RWE_CLUSTER_DERIVED_BOILERPLATE":
         "rejected 2026-08-25: the corpus-derived generalisation of the manual lexicons",
+    "RWE_CLUSTER_ANCHOR_VETO":
+        "rejected 2026-09-02 on the bar as registered: 0.3% dropped but story count FELL "
+        "2,410 -> 2,405 and two welds were manufactured downstream (Powerball + Kerala "
+        "Lottery; a listicle + two game reports) — story_service.anchor_veto",
+    "RWE_CLUSTER_TIME_DECAY":
+        "rejected 2026-09-02 at 0.02: 7.5% dropped against the 1% bar, 437 splits, the sagas "
+        "fragmented and re-welded into same-actor blobs — story_service.time_decay",
 }
 
 

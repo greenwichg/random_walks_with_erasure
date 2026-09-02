@@ -521,12 +521,25 @@ this repo has.
 
 ### Stage 0 — no new dependency (deterministic, days each)
 
-**Status 2026-09-02: items 1–4 are BUILT, tested, and shipped OFF behind their own knobs; item
-5 turned out to be already live.** Each item below records what was built, the knob, the
-measurement command, and the bar fixed before any production number. Every production run is
-from a container carrying the deploy environment (`cd /opt/ih && source deploy/ops/_compose.sh`,
-then `dc run --rm -T api …`); the record of each measurement goes on the named
-`story_service` function, as every adoption before it.
+**Status 2026-09-02, after the first production measurements.** Items 1–4 were built, tested
+and shipped OFF behind their own knobs; item 5 turned out to be already live. Then three of
+them met the live catalog (45k-article window, full production stack):
+
+| item | result | verdict |
+|---|---|---|
+| 1 · instance-anchor veto | 0.3% dropped, 182 edges vetoed, series separated correctly — but stories 2,410 → 2,405 and two welds manufactured downstream | **REJECTED** as registered; audit instrument only |
+| 2 · time decay 0.02 | 7.5% dropped against the 1% bar, 437 splits, the sagas fragmented and re-welded | **REJECTED**; not to be titrated |
+| 3 · entity spans | coverage 17.1% → 65.1% (English 66.2%); X5c consulted-with-consensus 8.8% → 23.0%; 0.6% dropped; largest 86 → 79; cross-language joins (Messi en/vi, Tupac trial en/nl) | **every bar met**; held for one extractor precision fix, then re-run and adopt |
+| 4 · the judge | harness arm and audit flag built; the V1 gate is the operator's run | pending the key |
+
+The full records are on `story_service.anchor_veto`, `time_decay` and `entity_spans`. Two
+lessons the run added to the record: refusal inside `cluster()` frees singletons that the
+remaining template edges absorb (the anchor veto's two welds — the containment mechanism
+`support_scope` documented, now seen a third time), and a requirement that grows with the
+publication gap is backwards for exactly the coverage that spans days. Each item below keeps
+what was built, the knob, the measurement command and the bar fixed before any production
+number. Every production run is from a container carrying the deploy environment (`cd /opt/ih
+&& source deploy/ops/_compose.sh`, then `dc run --rm -T api …`).
 
 1. **Instance anchors as a veto** — `clustering.instance_anchors` /
    `story_service.anchor_veto`, knob `RWE_CLUSTER_ANCHOR_VETO` (off). Explicit calendar dates

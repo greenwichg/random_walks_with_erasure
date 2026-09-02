@@ -1615,7 +1615,36 @@ def anchor_veto() -> bool:
     together and ``batwara-vishwanath`` stays separated; droppedOut ≤ 1% of covered articles; no
     story-count fall; the ``--pieces`` read shows series instances separating, not one event
     shredding. Measure with ``audit_clustering_change.py --anchor-veto --pieces 8`` from a
-    container carrying the deploy environment. Junk values fall back to off."""
+    container carrying the deploy environment. Junk values fall back to off.
+
+    **MEASURED 2026-09-02 AND REJECTED on the bar as registered.** Live catalog, 45,173
+    articles, full production stack: 182 edges vetoed (127 on dates, 23 week, 16 season, 14
+    quarter, 2 episode), 2 merges vetoed; 16 clusters split, 2 merged; droppedOut 31 of 9,771
+    (0.3%, inside the bar); largest 86 unchanged; independent signal 1/155 → 1/156; blindspot
+    claims 242 → 240; **stories 2,410 → 2,405** — the fall the bar forbids. Both exhibits were
+    out of the window (unobserved). The pieces read cuts both ways, and both halves are recorded:
+
+    * What it separated was the class it was built for — lottery draws by date (Bonoloto 28 Aug
+      from Chontico 30 Aug and Dorado 31 Aug), Q2 from Q3 earnings-call transcripts, one show's
+      episode recap from another's — and the five dissolved stories were all daily series
+      ("This Day in Rock History: August 28", "Tarot Card Reading Today, August 30", "Sismos en
+      Perú del 27 de agosto", "Oklahoma Lottery Pick 3 for Aug. 27", "Walang Pasok: class
+      suspensions for August 28"): rule-3 instances that were never events. The story-count fall
+      IS those pseudo-stories dissolving.
+    * It also **manufactured two welds downstream**, by the containment mechanism recorded on
+      ``support_scope``: refusal is subtractive inside ``cluster()``, the freed singletons are
+      then absorbed by whatever template edge remains. A Kerala Lottery result joined the
+      Powerball numbers story (both are "winning numbers" boilerplate, and neither headline's
+      slash date — "08/26/26", "29/08" — is parsed, so no anchor could refuse it), and two
+      rattlesnake-advisory game reports joined a 16-article "players to watch" listicle. Three
+      articles, but the shape the precedent rejects: a rule that fragments series and
+      manufactures welds is not paying for its 0.3%.
+
+    Held OFF, and per ``tests/test_env_hygiene.AUDIT_ONLY_CLUSTER_FLAGS`` no longer forwarded
+    into the container: the flag survives as the audit's instrument. The one registered
+    follow-up is parsing unambiguous slash dates (a component above 12 fixes the order) and
+    re-measuring; it would refuse the Powerball/Kerala edge but does nothing for singleton
+    absorption in general, so it is a hypothesis, not a fix."""
     v = os.environ.get("RWE_CLUSTER_ANCHOR_VETO", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
 
@@ -1640,7 +1669,23 @@ def time_decay() -> float:
     Pre-registered bars: recurring-series chains separate in the ``--pieces`` read; the
     Fauci-class sagas do not fragment further than today; droppedOut ≤ 1%; no story-count fall.
     Measure with ``audit_clustering_change.py --time-decay 0.02 --pieces 8``. Junk and negative
-    values fall back to 0.0."""
+    values fall back to 0.0.
+
+    **MEASURED 2026-09-02 AT 0.02 AND REJECTED — do not titrate.** Live catalog, 45,244
+    articles, full production stack: droppedOut **731 of 9,778 (7.5%)** against the 1% bar
+    (and the harness's 5%); stories 2,412 → 2,288; 437 clusters split, 28 merged; blindspot
+    claims 241 → 221. The pieces read is the failure the bar named, exactly: the sagas
+    fragmented — the Lake Ontario renaming (73/50) into three, the Lindsay Clancy trial
+    (65/26) into five, the Nepal flood (55/37) into four — and the freed pieces then welded
+    downstream into same-actor-different-event blobs (three unrelated Dolly Parton stories into
+    one, a Dearborn pastor story into a Texas polling-sites story, a Fernández transfer into a
+    "how to watch" listing). The mechanism is structural rather than a matter of the constant:
+    the coverage that legitimately spans days is precisely the coverage whose vocabulary
+    diverges over those days, so demanding MORE lexical similarity with the gap is backwards
+    for every saga and right only for series, and the series were already the smaller
+    population. A lower decay moves the same trade along the same line. Held at 0.0 and, per
+    ``tests/test_env_hygiene.AUDIT_ONLY_CLUSTER_FLAGS``, no longer forwarded into the
+    container — the knob survives as the audit's instrument only."""
     return max(0.0, _env_float_allowing_zero("RWE_CLUSTER_TIME_DECAY", 0.0))
 
 
@@ -2871,7 +2916,30 @@ def entity_spans() -> bool:
     consulted-with-consensus share rises materially above 6.2%, droppedOut ≤ 1%, no rise in bad
     clusters, largest cluster within noise, the recorded exhibits unmoved; X5b's joins are read
     by hand under the merge bars (a span-driven join must be a duplicate family, never a
-    same-name weld). Junk values fall back to off."""
+    same-name weld). Junk values fall back to off.
+
+    **MEASURED 2026-09-02: every registered bar met; adoption held for one extractor fix and a
+    re-run.** Backfill over 45,306 window articles: provider-covered 7,733 (17.1% — the window
+    has grown past the 24% measurement with crawl sources GDELT does not see), with spans 29,483
+    (65.1%), English 15,393 of 23,240 (66.2%). Audit, 45,294 articles, full production stack:
+    X5c consulted with consensus on both sides **3,033 of 13,180 merges (23.0%) against 1,090 of
+    12,440 (8.8%) on the same day's baseline**, vetoes 160 → 1,249; droppedOut 63 of 9,790
+    (0.6%); bad clusters 1 → 1; largest 86 → 79; blindspot claims 241 → 241; the one in-window
+    exhibit unmoved; stories 2,416 → 2,414 with 45 merges and 68 splits (a merge-direction change
+    as much as a split one, so the −2 is the merges' arithmetic, not the cliff). The joins read
+    as duplicate families every time: the Lake Ontario order and its reaction pieces, King
+    Harald's death and the succession coverage, Messi's retirement in English AND Vietnamese, the
+    Tupac trial in English AND Dutch, the Iran strikes — the cross-language recall X5b was
+    designed for and could not reach at 17% coverage. No same-name weld; the ubiquity floor
+    held (largest cluster fell).
+
+    What held adoption: the backfill's sample showed two precision defects in the extractor —
+    comma-separated cast lists glued into one "name" ("julia stiles jenna dewan harry shum jr")
+    and calendar words forming spans ("tuesday sept"), the second of which is exactly the kind
+    of pseudo-name that could corroborate ACROSS unrelated stories. Both are fixed in
+    ``entity_spans`` (a comma ends a run; calendar and slot words are trimmed from a name's
+    ends). The discipline is to adopt what was measured, so: re-run the backfill (per-source
+    replace makes it idempotent), re-run the audit, and adopt on the same bars."""
     v = os.environ.get("RWE_STORY_ENTITY_SPANS", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
 
