@@ -616,6 +616,31 @@ a second channel and never sole evidence. Run: `dc run --rm -T api python
 examples/preflight_embeddings.py --install` (exit 0 GO, 2 NO-GO, 1 undetermined; nothing is
 changed either way).
 
+**RUN 2026-09-02 ON PRODUCTION: NO-GO, on the box rather than on the model.** t3.medium,
+2 vCPU (avx512f, no VNNI), 3,832 MB, and *before anything was loaded* only 1,183 MB available
+with 167 MB already in swap at load 2.39 — the box is at its memory ceiling on its own. The
+encoder measured (`paraphrase-multilingual-MiniLM-L12-v2`, int8 AVX-512 export, 122 MB):
+
+| bar | measured | limit | |
+|---|---|---|---|
+| image growth | 199 MB | ≤ 500 | ok |
+| resident (session + tokenizer + first batch) | 414 MB | ≤ 400 | fail |
+| MemAvailable with the model loaded | 807 MB | ≥ 1,024 | **fail — decisive** |
+| encode, 1 thread, batch 32, real headlines | 77.6 ms/article (2 threads: 86 ms — the cores are already contended) | ≤ 50 | fail, minor in consequence: 6.5 CPU-min/day, 59-min one-time backfill |
+| paraphrase margin | cos 0.70 − 0.27 = 0.44 | ≥ 0.15 | ok |
+| cross-lingual | en/vi 0.65, en/ko 0.49 | ≥ 0.50 | fail by 0.01, on Korean |
+| template trap (not barred) | 0.39 | — | lower than feared; the two recalls separate |
+
+Reading: the model does what Stage 1 needs on the paraphrase case and nearly on the
+cross-lingual one; what fails is memory on a box that had none to give before the run. The
+options, each priced: a t3.large (8 GiB, ≈ +$30/month) passes the memory bars as measured and
+leaves only the minor encode miss; a smaller encoder does not help, because most of this model's
+resident set is the 250k-token multilingual vocabulary every multilingual model carries; an
+out-of-process encoder loaded per poll cycle and released would turn the 414 MB into a transient
+cost, but on a box already swapping it is the wrong week to try. **Stage 1 stays open until the
+instance has headroom.** Separately, the pre-load numbers are a capacity finding in their own
+right (`docs/CAPACITY_AND_COST.md` row 5 named "memory into swap" as the resize trigger).
+
 Choose a small multilingual encoder run through ONNX Runtime (a quantised
 paraphrase-multilingual-MiniLM or E5-small class model), encode title + dek **at ingest**, store
 the vector on the article row, version it. Then, in order:

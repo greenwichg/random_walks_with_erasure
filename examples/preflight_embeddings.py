@@ -32,6 +32,12 @@ embeddings are a second channel and never sole evidence.
 Exit codes: 0 = GO, 2 = NO-GO (a resource or model limitation, not an error), 1 = the preflight
 itself could not determine the answer (no deps, no model, no rows). NO-GO is a legitimate,
 expected outcome: the box staying healthy outranks Stage 1.
+
+**Run 2026-09-02 on production: NO-GO** (record in docs/CLUSTERING_APPROACHES_RESEARCH.md §4,
+Stage 1). The t3.medium had 1,183 MB available and 167 MB in swap at load 2.39 BEFORE the
+model loaded; with it, 807 MB against the 1,024 MB bar, resident 414 MB against 400, encode
+77.6 ms against 50. The model itself passed the paraphrase bar (margin 0.44) and missed the
+cross-lingual bar by 0.01 on Korean. Stage 1 waits for an instance with headroom.
 """
 
 from __future__ import annotations
