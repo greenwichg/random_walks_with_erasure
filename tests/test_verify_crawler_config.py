@@ -8,6 +8,7 @@ Offline — every fetch is injected. The script itself is meant to be run agains
 from an environment with real egress; these tests prove the logic it will apply there.
 """
 
+import json
 import pathlib
 import sys
 
@@ -256,6 +257,38 @@ def test_the_verifier_uses_the_crawlers_own_parsers_not_a_second_implementation(
 def test_verify_touches_no_store_or_ingest_symbols():
     for banned in ("store", "ingest_entries", "rss_ingest", "sources"):
         assert not hasattr(vc, banned), f"verifier must not reach {banned}"
+
+
+def test_a_named_publisher_is_verified_whatever_its_switch_says_but_a_sweep_verifies_what_runs(monkeypatch, capsys):
+    """Naming a publisher is how it EARNS the evidence that flips `enabled`, so the switch cannot
+    be a precondition for verifying it — production 2026-09-02 reported "0/0 verified" for the
+    three configs waiting on exactly this run. A sweep still covers only what runs.
+
+    Mutation check: restoring `if c.enabled` on the verify line fails the first block (0
+    verdicts for the disabled name); dropping the sweep filter fails the second."""
+    import crawler
+
+    class _Verdict:
+        def __init__(self, name):
+            self.publisher, self.crawlable = name, True
+
+        def as_dict(self):
+            return {"publisher": self.publisher, "crawlable": True}
+
+    off = crawler.PublisherCrawlConfig(publisher="Reuters", domains=("reuters.com",),
+                                       sources=(crawler.DiscoverySource("sitemap", "https://www.reuters.com/s.xml"),),
+                                       enabled=False)
+    on = crawler.PublisherCrawlConfig(publisher="KAIT", domains=("kait8.com",),
+                                      sources=(crawler.DiscoverySource("sitemap", "https://www.kait8.com/s.xml"),),
+                                      enabled=True)
+    monkeypatch.setattr(crawler, "load_config", lambda path=None, **kw: [off, on])
+    monkeypatch.setattr(vc, "verify", lambda c, skip_tos=False: _Verdict(c.publisher))
+
+    assert vc.main(["--publisher", "Reuters", "--json"]) == 0
+    assert [v["publisher"] for v in json.loads(capsys.readouterr().out)] == ["Reuters"]
+
+    assert vc.main(["--json"]) == 0
+    assert [v["publisher"] for v in json.loads(capsys.readouterr().out)] == ["KAIT"]
 
 
 def test_the_shipped_config_can_be_verified_at_all():

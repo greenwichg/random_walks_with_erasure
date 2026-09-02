@@ -379,8 +379,14 @@ def main(argv=None) -> int:
         if not configs:
             print(f"no configured publisher named {args.publisher!r}")
             return 2
+    else:
+        # A sweep verifies what RUNS. A NAMED publisher is verified whatever its switch says —
+        # the whole point of naming one is to earn the evidence that flips `enabled`, and a
+        # verifier that skipped disabled entries reported "0/0 verified" for exactly the three
+        # configs that were waiting on it (production, 2026-09-02).
+        configs = [c for c in configs if c.enabled]
 
-    verdicts = [verify(c, skip_tos=args.skip_tos) for c in configs if c.enabled]
+    verdicts = [verify(c, skip_tos=args.skip_tos) for c in configs]
     print(json.dumps([v.as_dict() for v in verdicts], indent=2) if args.json else _render(verdicts))
     return 0 if all(v.crawlable for v in verdicts) else 1
 
