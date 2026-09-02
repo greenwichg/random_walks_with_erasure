@@ -240,6 +240,17 @@ def test_the_backfill_reports_coverage_before_and_after(capsys):
     assert "jane doe, acme corp" in text
 
 
+def test_the_backfill_closing_line_states_the_read_switch(monkeypatch):
+    """After adoption the old line ("nothing reads span rows until…") was false on the box
+    that printed it. The note reports the switch's actual state in the running environment."""
+    res = backfill.run(store_mod.Store("sqlite://"), rows=[])
+    monkeypatch.delenv("RWE_STORY_ENTITY_SPANS", raising=False)
+    assert "is OFF here" in backfill.render(res) and "measure first" in backfill.render(res)
+    monkeypatch.setenv("RWE_STORY_ENTITY_SPANS", "1")
+    text = backfill.render(res)
+    assert "is ON here" in text and "-e RWE_STORY_ENTITY_SPANS=0" in text
+
+
 def test_the_audit_flag_widens_the_after_side_and_reports_an_empty_table(tmp_path, monkeypatch,
                                                                          capsys):
     monkeypatch.setenv("RWE_CLUSTER_LINK_QUORUM", "0")

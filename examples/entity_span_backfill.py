@@ -103,9 +103,17 @@ def render(res: dict) -> str:
         for title, names in res["sample"]:
             lines.append(f"  {title[:70]}")
             lines.append(f"      -> {', '.join(names)}")
-    lines.append("\nNothing in the serving path reads span rows until RWE_STORY_ENTITY_SPANS=1; "
-                 "measure first:\n  dc run --rm -T api python examples/audit_clustering_change.py "
-                 "--entity-spans --pieces 8")
+    # The closing line states the READ switch's actual state in this environment, so the
+    # operator never has to remember which side of adoption they are on.
+    if story_service.entity_spans():
+        lines.append("\nRWE_STORY_ENTITY_SPANS is ON here: the next story build consumes these "
+                     "rows. To re-measure the rule, run the audit with the baseline off:\n"
+                     "  dc run --rm -T -e RWE_STORY_ENTITY_SPANS=0 api python "
+                     "examples/audit_clustering_change.py --entity-spans --pieces 8")
+    else:
+        lines.append("\nRWE_STORY_ENTITY_SPANS is OFF here: nothing in the serving path reads "
+                     "span rows; measure first:\n  dc run --rm -T api python "
+                     "examples/audit_clustering_change.py --entity-spans --pieces 8")
     return "\n".join(lines)
 
 
