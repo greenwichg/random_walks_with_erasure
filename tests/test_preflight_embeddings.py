@@ -127,7 +127,8 @@ def test_fetch_to_streams_and_refuses_past_the_cap(tmp_path):
 # The decision.
 # --------------------------------------------------------------------------- #
 def _passing():
-    return {"imageMB": 180.0, "residentMB": 220.0, "availAfterMB": 2100.0,
+    return {"host": {"memTotalMB": 4000.0},
+            "imageMB": 180.0, "residentMB": 220.0, "availAfterMB": 2100.0,
             "encode1": {"ms": 18.0}, "semantics": {"same": 0.82, "different": 0.31,
                                                    "template": 0.7, "xling_vi": 0.74,
                                                    "xling_ko": 0.66}}
@@ -135,24 +136,43 @@ def _passing():
 
 def test_decide_go_when_every_bar_holds():
     go, checks = pf.decide(_passing())
-    assert go is True and all(ok for _, ok, _ in checks) and len(checks) == 6
+    assert go is True and all(ok for _, _, ok, _ in checks) and len(checks) == 6
+    assert pf.verdicts(checks) == {"box": True, "model": True}
 
 
-@pytest.mark.parametrize("field, value, bar", [
-    ("imageMB", 501.0, "image"), ("residentMB", 401.0, "resident"),
-    ("availAfterMB", 900.0, "headroom"), ("encode1", {"ms": 50.1}, "encode"),
+@pytest.mark.parametrize("field, value, bar, group", [
+    ("imageMB", 501.0, "image", "box"), ("residentMB", 401.0, "resident", "box"),
+    ("availAfterMB", 900.0, "headroom", "box"), ("encode1", {"ms": 50.1}, "encode", "box"),
     ("semantics", {"same": 0.5, "different": 0.4, "template": 0.7, "xling_vi": 0.9, "xling_ko": 0.9},
-     "margin"),
+     "margin", "model"),
     ("semantics", {"same": 0.9, "different": 0.1, "template": 0.7, "xling_vi": 0.9, "xling_ko": 0.49},
-     "cross-lingual"),
+     "cross-lingual", "model"),
 ])
-def test_each_bar_can_fail_on_its_own(field, value, bar):
+def test_each_bar_can_fail_on_its_own_and_names_its_group(field, value, bar, group):
     rep = _passing()
     rep[field] = value
     go, checks = pf.decide(rep)
     assert go is False
-    failed = [name for name, ok, _ in checks if ok is False]
-    assert failed == [bar]
+    failed = [(g, name) for g, name, ok, _ in checks if ok is False]
+    assert failed == [(group, bar)]
+    per = pf.verdicts(checks)
+    assert per[group] is False and per["model" if group == "box" else "box"] is True
+
+
+def test_the_memory_bars_scale_with_the_box_and_never_loosen_below_the_floor():
+    """Registered before the t3.large re-run: on the 3,832 MB box the shares resolve to the
+    same or stricter numbers than the constants they replaced (383 / 1,024 MB), and an 8 GiB
+    box must show proportionally more room (about 780 / 1,950 MB)."""
+    assert pf.memory_bars(3832.0) == pytest.approx((383.2, 1024.0))
+    assert pf.memory_bars(7800.0) == pytest.approx((780.0, 1950.0))
+    assert pf.memory_bars(0.0) == (400.0, 1024.0), "no /proc/meminfo: the 4 GiB constants"
+    # The t3.medium run's numbers, replayed: resident 414 and headroom 807 still fail on 3,832 MB…
+    rep = _passing()
+    rep.update({"host": {"memTotalMB": 3832.0}, "residentMB": 414.0, "availAfterMB": 807.0})
+    assert pf.verdicts(pf.decide(rep)[1])["box"] is False
+    # …and the same process cost on an 8 GiB box passes both memory bars.
+    rep.update({"host": {"memTotalMB": 7800.0}, "availAfterMB": 4500.0})
+    assert pf.verdicts(pf.decide(rep)[1])["box"] is True
 
 
 def test_a_missing_measurement_is_undetermined_not_a_verdict():
@@ -160,7 +180,8 @@ def test_a_missing_measurement_is_undetermined_not_a_verdict():
     rep["encode1"] = None
     go, checks = pf.decide(rep)
     assert go is None
-    assert any(name == "encode" and ok is None for name, ok, _ in checks)
+    assert any(name == "encode" and ok is None for _, name, ok, _ in checks)
+    assert pf.verdicts(checks) == {"box": None, "model": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -262,15 +283,16 @@ def test_the_full_run_measures_everything_and_decides_go(tmp_path, monkeypatch):
     assert go is True
     text = pf.render(rep)
     for needed in ("GO —", "image growth    : 160 MB", "1 thread", "template trap",
-                   "cross-lingual en/ko", "backfill", "float16"):
+                   "cross-lingual en/ko", "backfill", "float16", "box   : GO", "model : GO"):
         assert needed in text, needed
 
 
-def test_a_slow_encoder_is_a_no_go_with_exit_code_2(tmp_path, monkeypatch, capsys):
+def test_a_slow_encoder_is_a_box_no_go_with_the_model_verdict_intact(tmp_path, monkeypatch):
     rep, *_ = _run(tmp_path, monkeypatch, ms=55.0, rows=40)
     go, checks = pf.decide(rep)
-    assert go is False and [n for n, ok, _ in checks if ok is False] == ["encode"]
-    assert "NO-GO" in pf.render(rep)
+    assert go is False and [n for _, n, ok, _ in checks if ok is False] == ["encode"]
+    text = pf.render(rep)
+    assert "NO-GO —" in text and "box   : NO-GO" in text and "model : GO" in text
 
 
 def test_main_exit_codes_and_cleanup(tmp_path, monkeypatch, capsys):

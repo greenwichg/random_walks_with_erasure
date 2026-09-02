@@ -14,14 +14,23 @@ unless ``--keep`` is passed.
     dc run --rm -T api python examples/preflight_embeddings.py --dry-run          # plan only
     python examples/preflight_embeddings.py --model-dir DIR                       # files in hand
 
-The bars (registered here, not tuned to fit a result):
+The bars (registered here, not tuned to fit a result), in two groups because they answer two
+different questions — whether THIS BOX can carry the encoder, and whether THIS MODEL does what
+Stage 1 needs — and a bigger instance changes the answer to the first only:
 
-  image     deps (numpy excluded — already in the image) + model files   <= 500 MB
-  resident  RSS growth from loading the session + tokenizer + one batch   <= 400 MB
-  headroom  MemAvailable on the box WITH the model loaded                 >= 1024 MB
-  encode    mean ms/article, ONE thread, batch 32, real headlines         <= 50 ms
-  semantics cos(same event, paraphrased) - cos(different event)           >= 0.15
-            cross-lingual same-event cosine (en/vi, en/ko), the smaller   >= 0.50
+  box   image     deps (numpy excluded — already in the image) + model files   <= 500 MB
+        resident  RSS growth from loading the session + tokenizer + one batch   <= 10% of MemTotal
+        headroom  MemAvailable on the box WITH the model loaded                 >= 25% of MemTotal,
+                                                                                   never below 1024 MB
+        encode    mean ms/article, ONE thread, batch 32, real headlines         <= 50 ms
+  model margin    cos(same event, paraphrased) - cos(different event)           >= 0.15
+        xling     cross-lingual same-event cosine (en/vi, en/ko), the smaller   >= 0.50
+
+The two memory bars are SHARES of the box rather than constants (registered 2026-09-02 before
+the t3.large re-run, after the t3.medium run had been read): on the 3,832 MB box they resolve
+to 383 MB and 1,024 MB — the same or stricter than the 400 / 1,024 MB constants they replace —
+and on an 8 GiB box to about 780 MB and 1,950 MB. A bigger box must show proportionally more
+room, not merely clear a number set for a smaller one.
 
 The semantics bars are the reason to run a real model rather than trust a paper: they are
 the two things Stage 1 spends embeddings on (rejoining disjoint-vocabulary pieces, and the
@@ -58,10 +67,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 MB = 1024 * 1024
 
-#: The bars — registered before any number is seen.
+#: The bars — registered before any number is seen (see the module docstring for the two
+#: memory bars' history).
 BAR_IMAGE_MB = 500.0
-BAR_RESIDENT_MB = 400.0
-BAR_AVAIL_AFTER_MB = 1024.0
+BAR_RESIDENT_SHARE = 0.10          # of MemTotal; the 4 GiB box's 400 MB constant, made a share
+BAR_HEADROOM_SHARE = 0.25          # of MemTotal …
+BAR_AVAIL_AFTER_MB = 1024.0        # … and never below this floor
 BAR_ENCODE_MS = 50.0
 BAR_MARGIN = 0.15
 BAR_XLING = 0.50
@@ -401,51 +412,71 @@ def projections(ms_per_article: Optional[float], window: int, dim: Optional[int]
 # --------------------------------------------------------------------------- #
 # The decision — bars applied mechanically; hand-reading happens in the report, not here.
 # --------------------------------------------------------------------------- #
+def memory_bars(mem_total_mb: float) -> "tuple[float, float]":
+    """``(resident_bar, headroom_bar)`` in MB for a box of ``mem_total_mb``."""
+    if not mem_total_mb:
+        return 400.0, BAR_AVAIL_AFTER_MB            # no /proc/meminfo: the 4 GiB constants
+    return (BAR_RESIDENT_SHARE * mem_total_mb,
+            max(BAR_AVAIL_AFTER_MB, BAR_HEADROOM_SHARE * mem_total_mb))
+
+
 def decide(rep: dict) -> "tuple[Optional[bool], list]":
     """``(go, checks)`` — ``go`` is None when a measurement the bars need is missing (the
-    preflight could not determine the answer), else True/False. Each check is
-    ``(name, ok, detail)``."""
+    preflight could not determine the answer), else True/False over BOTH groups. Each check is
+    ``(group, name, ok, detail)``; :func:`verdicts` folds them per group."""
     checks = []
     missing = False
 
-    def bar(name, value, ok, detail):
+    def bar(group, name, value, ok, detail):
         nonlocal missing
         if value is None:
             missing = True
-            checks.append((name, None, f"not measured — {detail}"))
+            checks.append((group, name, None, f"not measured — {detail}"))
         else:
-            checks.append((name, ok, detail))
+            checks.append((group, name, ok, detail))
 
+    res_bar, head_bar = memory_bars((rep.get("host") or {}).get("memTotalMB") or 0.0)
     image = rep.get("imageMB")
-    bar("image", image, image is not None and image <= BAR_IMAGE_MB,
+    bar("box", "image", image, image is not None and image <= BAR_IMAGE_MB,
         f"{image:.0f} MB (deps + model, numpy excluded) <= {BAR_IMAGE_MB:.0f} MB" if image is not None
         else "deps or model not installed")
     res = rep.get("residentMB")
-    bar("resident", res, res is not None and res <= BAR_RESIDENT_MB,
-        f"{res:.0f} MB RSS growth <= {BAR_RESIDENT_MB:.0f} MB" if res is not None else "model not loaded")
+    bar("box", "resident", res, res is not None and res <= res_bar,
+        f"{res:.0f} MB RSS growth <= {res_bar:.0f} MB (10% of the box)" if res is not None
+        else "model not loaded")
     avail = rep.get("availAfterMB")
-    bar("headroom", avail, avail is not None and avail >= BAR_AVAIL_AFTER_MB,
-        f"{avail:.0f} MB available with the model loaded >= {BAR_AVAIL_AFTER_MB:.0f} MB"
-        if avail is not None else "/proc/meminfo unreadable")
+    bar("box", "headroom", avail, avail is not None and avail >= head_bar,
+        f"{avail:.0f} MB available with the model loaded >= {head_bar:.0f} MB (25% of the box, "
+        f"floor {BAR_AVAIL_AFTER_MB:.0f})" if avail is not None else "/proc/meminfo unreadable")
     ms = (rep.get("encode1") or {}).get("ms")
-    bar("encode", ms, ms is not None and ms <= BAR_ENCODE_MS,
+    bar("box", "encode", ms, ms is not None and ms <= BAR_ENCODE_MS,
         f"{ms:.1f} ms/article at 1 thread <= {BAR_ENCODE_MS:.0f} ms" if ms is not None
         else "no window rows to encode")
     sem = rep.get("semantics") or {}
     if sem:
         margin = sem["same"] - sem["different"]
-        bar("margin", margin, margin >= BAR_MARGIN,
+        bar("model", "margin", margin, margin >= BAR_MARGIN,
             f"cos(same) {sem['same']:.2f} - cos(different) {sem['different']:.2f} = {margin:.2f} "
             f">= {BAR_MARGIN:.2f}")
         xl = min(sem["xling_vi"], sem["xling_ko"])
-        bar("cross-lingual", xl, xl >= BAR_XLING,
+        bar("model", "cross-lingual", xl, xl >= BAR_XLING,
             f"min(en/vi {sem['xling_vi']:.2f}, en/ko {sem['xling_ko']:.2f}) = {xl:.2f} >= {BAR_XLING:.2f}")
     else:
-        bar("margin", None, False, "model not loaded")
-        bar("cross-lingual", None, False, "model not loaded")
+        bar("model", "margin", None, False, "model not loaded")
+        bar("model", "cross-lingual", None, False, "model not loaded")
     if missing:
         return None, checks
-    return all(ok for _, ok, _ in checks), checks
+    return all(ok for _, _, ok, _ in checks), checks
+
+
+def verdicts(checks: list) -> dict:
+    """Per-group verdict: ``{"box": True/False/None, "model": ...}`` — None when any bar in the
+    group is unmeasured."""
+    out: dict = {}
+    for group in ("box", "model"):
+        oks = [ok for g, _, ok, _ in checks if g == group]
+        out[group] = None if (not oks or any(o is None for o in oks)) else all(oks)
+    return out
 
 
 def render(rep: dict) -> str:
@@ -528,21 +559,32 @@ def render(rep: dict) -> str:
                  f"{p['windowMBFloat16']:.0f} MB float16; {CATALOG_CAP:,}-row catalog "
                  f"{p['catalogMBFloat32']:.0f} / {p['catalogMBFloat16']:.0f} MB")
     go, checks = decide(rep)
+    per = verdicts(checks)
     L.append("\n-- decision against the registered bars --")
-    for name, ok, detail in checks:
-        mark = "[ok]  " if ok else ("[ -- ]" if ok is None else "[FAIL]")
-        L.append(f"  {mark} {name:<14} {detail}")
+    for group in ("box", "model"):
+        for g, name, ok, detail in checks:
+            if g != group:
+                continue
+            mark = "[ok]  " if ok else ("[ -- ]" if ok is None else "[FAIL]")
+            L.append(f"  {mark} {group:<6} {name:<14} {detail}")
+
+    def word(v):
+        return "UNDETERMINED" if v is None else ("GO" if v else "NO-GO")
     L.append("\n-- verdict --")
+    L.append(f"  box   : {word(per['box'])}   — can THIS instance carry the encoder "
+             f"(memory, image, ingest cost)")
+    L.append(f"  model : {word(per['model'])}   — does THIS encoder do what Stage 1 needs "
+             f"(paraphrase, cross-lingual); a bigger box cannot change this line")
     if go is None:
         L.append("  UNDETERMINED — a measurement the bars need is missing (see above). Fix the "
                  "cause and re-run; nothing is inferred.")
     elif go:
-        L.append("  GO — this box carries Stage 1 within the registered bars. Next: encode at "
-                 "ingest and store the vector, consuming nothing (the two-switch shape).")
+        L.append("  GO — this box carries this encoder within the registered bars. Next: encode "
+                 "at ingest and store the vector, consuming nothing (the two-switch shape).")
     else:
         L.append("  NO-GO — a registered bar failed. This is a resource or model limitation, not "
-                 "an error; do not tune the bar to fit. Options: a bigger instance, a smaller "
-                 "encoder, or leaving Stage 1 open.")
+                 "an error; do not tune the bar to fit. A box failure wants a bigger instance or "
+                 "leaving Stage 1 open; a model failure wants a different --model.")
     return "\n".join(L)
 
 
