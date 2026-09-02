@@ -28,8 +28,17 @@ export const useDashboard = () => useQuery({ queryKey: queryKeys.dashboard, quer
 export const useReport = () => useQuery({ queryKey: queryKeys.report, queryFn: services.report });
 export const useHistory = () => useQuery({ queryKey: queryKeys.history, queryFn: services.history });
 export const useTopics = () => useQuery({ queryKey: queryKeys.topics, queryFn: services.topics });
-export const useDiscover = (filters?: import("@ih/core/logic/discover-params").DiscoverFilters) =>
-  useQuery({ queryKey: queryKeys.discover(filters), queryFn: () => services.discover(filters) });
+export const useDiscover = (
+  filters?: import("@ih/core/logic/discover-params").DiscoverFilters,
+  opts?: { enabled?: boolean },
+) =>
+  useQuery({
+    queryKey: queryKeys.discover(filters),
+    queryFn: () => services.discover(filters),
+    // Same seam as `useStories`: the home page asks for a topic's articles only once it knows the
+    // topic view is thin, and a conditional hook call is not an option.
+    enabled: opts?.enabled ?? true,
+  });
 export const useStories = (query?: StoryQuery, opts?: { enabled?: boolean }) =>
   useQuery({
     queryKey: queryKeys.stories(query),
