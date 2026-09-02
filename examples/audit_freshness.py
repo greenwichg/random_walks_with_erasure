@@ -61,6 +61,11 @@ RETOUCH_AFTER_H = 1.0
 #: A source whose last success is older than this many of its own intervals is not being polled
 #: on schedule — backed off, dead, or the poller is stalled.
 STALE_POLL_INTERVALS = 2.0
+#: A row whose publication date sits this many days before its first sight did not come from a
+#: live feed's recent items in any honest reading: either the feed stamps bogus dates (CNN's RSS,
+#: production 2026-09-02: a median lag of 3.4 YEARS) or an archive is being re-discovered. Both
+#: push the article outside every recency window the moment it lands.
+SUSPECT_DATE_DAYS = 30.0
 
 _TRUE = {"1", "true", "yes", "on"}
 
@@ -166,13 +171,55 @@ def window_rows(store_, since: datetime) -> list:
     naive = since.astimezone(timezone.utc).replace(tzinfo=None)
     out = []
     with store_.session() as s:
-        q = (select(FA.publisher, FA.source_type, FA.published_at, FA.created_at, FA.fetched_at)
+        q = (select(FA.publisher, FA.source_type, FA.published_at, FA.created_at, FA.fetched_at,
+                    FA.source_feed, FA.url)
              .where(FA.created_at >= naive))
-        for pub, stype, published, created, fetched in s.execute(q):
+        for pub, stype, published, created, fetched, feed, url in s.execute(q):
             out.append({"publisher": (pub or "").strip(), "sourceType": (stype or "unknown"),
                         "published": parse_iso(published), "created": parse_iso(created),
-                        "fetched": parse_iso(fetched)})
+                        "fetched": parse_iso(fetched), "sourceFeed": feed or "", "url": url or ""})
     return out
+
+
+def scheduler_state(store_, health: list) -> list:
+    """The per-feed scheduler columns, merged onto the RSS health rows.
+
+    ``list_feed_health`` does not carry them — the first production run of this audit reported
+    "scheduler state on 0/9 feeds" against a deployment running ``RWE_FEED_SCHEDULER=1``, which
+    was this instrument's defect, not the scheduler's. Read through the store's own accessor so
+    the audit and the scheduler agree on what "state" means."""
+    out = []
+    for r in health:
+        row = dict(r)
+        if source_kind(row.get("feedUrl")) == "rss":
+            try:
+                st = store_.feed_schedule_state(row.get("feedUrl"))
+            except Exception:
+                st = {}
+            row["intervalS"] = st.get("interval_s")
+            row["nextDueAt"] = st.get("next_due_at")
+            row["hasValidator"] = bool(st.get("etag") or st.get("last_modified"))
+        out.append(row)
+    return out
+
+
+def suspect_dates_report(rows: list, *, limit: int = 8) -> list:
+    """Rows dated ``SUSPECT_DATE_DAYS`` or more before first sight, grouped by the feed/provider
+    that supplied them — the list of who is stamping dates we cannot use."""
+    groups = defaultdict(list)
+    for r in rows:
+        lag = lag_minutes(r)
+        if lag is not None and lag >= SUSPECT_DATE_DAYS * 1440.0:
+            groups[(r["sourceType"], r["sourceFeed"])].append(r)
+    out = []
+    for (stype, feed), rs in groups.items():
+        lags = [lag_minutes(r) for r in rs]
+        out.append({"sourceType": stype, "sourceFeed": feed, "rows": len(rs),
+                    "publishers": sorted({r["publisher"] for r in rs if r["publisher"]})[:3],
+                    "medianLagDays": (percentile(lags, 0.5) or 0.0) / 1440.0,
+                    "example": rs[0]["url"]})
+    out.sort(key=lambda g: -g["rows"])
+    return out[:limit]
 
 
 def lag_minutes(row: dict) -> Optional[float]:
@@ -297,6 +344,7 @@ def cadence_report(health: Iterable[dict], *, now: datetime, poll_interval_s: fl
                  "staleRows": sorted(stale_rows, key=lambda r: r.get("lastSuccessAt") or "")}
         if kind == "rss":
             entry["scheduled"] = sum(1 for r in rows if r.get("intervalS"))
+            entry["withValidators"] = sum(1 for r in rows if r.get("hasValidator"))
             entry["overflowSuspects"] = [
                 r for r in rows
                 if int(r.get("totalPolls") or 0) > 1
@@ -331,7 +379,7 @@ def reingest_report(health: Iterable[dict], rows: list, *, poll_interval_s: floa
 # Verdicts — sentences derived from the numbers above, nothing else.
 # --------------------------------------------------------------------------- #
 def findings(lag: dict, outlets: list, cadence: dict, reingest: dict, *, hours: float,
-             poll_interval_s: float) -> list:
+             poll_interval_s: float, suspect: Optional[list] = None) -> list:
     out = []
     a = lag["all"]
     if a["n"] == 0:
@@ -376,6 +424,10 @@ def findings(lag: dict, outlets: list, cadence: dict, reingest: dict, *, hours: 
         out.append(f"{reingest['duplicateShare'] * 100:.0f}% of entries processed per sweep were "
                    f"already held (~{reingest['duplicatesPerDay']:,.0f} re-ingestions/day) — "
                    f"the cost conditional GET (RWE_FEED_SCHEDULER=1) removes")
+    for g in (suspect or [])[:3]:
+        out.append(f"{g['rows']} rows from {g['sourceType']} {g['sourceFeed'] or '-'} carry "
+                   f"publication dates a median {g['medianLagDays']:.0f} d before first sight "
+                   f"({', '.join(g['publishers']) or '-'}) — unusable as freshness")
     flagged = [o for o in outlets if o["flags"]]
     if flagged:
         by_flag = defaultdict(int)
@@ -400,7 +452,8 @@ def _age(h) -> str:
 
 
 def render(cfg: list, lag: dict, outlets: list, cadence: dict, reingest: dict, verdicts: list, *,
-           hours: float, top: int, poll_interval_s: float) -> str:
+           hours: float, top: int, poll_interval_s: float, suspect: Optional[list] = None) -> str:
+    suspect = suspect or []
     L = []
     L.append("=== configuration in effect (env as this process sees it) ===")
     for k in cfg:
@@ -422,14 +475,15 @@ def render(cfg: list, lag: dict, outlets: list, cadence: dict, reingest: dict, v
     L.append(f"\n=== per-outlet freshness (top {len(shown)} by volume"
              f"{f' + {len(extra)} flagged' if extra else ''}) ===")
     L.append(f"  {'rows':>5} {'/day':>6} {'seen':>7} {'pub':>7} {'median':>7} {'p90':>7} "
-             f"{'arch':>5} {'undtd':>5}  outlet")
+             f"{'arch':>5} {'undtd':>5}  {'via':<18} outlet")
     for o in shown + extra:
         flags = ("  <- " + " ".join(o["flags"])) if o["flags"] else ""
+        via = "+".join(o["sources"])[:18]
         L.append(f"  {o['n']:>5} {o['perDay']:>6.1f} {_age(o['hoursSinceSeen']):>7} "
                  f"{_age(o['hoursSincePublished']):>7} {_m(o['medianMin']):>7} {_m(o['p90Min']):>7} "
-                 f"{o['archive']:>5} {o['undated']:>5}  {o['publisher'][:40]}{flags}")
+                 f"{o['archive']:>5} {o['undated']:>5}  {via:<18} {o['publisher'][:40]}{flags}")
     L.append("  seen = since the outlet's newest first-seen row; pub = since its newest publication "
-             "date.")
+             "date; via = every source type that supplied a row.")
     L.append(f"  STALE: quiet for > max({STALE_FLOOR_H:g} h, {STALE_GAPS:g}x its own mean gap). "
              f"LAGGY: median lag > {LAGGY_INTERVALS:g} sweeps. ARCHIVE: >= {ARCHIVE_SHARE:.0%} "
              f"published before the window. UNDATED: >= {UNDATED_SHARE:.0%} without a date.")
@@ -449,7 +503,8 @@ def render(cfg: list, lag: dict, outlets: list, cadence: dict, reingest: dict, v
         if kind == "rss":
             sweep = c["lastSweepS"]
             L.append(f"  {'':<13} last sweep ~{sweep:.0f} s serial fetch under the ingest lock; "
-                     f"scheduler state on {c['scheduled']}/{c['tracked']} feeds; "
+                     f"scheduler state on {c['scheduled']}/{c['tracked']} feeds "
+                     f"(validators on {c['withValidators']}); "
                      f"missing-metadata entries last cycle {c['missingMetadata']}"
                      if sweep is not None else f"  {'':<13} no completed sweep recorded")
             for r in c["overflowSuspects"][:10]:
@@ -480,6 +535,17 @@ def render(cfg: list, lag: dict, outlets: list, cadence: dict, reingest: dict, v
     L.append("  a re-ingestion is one scoring-cache read + one fetched_at write under the ingest "
              "lock; the row itself is never duplicated.")
 
+    L.append(f"\n=== 4. suspect publication dates (>= {SUSPECT_DATE_DAYS:g} d before first sight) ===")
+    if not suspect:
+        L.append("  none")
+    for g in suspect:
+        pubs = ", ".join(g["publishers"]) or "-"
+        L.append(f"  {g['rows']:>5} rows  median {g['medianLagDays']:>7.0f} d  {g['sourceType']:<11} "
+                 f"{(g['sourceFeed'] or '-')[:60]}")
+        L.append(f"        outlets: {pubs[:70]}   e.g. {g['example'][:80]}")
+    L.append("  a date this old on a newly-seen row is a feed stamping dates we cannot use, or an "
+             "archive being re-discovered; either way the article never sorts as fresh.")
+
     L.append("\n=== findings ===")
     for v in verdicts:
         L.append(f"  - {v}")
@@ -491,7 +557,7 @@ def run(store_, *, hours: float = 24.0, top: int = 25, now: Optional[datetime] =
     since = now - timedelta(hours=hours)
     rows = window_rows(store_, since)
     try:
-        health = store_.list_feed_health()
+        health = scheduler_state(store_, store_.list_feed_health())
     except Exception:
         health = []
     pi, ci, gi = poll_interval(), crawl_interval(), gdelt_interval()
@@ -500,10 +566,12 @@ def run(store_, *, hours: float = 24.0, top: int = 25, now: Optional[datetime] =
     cadence = cadence_report(health, now=now, poll_interval_s=pi, crawl_interval_s=ci,
                              gdelt_interval_s=gi)
     reingest = reingest_report(health, rows, poll_interval_s=pi)
-    verdicts = findings(lag, outlets, cadence, reingest, hours=hours, poll_interval_s=pi)
+    suspect = suspect_dates_report(rows)
+    verdicts = findings(lag, outlets, cadence, reingest, hours=hours, poll_interval_s=pi,
+                        suspect=suspect)
     return {"config": config_in_effect(), "lag": lag, "outlets": outlets, "cadence": cadence,
-            "reingest": reingest, "findings": verdicts, "hours": hours, "top": top,
-            "pollIntervalS": pi}
+            "reingest": reingest, "suspect": suspect, "findings": verdicts, "hours": hours,
+            "top": top, "pollIntervalS": pi}
 
 
 def main(argv=None) -> int:
@@ -515,7 +583,8 @@ def main(argv=None) -> int:
     st = store_mod.Store(args.db)
     r = run(st, hours=args.hours, top=args.top)
     print(render(r["config"], r["lag"], r["outlets"], r["cadence"], r["reingest"], r["findings"],
-                 hours=r["hours"], top=r["top"], poll_interval_s=r["pollIntervalS"]))
+                 hours=r["hours"], top=r["top"], poll_interval_s=r["pollIntervalS"],
+                 suspect=r["suspect"]))
     return 0
 
 

@@ -15,6 +15,9 @@ Mutation ledger (each check went red against the listed break of audit_freshness
   - re-ingestions/day computed from imported            -> "re-ingestion is the duplicate count" fails
   - GDELT held to the sweep interval                    -> "GDELT is judged on its own interval" fails
   - window_rows filtered on published_at                -> "window is by first-seen" fails
+  - scheduler state read off list_feed_health alone     -> "scheduler state comes from the store's
+                                                           accessor" fails (0/1 scheduled)
+  - suspect threshold applied to created_at age         -> "suspect dates group by feed" fails
 """
 import pathlib
 import sys
@@ -246,6 +249,50 @@ def test_findings_are_derived_from_the_printed_numbers():
                     af.findings(lag, outlets, cadence, re_, hours=24, poll_interval_s=600),
                     hours=24, top=5, poll_interval_s=600)
     assert "=== findings ===" in out and "A" in out
+
+
+def test_scheduler_state_comes_from_the_stores_accessor_not_the_health_listing():
+    # The production defect this pins: list_feed_health carries no scheduler columns, so an audit
+    # reading only that listing reports "0/N scheduled" on a deployment where the scheduler runs.
+    d = tempfile.mkdtemp()
+    st = store_mod.Store(f"sqlite:///{d}/t.db")
+    st.record_feed_health("https://a/rss", ok=True, name="A", latency_ms=5, stats={})
+    st.record_feed_schedule("https://a/rss", etag='"x"', next_due_at=NOW.isoformat(),
+                            interval_s=300.0)
+    st.record_feed_health("crawl://b", ok=True, name="B", latency_ms=5, stats={})
+    health = af.scheduler_state(st, st.list_feed_health())
+    rss = next(r for r in health if r["feedUrl"] == "https://a/rss")
+    assert rss["intervalS"] == 300.0 and rss["hasValidator"] is True
+    assert "intervalS" not in next(r for r in health if r["feedUrl"] == "crawl://b")
+    c = af.cadence_report(health, now=NOW, poll_interval_s=600, crawl_interval_s=900)["rss"]
+    assert c["scheduled"] == 1 and c["withValidators"] == 1
+
+
+def test_suspect_dates_group_by_feed_and_name_the_outlets():
+    old = 60 * 24 * 400          # published 400 days before first sight
+    rows = [dict(_row("CNN", old + i, i), sourceFeed="https://cnn/rss", url=f"https://cnn/{i}")
+            for i in range(3)]
+    rows.append(dict(_row("BBC", 5, 0), sourceFeed="https://bbc/rss", url="https://bbc/1"))
+    # Old by CREATION age but honestly dated: created 20 h ago, published 20 h ago -> not suspect.
+    rows.append(dict(_row("AP", 20 * 60, 20 * 60), sourceFeed="https://ap/rss", url="https://ap/1"))
+    s = af.suspect_dates_report(rows)
+    assert len(s) == 1
+    assert s[0]["sourceFeed"] == "https://cnn/rss" and s[0]["rows"] == 3
+    assert s[0]["publishers"] == ["CNN"] and s[0]["example"] == "https://cnn/0"
+    assert s[0]["medianLagDays"] == pytest.approx(400, abs=0.01)
+
+
+def test_render_shows_each_outlets_sources_and_the_suspect_section():
+    rows = [dict(_row("BBC", 8, 0, "rss"), sourceFeed="f", url="u"),
+            dict(_row("BBC", 8, 0, "gnews"), sourceFeed="g", url="u2")]
+    lag = af.lag_report(rows, since=SINCE)
+    outlets = af.outlet_report(rows, now=NOW, since=SINCE, hours=24, poll_interval_s=600)
+    cadence = af.cadence_report([], now=NOW, poll_interval_s=600, crawl_interval_s=900)
+    re_ = af.reingest_report([], rows, poll_interval_s=600)
+    out = af.render(af.config_in_effect(), lag, outlets, cadence, re_, [], hours=24, top=5,
+                    poll_interval_s=600, suspect=[])
+    assert "gnews+rss" in out
+    assert "=== 4. suspect publication dates" in out and "  none" in out
 
 
 def test_empty_window_says_so_instead_of_reporting_a_healthy_zero():
