@@ -60,12 +60,16 @@
     "",
     "Why these three: the freshness audit measured their articles arriving 5-12 h after",
     "publication because the only paths to them were GNews / NewsData (12 h delay) and Google",
-    "News RSS. All three ship `enabled: false`. AP's robots allowed our user-agent on 2026-08-15,",
-    "but the bar an enabled publisher must clear (tests/test_crawl_adapter_wiring.py) is the LIVE",
-    "probe's evidence recorded in the tests -- sample article URLs the sitemap actually returned --",
-    "and none of the three has it yet. Reuters' robots policy is restrictive and may refuse.",
-    "Run `verify_crawler_config.py --publisher <name>` on a host with egress, record the returned",
-    "URLs beside KAIT's and KWCH's, and only then flip `enabled`."
+    "News RSS. Verified live from production on 2026-09-02 (verify_crawler_config.py):",
+    "  * Associated Press -- robots allow our user-agent; news-sitemap-content.xml returned 553",
+    "    dated entries; pattern matched 82%, every miss a /live/ blog or /newsletter/. ENABLED.",
+    "  * CNN -- robots allow; sitemap/news.xml returned 222 dated entries; pattern matched 88%,",
+    "    every miss an /election/ hub or a cnn-underscored shopping page. ENABLED.",
+    "  * Reuters -- robots.txt DISALLOWS our user-agent on the news sitemap index. The gate fails",
+    "    closed and so do we: the config stays `enabled: false` with the decision recorded, and",
+    "    nobody routes around a publisher's stated refusal by trying its other sitemaps.",
+    "The accepted URLs are recorded verbatim in tests/test_crawl_adapter_wiring.py; that record is",
+    "the bar for flipping `enabled` on any entry here."
   ],
   "publishers": [
     {
@@ -163,7 +167,7 @@
       "max_age_days": 7,
       "max_urls": 40,
       "min_interval": 3.0,
-      "enabled": false,
+      "enabled": true,
       "tier": "A"
     },
     {
@@ -199,7 +203,7 @@
       "max_age_days": 7,
       "max_urls": 60,
       "min_interval": 3.0,
-      "enabled": false,
+      "enabled": true,
       "tier": "A"
     },
     {

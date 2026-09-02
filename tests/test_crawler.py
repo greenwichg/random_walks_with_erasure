@@ -896,16 +896,18 @@ def test_the_admission_table_can_never_grant_tier_a():
     assert crawler.PublisherCrawlConfig(**fields).tier is None
 
 
-def test_the_three_majors_carry_the_tier_a_decision_but_stay_off_until_the_live_probe():
-    """The decision is recorded; the switch waits for evidence. An enabled publisher must carry
-    sample URLs the live probe returned (tests/test_crawl_adapter_wiring.py pins the enabled set
-    to exactly those), and none of the three has them yet. Flip `enabled` only with that report;
-    this pin makes an unverified flip a deliberate edit rather than a slip."""
+def test_the_three_majors_carry_the_tier_a_decision_and_only_the_probe_verified_two_run():
+    """The decision is recorded on all three; the switch follows the evidence. AP and CNN were
+    verified live from production on 2026-09-02 (tests/test_crawl_adapter_wiring.py records the
+    URLs their sitemaps returned). Reuters' robots.txt refuses our user-agent on its news
+    sitemap, so it stays off — the gate fails closed, and so does the config."""
     by_name = {c.publisher: c for c in crawler.load_config()}
     for name in ("Associated Press", "Reuters", "CNN"):
         c = by_name[name]
-        assert c.tier == "A" and c.max_age_days == 7 and c.enabled is False, name
+        assert c.tier == "A" and c.max_age_days == 7, name
         assert c.sources and c.sources[0].kind == "sitemap", name
+    assert by_name["Associated Press"].enabled is True and by_name["CNN"].enabled is True
+    assert by_name["Reuters"].enabled is False
     # The patterns match the URL shapes these newsrooms actually publish.
     assert re.search(by_name["Reuters"].article_pattern,
                      "https://www.reuters.com/world/europe/talks-resume-2026-09-02/")

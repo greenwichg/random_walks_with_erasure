@@ -44,6 +44,13 @@ def _adapters():
     return [crawler.CrawlAdapter(c) for c in crawler.load_config()]
 
 
+#: The publishers a human declared `tier: "A"` in crawler_publishers.json AND enabled, in config
+#: order. They run with no lane assigned — by decision, not omission — and this list is the whole
+#: of that exception. Reuters carries the decision too but stays disabled: its robots.txt refuses
+#: our user-agent on the news sitemap (live probe, 2026-09-02).
+TIER_A_BY_DECISION = ["Associated Press", "CNN"]
+
+
 # --------------------------------------------------------------------------- off by default
 
 def test_registering_the_adapter_changes_nothing_until_the_flag_is_set():
@@ -63,7 +70,10 @@ def test_the_flag_alone_does_not_start_crawling(monkeypatch):
     reg = sources.default_registry()
     crawl = [a for a in reg.adapters() if getattr(a, "source_type", "") == "crawl"]
     assert crawl, "the flag should register them"
-    assert [a.provider for a in crawl if a.enabled()] == [], "none may RUN without shadow"
+    # None may RUN without a lane — except the ones a human declared `tier: "A"` in the JSON,
+    # which is a decision, not an omission (see `PublisherCrawlConfig.tier`). Pinned as the
+    # exact set so a fourth cannot slip in under the exception.
+    assert [a.provider for a in crawl if a.enabled()] == TIER_A_BY_DECISION
 
 
 # --------------------------------------------------------------------------- the shadow precondition
@@ -74,11 +84,11 @@ def test_a_crawled_source_must_be_in_the_shadow_lane(monkeypatch):
     voting in stories. Enforced rather than documented, because it is the one failure this change
     could cause that nobody would notice until a crawled outlet turned up in a blindspot claim."""
     monkeypatch.setenv("RWE_CRAWL_ENABLED", "1")
-    assert [a.provider for a in _adapters() if a.enabled()] == []
+    assert [a.provider for a in _adapters() if a.enabled()] == TIER_A_BY_DECISION
 
     monkeypatch.setenv("RWE_CORPUS_SHADOW", "kait8.com,kwch.com")
     corpus._index.cache_clear()
-    assert [a.provider for a in _adapters() if a.enabled()] == ["KAIT", "KWCH"]
+    assert [a.provider for a in _adapters() if a.enabled()] == TIER_A_BY_DECISION + ["KAIT", "KWCH"]
 
 
 def test_tier_a_by_decision_runs_without_a_lane_and_the_shipped_decisions_still_wait(monkeypatch):
@@ -92,10 +102,11 @@ def test_tier_a_by_decision_runs_without_a_lane_and_the_shipped_decisions_still_
         publisher="Reuters", domains=("reuters.com",), tier="A", enabled=True,
         sources=(crawler.DiscoverySource("sitemap", "https://www.reuters.com/s.xml"),)))
     assert decided.enabled() is True and decided.shadow_warning() is None
-    shipped = [c for c in crawler.load_config() if c.tier == "A"]
-    assert {c.publisher for c in shipped} == {"Associated Press", "Reuters", "CNN"}
-    assert all(c.enabled is False for c in shipped)
-    assert [a.provider for a in _adapters() if a.enabled()] == []
+    shipped = {c.publisher: c for c in crawler.load_config() if c.tier == "A"}
+    assert set(shipped) == {"Associated Press", "Reuters", "CNN"}
+    assert [p for p in shipped if shipped[p].enabled] == TIER_A_BY_DECISION
+    assert shipped["Reuters"].enabled is False, "robots.txt refuses us; the gate fails closed"
+    assert [a.provider for a in _adapters() if a.enabled()] == TIER_A_BY_DECISION
 
 
 def test_the_default_tier_really_is_A_so_the_precondition_is_load_bearing():
@@ -123,7 +134,9 @@ def test_the_six_unverified_publishers_are_disabled():
     their URLs and patterns unverified guesses. They were harmless while nothing registered the
     adapter; the moment it registers, `enabled: true` is live."""
     cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
-    unverified = {"BBC", "NPR", "The Guardian", "Associated Press", "HuffPost", "Texas Tribune"}
+    # Associated Press left this set on 2026-09-02: verified live, evidence recorded below.
+    # Reuters is in it for the opposite reason — probed, and REFUSED by its robots.txt.
+    unverified = {"BBC", "NPR", "The Guardian", "HuffPost", "Texas Tribune", "Reuters"}
     for pub in cfg["publishers"]:
         if pub["publisher"] in unverified:
             assert pub["enabled"] is False, f"{pub['publisher']} was never verified"
@@ -131,18 +144,46 @@ def test_the_six_unverified_publishers_are_disabled():
 
 def test_the_enabled_publishers_are_the_ones_the_live_probe_verified():
     """kait8.com and kwch.com, 2026-08-26: robots.txt allows HiddenView-Crawler, the declared
-    news-sitemap-index parses and descends, 32 and 36 items at 100% dated and 100% on-host."""
+    news-sitemap-index parses and descends, 32 and 36 items at 100% dated and 100% on-host.
+
+    apnews.com and cnn.com, 2026-09-02, from production: robots allow us; the declared news
+    sitemaps returned 553 and 222 entries, all dated; the patterns matched 82% and 88%, and
+    every miss was a non-article (AP: /live/ blogs, /newsletter/; CNN: /election/ hubs,
+    cnn-underscored shopping). Reuters, same run: robots.txt disallows our user-agent on its
+    news sitemap index — NOT crawlable, and it stays off."""
     cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
-    assert {p["publisher"] for p in cfg["publishers"] if p["enabled"]} == {"KAIT", "KWCH"}
+    assert {p["publisher"] for p in cfg["publishers"] if p["enabled"]} == \
+        {"KAIT", "KWCH", "Associated Press", "CNN"}
 
 
-def test_the_configured_source_is_the_DECLARED_index_not_the_child_it_descends_to():
-    """The index is what robots.txt advertises and is therefore the stable address; the child is an
-    implementation detail of that index, and the ladder descends to it on its own."""
+#: What each enabled publisher's robots.txt DECLARED when it was probed — the stable address a
+#: publisher commits to, as opposed to a child document the ladder descends to or a path we
+#: guessed. KAIT/KWCH 2026-08-26; AP/CNN 2026-09-02.
+DECLARED_SITEMAPS = {
+    "KAIT": {"https://www.kait8.com/arc/outboundfeeds/news-sitemap-index/category/news/?outputType=xml"},
+    "KWCH": {"https://www.kwch.com/arc/outboundfeeds/news-sitemap-index/category/news/?outputType=xml"},
+    "Associated Press": {"https://apnews.com/ap-sitemap.xml",
+                         "https://apnews.com/news-sitemap-content.xml",
+                         "https://apnews.com/hubs-sitemap-content.xml",
+                         "https://apnews.com/video-sitemap.xml",
+                         "https://apnews.com/author-sitemap-content.xml"},
+    "CNN": {"https://www.cnn.com/sitemap/news.xml",
+            "https://www.cnn.com/sitemap/article/cnn-underscored.xml",
+            "https://www.cnn.com/sitemap/section/cnn-underscored.xml",
+            "https://www.cnn.com/sitemap/section/politics.xml",
+            "https://www.cnn.com/sitemap/article/opinions.xml"},
+}
+
+
+def test_the_configured_source_is_one_the_publisher_DECLARED_not_a_child_or_a_guess():
+    """The declared address is what the publisher commits to; a child is an implementation detail
+    of its index (the ladder descends on its own), and a guessed path is how a crawler looks
+    healthy while fetching the wrong document."""
     cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
     for pub in (p for p in cfg["publishers"] if p["enabled"]):
-        url = pub["sources"][0]["url"]
-        assert "news-sitemap-index" in url and pub["sources"][0]["kind"] == "sitemap"
+        first = pub["sources"][0]
+        assert first["kind"] == "sitemap", pub["publisher"]
+        assert first["url"] in DECLARED_SITEMAPS[pub["publisher"]], (pub["publisher"], first["url"])
 
 
 #: Article URLs the live probe actually returned on 2026-08-26, three from each host's news
@@ -156,7 +197,38 @@ OBSERVED_ARTICLES = [
     "https://www.kwch.com/2026/08/26/walmart-addresses-incorrect-sales-tax-charges-hays-store/",
     "https://www.kwch.com/2026/08/26/wichita-city-council-adopts-2027-budget-despite-library-funding-concerns/",
     "https://www.kwch.com/2026/08/26/work-begins-wednesday-reduce-douglas-avenue-3-lanes/",
+    # apnews.com and cnn.com, 2026-09-02, the probe's own `hit:` lines from production.
+    "https://apnews.com/article/america-250-white-house-quiz-trump-obama-kennedy-jackie-lincoln-cabinent-room-east-wing",
+    "https://apnews.com/article/congo-ebola-schools-resume-32efe12c400db42f99d554799498bc52",
+    "https://apnews.com/article/south-africa-stadium-flyby-passenger-jets-rugby-7d292110d81f03cbe23890ff836be875",
+    "https://www.cnn.com/2026/08/31/weather/tropical-storm-edouard-texas-louisiana-path-climate",
+    "https://www.cnn.com/2026/09/01/china/hong-kong-joshua-wong-second-national-security-charge-intl-hnk",
+    "https://www.cnn.com/2026/09/01/asia/aircraft-carrier-lincoln-thailand-port-call-intl-hnk-ml",
 ]
+
+#: What the same probe saw the patterns REJECT — the other half of the evidence. Every one is a
+#: page a newsroom publishes that is not an article, and letting any through would file live
+#: blogs and shopping guides under a wire's lean.
+OBSERVED_NON_ARTICLES = {
+    "Associated Press": [
+        "https://apnews.com/live/tupac-murder-trial-duane-davis-08-31-2026",
+        "https://apnews.com/live/trump-dan-driscoll-white-house-ballroom-updates-09-01-2026",
+        "https://apnews.com/newsletter/morning-wire/september-1-2026",
+    ],
+    "CNN": [
+        "https://www.cnn.com/election/2026",
+        "https://www.cnn.com/election/2026/primaries/massachusetts",
+        "https://www.cnn.com/cnn-underscored/reviews/best-multitool",
+    ],
+}
+
+
+@pytest.mark.parametrize("publisher", sorted(OBSERVED_NON_ARTICLES))
+def test_the_pattern_rejects_what_the_probe_saw_it_reject(publisher):
+    cfg = json.loads((ROOT / "examples" / "data" / "crawler_publishers.json").read_text())
+    patt = next(p["article_pattern"] for p in cfg["publishers"] if p["publisher"] == publisher)
+    for url in OBSERVED_NON_ARTICLES[publisher]:
+        assert not re.search(patt, url), f"{publisher}: {url} is not an article"
 
 
 def test_the_article_pattern_matches_every_url_the_probe_actually_returned():
