@@ -57,7 +57,19 @@ expected outcome: the box staying healthy outranks Stage 1.
 Stage 1). The t3.medium had 1,183 MB available and 167 MB in swap at load 2.39 BEFORE the
 model loaded; with it, 807 MB against the 1,024 MB bar, resident 414 MB against 400, encode
 77.6 ms against 50. The model itself passed the paraphrase bar (margin 0.44) and missed the
-cross-lingual bar by 0.01 on Korean. Stage 1 waits for an instance with headroom.
+cross-lingual bar by 0.01 on Korean.
+
+**Runs 2026-09-02 on a bare t3.large (three encoders, the same 499-article sample):** the
+memory bars pass with ~4.2 GB to spare once the stack's footprint is subtracted; encode is
+77–81 ms/article at one thread on an IDLE box for every candidate (so production's 77.6 ms was
+the CPU, not contention; two threads give ~48 ms), which fails the 50 ms bar as registered
+while costing 6.5 CPU-minutes/day; and the model question resolved: multilingual MiniLM
+(Xenova int8 export) margin 0.47, en/vi 0.65, en/ko at the bar to three decimals; the official
+int8 AVX-512 export the same to within 0.03; multilingual-E5-small is the WRONG model for this
+job — its cosines are compressed (same 0.94, different 0.79, template trap 0.89), so it cannot
+separate a paraphrase from a different event or from a template at any threshold, whatever its
+cross-lingual scores. Stage 1 is feasible on an 8 GiB instance with MiniLM on one thread; it
+is not feasible on the t3.medium. The instance decision is a budget decision.
 """
 
 from __future__ import annotations
@@ -508,13 +520,16 @@ def decide(rep: dict) -> "tuple[Optional[bool], list]":
         else "no window rows to encode")
     sem = rep.get("semantics") or {}
     if sem:
+        # Three decimals on the decision lines: the t3.large runs printed "0.50 >= 0.50 FAIL"
+        # and "0.15 >= 0.15 FAIL" at two, which reads as a contradiction when the raw value
+        # sits a hair under the bar. The comparison is on the raw float; the text must show it.
         margin = sem["same"] - sem["different"]
         bar("model", "margin", margin, margin >= BAR_MARGIN,
-            f"cos(same) {sem['same']:.2f} - cos(different) {sem['different']:.2f} = {margin:.2f} "
+            f"cos(same) {sem['same']:.3f} - cos(different) {sem['different']:.3f} = {margin:.3f} "
             f">= {BAR_MARGIN:.2f}")
         xl = min(sem["xling_vi"], sem["xling_ko"])
         bar("model", "cross-lingual", xl, xl >= BAR_XLING,
-            f"min(en/vi {sem['xling_vi']:.2f}, en/ko {sem['xling_ko']:.2f}) = {xl:.2f} >= {BAR_XLING:.2f}")
+            f"min(en/vi {sem['xling_vi']:.3f}, en/ko {sem['xling_ko']:.3f}) = {xl:.3f} >= {BAR_XLING:.2f}")
     else:
         bar("model", "margin", None, False, "model not loaded")
         bar("model", "cross-lingual", None, False, "model not loaded")

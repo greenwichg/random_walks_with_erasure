@@ -641,6 +641,33 @@ cost, but on a box already swapping it is the wrong week to try. **Stage 1 stays
 instance has headroom.** Separately, the pre-load numbers are a capacity finding in their own
 right (`docs/CAPACITY_AND_COST.md` row 5 named "memory into swap" as the resize trigger).
 
+**RE-RUN 2026-09-02 ON A BARE t3.large (production untouched; the sample exported with
+`--export-texts` and carried over S3; three encoders on the same 499 articles):**
+
+| | MiniLM-L12, official int8 AVX-512 | MiniLM-L12, Xenova int8 | multilingual-E5-small, int8 |
+|---|---|---|---|
+| resident / headroom with the stack | 412 MB / 4,208 MB | 410 / 4,225 | 410 / 4,205 |
+| encode, 1 thread (2 threads) | 80.9 ms (49.6) | 77.5 (47.4) | 79.3 (48.3) |
+| same / different / template trap | 0.70 / 0.27 / 0.39 | 0.69 / 0.21 / 0.40 | 0.94 / 0.79 / 0.89 |
+| margin | 0.44 | **0.47** | 0.15 (at the bar to two decimals, under it to three) |
+| en/vi, en/ko | 0.65, 0.49 | 0.65, 0.50 (a hair under at three decimals) | 0.84, 0.85 |
+
+Three findings. (1) **Memory is settled**: an 8 GiB instance carries any of these with about
+4.2 GB to spare after the stack. (2) **The encode rate is the CPU, not contention**: 77–81 ms
+at one thread on an idle box for every export, ~48 ms on two; it fails the 50 ms bar as
+registered, and the quantity that bar was guarding is 6.5 CPU-minutes/day plus a one-hour
+backfill — a future registration should state that bar in CPU-minutes/day, which is what
+matters, but this run is read against the bar as written. (3) **The model is MiniLM, and E5 is
+disqualified**: E5's cosines are compressed into a 0.8–0.95 band — a paraphrase at 0.94, a
+different event in the same city at 0.79, two unrelated recalls at 0.89 — so no threshold
+separates same from different or from template, whatever its cross-lingual numbers say. MiniLM
+holds a 0.47 margin and puts Korean exactly at the cross-lingual bar; Vietnamese clears it.
+
+**Conclusion:** Stage 1 is feasible on an 8 GiB instance with multilingual MiniLM on one ingest
+thread, and not feasible on the t3.medium. The remaining decision is the instance, which is a
+budget decision (≈ +$30/month), not an engineering one; nothing further can be learned without
+paying it. Stage 1 stays open.
+
 Choose a small multilingual encoder run through ONNX Runtime (a quantised
 paraphrase-multilingual-MiniLM or E5-small class model), encode title + dek **at ingest**, store
 the vector on the article row, version it. Then, in order:
