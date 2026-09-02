@@ -25,11 +25,13 @@ const LEAN_FILTERS: ("all" | LeanBucket)[] = ["all", "left", "center", "right"];
 // not the whole cluster. The catalog median story is 2 articles and p90 is 7, so most stories are
 // already whole at first paint and never render the button at all.
 const INITIAL = 6;
-// What one "Read more" reveals. Deliberately larger than INITIAL: past the first click the reader
-// has asked for the full list, so the batch exists only to keep the long tail off a single mount —
-// the largest measured cluster is 318 rows, each mounting a Read and a Save control. Every story up
-// to 46 rows opens completely on one click; beyond that the button simply returns.
-const STEP = 40;
+// What one "Read more" reveals. A reader who clicks once has asked for MORE, not for all of it: a
+// 40-row batch opened almost every story completely on the first click, which made the button a
+// hidden "expand everything" and dropped up to 318 rows — each mounting a Read and a Save control
+// — onto one paint. Fifteen keeps each click a legible step, and because the batch and the button's
+// number are the same unit, the count falls by exactly STEP per click (48 → 33 → 18 → 3) until the
+// last, short batch clears it.
+const STEP = 15;
 
 /**
  * The story's article coverage as a FILTERABLE list — the "how is it covered, and by whom" section,
@@ -111,6 +113,10 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
 
   const shown = groups.slice(0, visible);
   const hasMore = visible < groups.length;
+  // Articles reached so far, not groups: a collapsed run stands for its whole run, so counting
+  // entries here would under-report what the reader has actually been given. This is the number the
+  // line under the button reports, and it reaches `rows.length` exactly when the button disappears.
+  const shownArticles = shown.reduce((n, g) => n + 1 + g.rest.length, 0);
 
   const reset = () => {
     setLean("all");
@@ -206,7 +212,13 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
           </Button>
         </div>
       )}
-      <p className="mt-2 text-xs text-muted-foreground">{formatCompact(rows.length)} / {formatCompact(panel.length)}</p>
+      {/* Pagination PROGRESS, not filter arithmetic. It read `rows.length / panel.length` — the
+          filter's own narrowing — which sat under the button saying "74 / 74" while 63 entries were
+          still hidden, flatly contradicting it. How far the filter narrowed the list is already on
+          the "All" chip above; what the button needs beside it is how far down the list you are. */}
+      <p className="mt-2 text-xs text-muted-foreground">
+        {formatCompact(shownArticles)} / {formatCompact(rows.length)}
+      </p>
 
       {/* Attached Tier B coverage — the addendum the engine appended after the members. Its own
           labeled group, never mixed into the panel rows above: the divider IS the tier boundary,
