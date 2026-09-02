@@ -582,7 +582,9 @@ def main(argv=None) -> int:
                          "'span' rows (entity_spans; story_service.entity_spans). Requires the "
                          "table to be filled first (RWE_INGEST_ENTITY_SPANS=1 and/or "
                          "entity_span_backfill.py) — the run reports how many window articles "
-                         "carry spans so an empty table cannot read as a null result")
+                         "carry spans so an empty table cannot read as a null result. ADOPTED "
+                         "2026-09-02: the baseline now consumes spans too, so re-measure with "
+                         "the baseline off (-e RWE_STORY_ENTITY_SPANS=0 on the container)")
     ap.add_argument("--pieces", type=int, default=0,
                     help="print the resulting pieces for the N biggest split clusters — the read "
                          "that decides whether a split separated events or shredded a story")

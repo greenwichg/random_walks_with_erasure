@@ -17,12 +17,13 @@ are the reason a weaker extractor can be tried at all.
 
 Provenance stays honest: rows are written under their own ``source`` (:data:`SOURCE`) and their
 own ``kind`` (:data:`KIND`, neither person nor org, because a span cannot tell which), the
-store returns them ONLY when a caller asks for that kind, and production consumes them only
-under ``RWE_STORY_ENTITY_SPANS=1``. With the knob off the build is byte-identical whatever the
-table holds. Two switches, on purpose: ``RWE_INGEST_ENTITY_SPANS`` decides whether rows are
-WRITTEN (ingest + the one-shot backfill), ``RWE_STORY_ENTITY_SPANS`` whether the build READS
-them — so the table can fill for days while the counterfactual is measured against a baseline
-that does not consume it.
+store returns them ONLY when a caller asks for that kind, and the build consumes them only
+under ``RWE_STORY_ENTITY_SPANS``. With that off the build is byte-identical whatever the table
+holds. Two switches, on purpose: ``RWE_INGEST_ENTITY_SPANS`` decides whether rows are WRITTEN
+(ingest + the one-shot backfill), ``RWE_STORY_ENTITY_SPANS`` whether the build READS them — so
+the table could fill while the counterfactual was measured against a baseline that did not
+consume it. **Both are ON in production since 2026-09-02** (compose defaults; ``0`` kills
+either): measured twice on the live catalog, the record is on ``story_service.entity_spans``.
 
 What it does NOT do: named-entity recognition. No model, no gazetteer, no dependency — stdlib
 regex over capitalisation, which is why German (every noun capitalised) is skipped by language.
@@ -113,8 +114,9 @@ _POSSESSIVE_RE = re.compile(r"['’]s$")
 
 
 def enabled() -> bool:
-    """Whether INGEST writes span rows (``RWE_INGEST_ENTITY_SPANS``). Off by default; junk is
-    off. Reading them is ``story_service.entity_spans``, a separate switch."""
+    """Whether INGEST writes span rows (``RWE_INGEST_ENTITY_SPANS``). The library fallback is
+    off and junk is off; the deploy compose defaults it ON (adopted 2026-09-02). Reading them
+    is ``story_service.entity_spans``, a separate switch."""
     return os.environ.get("RWE_INGEST_ENTITY_SPANS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 

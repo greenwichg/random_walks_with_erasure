@@ -2936,10 +2936,35 @@ def entity_spans() -> bool:
     What held adoption: the backfill's sample showed two precision defects in the extractor —
     comma-separated cast lists glued into one "name" ("julia stiles jenna dewan harry shum jr")
     and calendar words forming spans ("tuesday sept"), the second of which is exactly the kind
-    of pseudo-name that could corroborate ACROSS unrelated stories. Both are fixed in
+    of pseudo-name that could corroborate ACROSS unrelated stories. Both were fixed in
     ``entity_spans`` (a comma ends a run; calendar and slot words are trimmed from a name's
-    ends). The discipline is to adopt what was measured, so: re-run the backfill (per-source
-    replace makes it idempotent), re-run the audit, and adopt on the same bars."""
+    ends), and the discipline is to adopt what was measured, so the run was repeated.
+
+    **MEASURED AGAIN 2026-09-02 AFTER THE FIX, AND ADOPTED — ON in production**
+    (``deploy/docker-compose.yml`` defaults both switches to 1; ``0`` is the kill switch).
+    Backfill: 26,196 window articles with spans (57.8%, 53,319 names — 1,800 fewer than before
+    the fix, the noise it removed), coverage with spans 65.2%, English 64.9%. Audit, 45,453
+    articles: X5c consulted with consensus **3,066 of 13,241 merges (23.2%)**, vetoes 1,194;
+    droppedOut 57 of 9,801 (0.6%); **stories 2,421 → 2,422** (no fall this time); largest
+    86 → 79; independent signal **1/156 bad → 0/159 bad** (mean 0.974 → 0.976); blindspot claims
+    239 → 240; the one in-window exhibit unmoved; the harness's own line read ADOPT. The joins
+    repeated the first run's duplicate families, the cross-language ones included.
+
+    One join is recorded as contestable rather than clean, so it is not rediscovered as a
+    surprise: a two-publisher Dutch "LIVE Deadline Day" live-blog family (18 articles) joined
+    the Enzo Fernández-to-Manchester City story (14/9). A transfer live blog genuinely covers
+    that move among a dozen others — the ROUND-UP BRIDGE class (rubric rule 1), which no
+    structural rule reaches and the banded judge exists for. The spans moved that bridge from
+    its own template family onto one of its subjects; they did not create it. Everything else
+    in both pieces reads was a duplicate family or a correct separation (a Senate-primary spat
+    out of a climate-campaign analysis, a broadcaster's joke out of the Lake Ontario order).
+
+    **Measuring it after adoption.** ``--entity-spans`` only widens the AFTER side; the
+    baseline now consumes spans too, so a bare run compares the rule against itself. Turn the
+    baseline off for that container instead::
+
+        dc run --rm -T -e RWE_STORY_ENTITY_SPANS=0 api python \\
+            examples/audit_clustering_change.py --entity-spans --pieces 8"""
     v = os.environ.get("RWE_STORY_ENTITY_SPANS", "").strip().lower()
     return v in {"1", "true", "yes", "on"}
 

@@ -199,11 +199,12 @@ services:
       # pass reads article_entities every build, so this keeps the table current — without it the
       # recall silently ages out with the one-shot backfill. Kill switch: RWE_GDELT_ENTITIES=0.
       RWE_GDELT_ENTITIES: ${RWE_GDELT_ENTITIES:-1}
-      # Stage 0.3 (entity_spans.py): at ingest, ALSO write capitalised multi-word spans from the
-      # headline/dek as `span`-kind entity rows under their own source. WRITES only — the build
-      # reads them under RWE_STORY_ENTITY_SPANS below, so the table can fill while the
-      # counterfactual is measured against a baseline that does not consume it. Default off.
-      RWE_INGEST_ENTITY_SPANS: ${RWE_INGEST_ENTITY_SPANS:-0}
+      # Stage 0.3 (entity_spans.py, ADOPTED 2026-09-02): at ingest, ALSO write capitalised
+      # multi-word spans from the headline/dek as `span`-kind entity rows under their own source.
+      # WRITES only — the build reads them under RWE_STORY_ENTITY_SPANS below (the two switches
+      # are separate so the table can fill while a counterfactual runs against a baseline that
+      # does not consume it). Backfilled history: entity_span_backfill.py. 0 is the kill switch.
+      RWE_INGEST_ENTITY_SPANS: ${RWE_INGEST_ENTITY_SPANS:-1}
       # --- Publisher metadata enrichment (Wikipedia + Wikidata) ---------------------------------
       # Fills the logo / description / founded / HQ / parent gaps the curated registry leaves, so
       # the Publisher page renders complete profiles. Curated data is NEVER overwritten — enrichment
@@ -588,11 +589,17 @@ services:
       # both sides), blindspot claims 202 -> 202. One cluster split, no article left a story.
       # 0 is the kill switch. Reads the same article_entities table X5b already requires.
       RWE_STORY_ENTITY_VETO: ${RWE_STORY_ENTITY_VETO:-1}
-      # Stage 0.3 (story_service.entity_spans): the X5b/X5c rules ALSO consume the rule-extracted
-      # `span` rows (RWE_INGEST_ENTITY_SPANS above writes them). Provider coverage is 24% of
-      # articles, so X5c is silent on 94% of the merges it is consulted about. OFF until
-      # audit_clustering_change.py --entity-spans passes its pre-registered bars.
-      RWE_STORY_ENTITY_SPANS: ${RWE_STORY_ENTITY_SPANS:-0}
+      # Stage 0.3 (story_service.entity_spans, ADOPTED 2026-09-02): the X5b/X5c rules ALSO consume
+      # the rule-extracted `span` rows (RWE_INGEST_ENTITY_SPANS above writes them). Provider
+      # coverage had fallen to 17% of the window, so X5c was silent on 91% of the merges it was
+      # consulted about. Measured twice on the live catalog (~45k articles), second run after the
+      # extractor precision fix: X5c consulted with consensus on both sides 8.8% -> 23.2% of
+      # merges, droppedOut 57 of 9,801 (0.6%), stories 2,421 -> 2,422, largest 86 -> 79,
+      # independent signal 1/156 -> 0/159 bad, blindspot claims 239 -> 240, exhibits unmoved, the
+      # joins duplicate families (Messi en/vi, the Tupac trial en/nl, King Harald + succession).
+      # Defaulted HERE like the quorum/veto knobs: the verified configuration must not live one
+      # lost env-file line away from silently reverting. 0 is the kill switch.
+      RWE_STORY_ENTITY_SPANS: ${RWE_STORY_ENTITY_SPANS:-1}
       # Sole-template-evidence gate (adopted 2026-08-17, docs/STORY_TEMPLATE_GATE.md): a pairwise
       # edge must share >= 1 token outside the announcement-template lexicon — the entertainment
       # template chain's fix ("X-Men cast/release-date" welded to The Paper/Mirzapur/DJI over
