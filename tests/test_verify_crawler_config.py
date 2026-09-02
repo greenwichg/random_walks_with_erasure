@@ -112,10 +112,16 @@ def test_a_pattern_that_matches_nothing_is_a_blocker_not_a_warning(monkeypatch):
 
 
 def test_the_pattern_match_rate_is_measured_against_real_discovered_urls(monkeypatch):
-    """The fixture yields 3 on-domain URLs, 2 of which are articles."""
+    """The fixture yields 3 on-domain URLs, 2 of which are articles. Both halves are reported:
+    the misses say what the pattern excludes, the hits are the evidence an enabled config must
+    carry (recorded verbatim in test_crawl_adapter_wiring.py) — a report with misses only left
+    nothing to record for AP and CNN on 2026-09-02."""
     v = _run(monkeypatch, {ROBOTS: _fx("robots_allow.txt"), SITEMAP: _fx("news_sitemap.xml")})
     assert v.pattern_match_rate == round(2 / 3, 3)
     assert v.pattern_sample_misses == ["https://www.npr.org/sections/politics/"]
+    assert len(v.pattern_sample_hits) == 2
+    assert all("npr.org/2026/" in u for u in v.pattern_sample_hits)
+    assert "hit:  " in vc._render([v]) and "miss: " in vc._render([v])
 
 
 def test_a_publishers_crawl_delay_is_compared_against_our_configured_interval(monkeypatch):

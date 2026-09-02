@@ -85,6 +85,11 @@ class PublisherVerdict:
     sources: list = field(default_factory=list)
     pattern_match_rate: Optional[float] = None
     pattern_sample_misses: list = field(default_factory=list)
+    #: URLs the pattern ACCEPTED, from the live sitemap. These are the evidence an enabled config
+    #: must carry (tests/test_crawl_adapter_wiring.py records them verbatim), so the verifier has
+    #: to print them — a report that showed only the misses left the operator with nothing to
+    #: record for AP and CNN on 2026-09-02.
+    pattern_sample_hits: list = field(default_factory=list)
     tos_url: str = ""
     tos_clauses: list = field(default_factory=list)
     corrections: list = field(default_factory=list)
@@ -223,6 +228,7 @@ def _verify_pattern(cfg, discovered: "list[str]", verdict: PublisherVerdict) -> 
     hits = [u for u in on_domain if pattern.search(u)]
     verdict.pattern_match_rate = round(len(hits) / len(on_domain), 3)
     verdict.pattern_sample_misses = [u for u in on_domain if not pattern.search(u)][:5]
+    verdict.pattern_sample_hits = hits[:3]
     if not hits:
         verdict.blockers.append(
             f"article_pattern {cfg.article_pattern!r} matched 0 of {len(on_domain)} discovered "
@@ -349,6 +355,8 @@ def _render(verdicts) -> str:
             lines.append(f"  [{state}] {r['kind']:<8} {r['url']}\n           {extra}")
         if v.pattern_match_rate is not None:
             lines.append(f"  pattern match   {v.pattern_match_rate:.0%}")
+            for u in v.pattern_sample_hits:
+                lines.append(f"                    hit:  {u}")
             for u in v.pattern_sample_misses:
                 lines.append(f"                    miss: {u}")
         if v.tos_clauses:
