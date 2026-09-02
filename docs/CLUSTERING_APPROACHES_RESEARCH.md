@@ -530,7 +530,7 @@ them met the live catalog (45k-article window, full production stack):
 | 1 · instance-anchor veto | 0.3% dropped, 182 edges vetoed, series separated correctly — but stories 2,410 → 2,405 and two welds manufactured downstream | **REJECTED** as registered; audit instrument only |
 | 2 · time decay 0.02 | 7.5% dropped against the 1% bar, 437 splits, the sagas fragmented and re-welded | **REJECTED**; not to be titrated |
 | 3 · entity spans | coverage 17.1% → 65.2% (English 64.9%); X5c consulted-with-consensus 8.8% → 23.2%; 0.6% dropped; stories 2,421 → 2,422; largest 86 → 79; bad clusters 1 → 0; cross-language joins (Messi en/vi, Tupac trial en/nl) | **ADOPTED** on the second run, after an extractor precision fix; compose defaults both switches on |
-| 4 · the judge | harness arm and audit flag built; the V1 gate is the operator's run | pending the key |
+| 4 · the judge | harness arm and audit flag built; the V1 gate is the operator's run | **DEFERRED 2026-09-02 on cost**, not on merit |
 
 The full records are on `story_service.anchor_veto`, `time_decay` and `entity_spans`. Two
 lessons the run added to the record: refusal inside `cluster()` frees singletons that the

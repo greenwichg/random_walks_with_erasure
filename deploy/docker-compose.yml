@@ -637,6 +637,17 @@ services:
       # in-band pairs behave exactly as production, and only a confident different_event
       # verdict vetoes an edge. The worker also needs ANTHROPIC_API_KEY (set in deploy/.env —
       # already the coach narrative's convention; never a compose literal).
+      #
+      # DEFERRED 2026-09-02 ON COST, not on merit, and the enablement path is complete and
+      # waiting: `audit_v1_verifier.py --adapter claude` scores the production adapter against
+      # the V1 bars, `audit_clustering_change.py --event-verdicts` prices the vetoes afterwards
+      # (runbook in docs/CLUSTERING_APPROACHES_RESEARCH.md §4 item 4). The measured band is
+      # ~451 new pairs/day at ~700 in / ~150 out tokens each, so at claude-haiku-4-5 rates
+      # steady state is ~$0.65/day (~$20/month) plus a few dollars to drain the first backlog;
+      # the V1 gate run itself is under $1. Turning it on is one deploy/.env line whenever the
+      # spend is wanted. NOTE the BUDGET below is PER CYCLE, not per day — at the 300 s
+      # interval it permits far more than the band produces, so lower it (e.g. 2) rather than
+      # raising it if the drain is ever paced to a smaller budget than the band.
       RWE_EVENT_JUDGE: ${RWE_EVENT_JUDGE:-0}
       RWE_EVENT_JUDGE_MODEL: ${RWE_EVENT_JUDGE_MODEL:-claude-haiku-4-5}
       RWE_EVENT_JUDGE_BUDGET: ${RWE_EVENT_JUDGE_BUDGET:-120}
