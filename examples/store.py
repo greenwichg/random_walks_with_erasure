@@ -979,21 +979,42 @@ class ArticleEventLocation(Base):
     source: Mapped[str] = mapped_column(String(32), default="provider")
 
 
+#: Entity kinds a provider extracts (GDELT GKG: V1PERSONS / V1ORGANIZATIONS). The DEFAULT read
+#: set: a caller that does not name kinds gets exactly these, so the rule-extracted ``span`` kind
+#: below can sit in the table without reaching any consumer that has not opted in.
+PROVIDER_ENTITY_KINDS = ("person", "org")
+#: Every kind the table may hold. ``span`` (``entity_spans``, Stage 0.3) is a capitalised
+#: multi-word span read from the headline/dek by us — neither person nor org, because a span
+#: cannot tell which — stored under its own ``source`` and returned only on request.
+ENTITY_KINDS = PROVIDER_ENTITY_KINDS + ("span",)
+
+
 class ArticleEntity(Base):
-    """Named entities GDELT's GKG extraction found in a catalog article (X5, rung 2 of
-    docs/STORY_ENTITY_EVIDENCE_PLAN.md) — 0..n rows per article, provider-extracted with the
-    same contract as :class:`ArticleEventLocation`: never inferred from article text by us,
-    provenance on every row, enrichment only. Read by the story builder's X5b entity-merge pass
-    when ``RWE_STORY_ENTITY_MERGE > 0`` (adopted 2026-08-16 — one batched query per build);
-    populated by the steady-state enricher (``RWE_GDELT_ENTITIES``, deploy default on) and the
-    one-shot ``gdelt_entity_backfill`` CLI. Names are stored normalized (lower-cased,
-    whitespace-collapsed) so identity comparisons need no re-normalization."""
+    """Named entities found in a catalog article (X5, rung 2 of
+    docs/STORY_ENTITY_EVIDENCE_PLAN.md) — 0..n rows per article, provenance on every row,
+    enrichment only. Two provenances, kept apart by ``source`` AND ``kind``:
+
+    * ``person`` / ``org`` rows are PROVIDER-extracted (GDELT GKG), the
+      :class:`ArticleEventLocation` contract — never inferred from article text by us. Populated
+      by the steady-state enricher (``RWE_GDELT_ENTITIES``, deploy default on) and the one-shot
+      ``gdelt_entity_backfill`` CLI.
+    * ``span`` rows (``source = "headline-caps"``) ARE inferred from the text by us —
+      capitalised multi-word spans, ``entity_spans`` (Stage 0.3) — because the provider covers
+      24% of articles and the channel's adopted rules are blind on the rest. The contract that
+      keeps this honest: the kind names the weaker provenance, :meth:`Store.entities_for_urls`
+      returns it only when asked, and the build consumes it only under
+      ``RWE_STORY_ENTITY_SPANS=1``.
+
+    Read by the story builder's X5b entity-merge pass when ``RWE_STORY_ENTITY_MERGE > 0``
+    (adopted 2026-08-16 — one batched query per build) and the X5c veto. Names are stored
+    normalized (lower-cased, whitespace-collapsed) so identity comparisons need no
+    re-normalization."""
 
     __tablename__ = "article_entities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     canonical_url: Mapped[str] = mapped_column(String(2048), index=True)   # FeedArticle dedup key
-    kind: Mapped[str] = mapped_column(String(16), index=True)              # "person" | "org"
+    kind: Mapped[str] = mapped_column(String(16), index=True)              # ENTITY_KINDS
     name: Mapped[str] = mapped_column(String(255))
     source: Mapped[str] = mapped_column(String(32), default="gdelt-gkg")
 
@@ -1945,12 +1966,14 @@ class Store:
 
     def replace_article_entities(self, canonical_url: str, entities: dict, *,
                                  source: str = "gdelt-gkg") -> int:
-        """Persist an article's named entities — ``{"person": [names], "org": [names]}`` —
-        idempotent PER SOURCE like :meth:`replace_article_event_locations`: incoming rows replace
-        this article's rows from the same source only. Names are stored as given (the enricher
-        normalizes); empty input is a no-op rather than a delete, so a GKG record that carries no
-        entities never erases an earlier one that did. Returns rows written."""
-        rows = [(kind, name) for kind in ("person", "org")
+        """Persist an article's named entities — ``{"person": [names], "org": [names]}``, or
+        ``{"span": [names]}`` from the rule extractor — idempotent PER SOURCE like
+        :meth:`replace_article_event_locations`: incoming rows replace this article's rows from
+        the same source only, so the provider's rows and the extractor's never overwrite each
+        other. Names are stored as given (the writers normalize); empty input is a no-op rather
+        than a delete, so a GKG record that carries no entities never erases an earlier one that
+        did. Unknown kinds are ignored. Returns rows written."""
+        rows = [(kind, name) for kind in ENTITY_KINDS
                 for name in (entities or {}).get(kind, ()) if name]
         if not canonical_url or not rows:
             return 0
@@ -1963,11 +1986,16 @@ class Store:
                                     name=name[:255], source=source))
         return len(rows)
 
-    def entities_for_urls(self, canonical_urls) -> dict:
-        """``{canonical_url: {"person": sorted names, "org": sorted names}}`` — the batched
+    def entities_for_urls(self, canonical_urls, kinds=PROVIDER_ENTITY_KINDS) -> dict:
+        """``{canonical_url: {kind: sorted names}}`` for the requested ``kinds`` — the batched
         lookup the X5 instruments use, shaped like :meth:`event_countries_for_urls`. URLs
-        without entity rows are absent."""
+        without entity rows of those kinds are absent.
+
+        ``kinds`` defaults to the PROVIDER kinds: the rule-extracted ``span`` rows are returned
+        only to a caller that names them, which is what keeps every existing consumer —
+        production build, audits, instruments — byte-identical while the table fills."""
         urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        kinds = tuple(kinds or PROVIDER_ENTITY_KINDS)
         if not urls:
             return {}
         out: dict = {}
@@ -1975,10 +2003,27 @@ class Store:
             for i in range(0, len(urls), 500):
                 rows = s.execute(select(ArticleEntity.canonical_url, ArticleEntity.kind,
                                         ArticleEntity.name).distinct()
-                                 .where(ArticleEntity.canonical_url.in_(urls[i:i + 500]))).all()
+                                 .where(ArticleEntity.canonical_url.in_(urls[i:i + 500]),
+                                        ArticleEntity.kind.in_(kinds))).all()
                 for u, kind, name in rows:
                     out.setdefault(u, {}).setdefault(kind, []).append(name)
-        return {u: {k: sorted(v) for k, v in kinds.items()} for u, kinds in out.items()}
+        return {u: {k: sorted(v) for k, v in kinds_.items()} for u, kinds_ in out.items()}
+
+    def count_entity_covered(self, canonical_urls, kinds=PROVIDER_ENTITY_KINDS) -> int:
+        """How many of ``canonical_urls`` carry at least one entity row of the given ``kinds`` —
+        the coverage fact the Stage 0.3 bar is written against (24% provider-covered today)."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        kinds = tuple(kinds or PROVIDER_ENTITY_KINDS)
+        if not urls:
+            return 0
+        covered = 0
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                covered += int(s.scalar(
+                    select(func.count(func.distinct(ArticleEntity.canonical_url)))
+                    .where(ArticleEntity.canonical_url.in_(urls[i:i + 500]),
+                           ArticleEntity.kind.in_(kinds))) or 0)
+        return covered
 
     def count_article_entities(self) -> int:
         """Total entity rows — the backfill's before/after fact and the coverage probe's input."""

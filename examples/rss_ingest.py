@@ -47,6 +47,7 @@ import media                     # image SELECTION (pick_best_image) — metadat
 import text_utils                # the ONE canonical HTML→text normalizer (used by FeedEntry below)
 import robots                    # the ONE robots policy + the ONE user-agent
 import location                  # Location Resolver — canonical publisher country/language (Phase 0)
+import entity_spans              # Stage 0.3 — rule-extracted entity spans, written under their own source
 
 #: F2 of the M7 Stage 2 audit: this used to read
 #: ``InformationHealth-RSS/0.1 (+https://code.claude.com)`` — a documentation site belonging to
@@ -553,6 +554,17 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
         events = location.resolve_event_locations(e.event_locations)
         if events:
             store_.replace_article_event_locations(scored.article_id, events)
+        # Entity spans (Stage 0.3): rule-extracted names from the text we already hold, written
+        # for NEW rows only (a re-poll changes no text) under their own kind and source, so the
+        # provider's GKG rows are never touched and no consumer sees these without opting in.
+        # Default off; `entity_span_backfill.py` covers rows that arrived before it was on.
+        if created and entity_spans.enabled():
+            names = entity_spans.extract(e.title or scored.title or "", e.description or "",
+                                         language=loc.language)
+            if names:
+                store_.replace_article_entities(scored.article_id, {entity_spans.KIND: names},
+                                                source=entity_spans.SOURCE)
+                stats["entity_spans"] = stats.get("entity_spans", 0) + 1
         stats["new" if created else "duplicates"] += 1
     return stats
 

@@ -64,6 +64,7 @@ import os
 
 import clustering
 import discover
+import event_identity
 import story_service
 import store as store_mod
 
@@ -88,6 +89,7 @@ _DEPLOY_CLUSTER_ENV = (
     "RWE_CLUSTER_TEMPLATE_LEXICONS",                      # lexicon set, adopted 2026-08-24
     "RWE_CLUSTER_MIN_SUPPORT", "RWE_CLUSTER_SUPPORT_SCOPE",   # merge support breadth
     "RWE_STORY_ENTITY_VETO",                              # X5c entity disagreement
+    "RWE_CLUSTER_ANCHOR_VETO", "RWE_CLUSTER_TIME_DECAY",  # Stage 0.1 / 0.2 candidates
 )
 
 
@@ -106,7 +108,8 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
           veto_stats=None,
           entity_merge=None, ent_veto=None, entities=None, lexicons=None, hyphen=None, uni=None,
           s_scope=None,
-          derived=None, derived_df=None, derived_days=None) -> list:
+          derived=None, derived_df=None, derived_days=None,
+          anchor=None, decay=None, event_verdicts=None) -> list:
     """``None`` means "whatever production is configured with" — ``build_stories`` resolves it.
 
     These defaulted to 0.0, which silently made the BEFORE side something production is not. It is
@@ -123,7 +126,8 @@ def build(rows: list, *, min_shared: int, min_tokens: int, idf: bool = False,
                                        entities=entities,
                                        lexicons=lexicons, hyphen=hyphen,
                                        derived=derived, derived_df=derived_df,
-                                       derived_days=derived_days)
+                                       derived_days=derived_days,
+                                       anchor=anchor, decay=decay, event_verdicts=event_verdicts)
 
 
 def _exhibit_outcomes(rows: list, a_member: dict, b_member: dict) -> list:
@@ -316,8 +320,16 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
             after_repair=None, after_merge=None, after_desc=None,
             after_veto=None, after_entity_merge=None, after_ent_veto=None,
             after_lexicons=None, after_hyphen=None, after_uni=None,
-            after_derived=None, after_derived_df=None, after_derived_days=None) -> dict:
+            after_derived=None, after_derived_df=None, after_derived_days=None,
+            after_anchor=None, after_decay=None, after_spans=None,
+            after_verdicts=None) -> dict:
     rows = story_service._fetch(store_)
+    # The judge's persisted verdicts are an INPUT to the build. The BEFORE side carries them iff
+    # production does (RWE_EVENT_JUDGE on); --event-verdicts hands the AFTER side every model
+    # verdict in the store, which is the counterfactual "what would the judge have vetoed".
+    base_verdicts = store_.event_verdicts() if event_identity.judge_on() else None
+    verdicts_after = (base_verdicts if base_verdicts is not None
+                      else (store_.event_verdicts() if after_verdicts else None))
     # The entity mapping is fetched when EITHER a flag asks for the X5b pass OR production is
     # configured with it (adopted 2026-08-16) — and it is handed to BOTH sides, because the
     # BEFORE side's whole contract is "whatever production is configured with": resolving
@@ -325,22 +337,29 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     # baseline something production is not, the exact defect this docstring's history keeps
     # re-finding one knob at a time.
     need_entities = (bool(after_entity_merge) or story_service.entity_merge_min() > 0
-                     or bool(after_ent_veto) or story_service.entity_veto())
-    entities = (store_.entities_for_urls([r.get("canonicalUrl") for r in rows])
-                if need_entities else None)
+                     or bool(after_ent_veto) or story_service.entity_veto() or bool(after_spans))
+    urls = [r.get("canonicalUrl") for r in rows]
+    kinds = story_service.entity_kinds()
+    entities = store_.entities_for_urls(urls, kinds=kinds) if need_entities else None
+    # --entity-spans widens the AFTER side's fetch to the rule-extracted rows; the BEFORE side
+    # keeps whatever production consumes (provider kinds, or spans too once adopted).
+    entities_after = (store_.entities_for_urls(urls, kinds=kinds + ("span",))
+                      if after_spans and "span" not in kinds else entities)
     a = build(rows, min_shared=before[0], min_tokens=before[1], idf=before_idf,
-              quorum=before_quorum, entities=entities)
+              quorum=before_quorum, entities=entities, event_verdicts=base_verdicts)
     # Telemetry only when a veto/pass is explicitly under test — a None passthrough must stay
     # byte-identical to production, counting included.
-    veto_stats = ({} if (after_veto or after_entity_merge or after_derived or after_ent_veto)
+    veto_stats = ({} if (after_veto or after_entity_merge or after_derived or after_ent_veto
+                         or after_anchor or after_spans or after_verdicts)
                   else None)
     b = build(rows, min_shared=after[0], min_tokens=after[1], idf=after_idf, quorum=after_quorum,
               support=after_support, s_scope=after_scope, repair=after_repair, merge=after_merge, desc=after_desc,
               veto=after_veto, veto_stats=veto_stats,
-              entity_merge=after_entity_merge, ent_veto=after_ent_veto, entities=entities,
+              entity_merge=after_entity_merge, ent_veto=after_ent_veto, entities=entities_after,
               lexicons=after_lexicons, hyphen=after_hyphen, uni=after_uni,
               derived=after_derived, derived_df=after_derived_df,
-              derived_days=after_derived_days)
+              derived_days=after_derived_days,
+              anchor=after_anchor, decay=after_decay, event_verdicts=verdicts_after)
     if veto_stats is not None and "derivedBoilerplate" in veto_stats:
         print(f"derived boilerplate : {veto_stats['derivedBoilerplate']} tokens, "
               f"{veto_stats['derivedManualOverlap']} shared with the manual lexicons "
@@ -384,8 +403,15 @@ def compare(store_, *, before: tuple, after: tuple, show: int = 10,
     dropped_from = sorted(lost.items(), key=lambda kv: -kv[1])
     reach = _reach(rows, a_member, b_member)
 
+    # Span coverage on THIS window, so a --entity-spans run over an unfilled table reports
+    # "0 of N carry spans" instead of a quiet 0/0/0 that reads as a measurement.
+    span_covered = (store_.count_entity_covered(urls, kinds=("span",))
+                    if after_spans else None)
+
     return {
         "articles": len(rows),
+        "spanCovered": span_covered,
+        "verdictsLoaded": (len(verdicts_after) if after_verdicts else None),
         "vetoStats": veto_stats,
         "beforeStories": len(a),
         "afterStories": len(b),
@@ -536,6 +562,27 @@ def main(argv=None) -> int:
                     help="AFTER side: hyphenated compounds also contribute their joined token "
                          "('X-Men' carries 'xmen', not just the generic fragment 'men') — the "
                          "xmen-pair false-split defect. Additive only at the token level")
+    ap.add_argument("--anchor-veto", action="store_true",
+                    help="AFTER side: the instance-anchor veto (story_service.anchor_veto) — refuse "
+                         "an edge or a merge whose sides carry the same instance slot (explicit "
+                         "date; week/game/episode/season/Q1-Q4/2nd Test…) with no value in "
+                         "common. Targets the numbered-template class the digit-drop leaves open: "
+                         "'Wordle hints for Sept 2' vs '…Sept 3' are Jaccard 1.00 today")
+    ap.add_argument("--time-decay", type=float, default=None, metavar="PER_DAY",
+                    help="AFTER side: extra similarity a pair must reach per day of publication "
+                         "gap (story_service.time_decay; 0.02 = a 3-day pair needs 0.34 against "
+                         "the 0.28 floor). The hard window stays; this grades inside it")
+    ap.add_argument("--event-verdicts", action="store_true",
+                    help="AFTER side: consume every persisted model verdict of the banded judge "
+                         "(event_identity; only a confident different_event vetoes an in-band "
+                         "edge). The counterfactual the judge's enablement bar reads — run it "
+                         "after the worker has drained the band for a day or two")
+    ap.add_argument("--entity-spans", action="store_true",
+                    help="AFTER side: the X5b/X5c entity rules ALSO consume the rule-extracted "
+                         "'span' rows (entity_spans; story_service.entity_spans). Requires the "
+                         "table to be filled first (RWE_INGEST_ENTITY_SPANS=1 and/or "
+                         "entity_span_backfill.py) — the run reports how many window articles "
+                         "carry spans so an empty table cannot read as a null result")
     ap.add_argument("--pieces", type=int, default=0,
                     help="print the resulting pieces for the N biggest split clusters — the read "
                          "that decides whether a split separated events or shredded a story")
@@ -584,7 +631,11 @@ def main(argv=None) -> int:
                              True if args.unicode_words else None),
                   after_derived=True if args.derived_boilerplate else None,
                   after_derived_df=args.boilerplate_df,
-                  after_derived_days=args.boilerplate_days)
+                  after_derived_days=args.boilerplate_days,
+                  after_anchor=True if args.anchor_veto else None,
+                  after_decay=args.time_decay,
+                  after_spans=True if args.entity_spans else None,
+                  after_verdicts=True if args.event_verdicts else None)
 
     def _tag(name, v):
         return f", {name} {v:g}" if v else ""
@@ -614,7 +665,12 @@ def main(argv=None) -> int:
            + ((", derived-boilerplate"
                + (f"(df>={args.boilerplate_df})" if args.boilerplate_df else "")
                + (f"(days>={args.boilerplate_days})" if args.boilerplate_days else ""))
-              if args.derived_boilerplate else ""))
+              if args.derived_boilerplate else "")
+           + (", anchor-veto" if (args.anchor_veto or story_service.anchor_veto()) else "")
+           + _tag("decay", args.time_decay if args.time_decay is not None
+                  else story_service.time_decay())
+           + (", entity-spans" if (args.entity_spans or story_service.entity_spans()) else "")
+           + (", event-verdicts" if (args.event_verdicts or event_identity.judge_on()) else ""))
     base_tag = (_tag("quorum", story_service.link_quorum())
                 + _tag("support", story_service.min_support())
                 + _tag("repair", story_service.repair_quorum())
@@ -623,7 +679,11 @@ def main(argv=None) -> int:
                 + (f", veto {story_service.geo_veto()}" if story_service.geo_veto() else "")
                 + (f", entity-merge {story_service.entity_merge_min()}"
                    if story_service.entity_merge_min() else "")
-                + (", entity-veto" if story_service.entity_veto() else ""))
+                + (", entity-veto" if story_service.entity_veto() else "")
+                + (", anchor-veto" if story_service.anchor_veto() else "")
+                + _tag("decay", story_service.time_decay())
+                + (", entity-spans" if story_service.entity_spans() else "")
+                + (", event-verdicts" if event_identity.judge_on() else ""))
     # "[PRODUCTION BASELINE]" is a claim about the ENVIRONMENT, not just about before == configured.
     # Every environment is self-consistent with its own defaults, so without this check the label
     # certifies any container as production — which is exactly how a backup-profile container's
@@ -646,6 +706,12 @@ def main(argv=None) -> int:
           f"{base_label if before == configured else '   [not production]'}")
     print(f"after   (shared>={after[0]}, tokens>={after[1]}{tag}): "
           f"{res['afterStories']:,} stories, largest {res['afterLargest']}")
+    if res.get("spanCovered") is not None:
+        share = res["spanCovered"] / max(1, res["articles"])
+        print(f"entity spans       : {res['spanCovered']:,} of {res['articles']:,} window "
+              f"articles carry a rule-extracted span ({share:.1%})"
+              + ("   *** TABLE EMPTY — run entity_span_backfill.py first; this is not a "
+                 "measurement" if res["spanCovered"] == 0 else ""))
     print(f"clusters split     : {res['splitCount']:,}")
     print(f"clusters merged    : {res['mergedCount']:,}")
     print(f"articles in a story: {res['beforeCovered']:,} -> {res['afterCovered']:,} "
@@ -738,6 +804,22 @@ def main(argv=None) -> int:
                 print("                     NOTE: zero candidates — no two stories share the "
                       "minimum corroborated names, or article_entities is empty (run "
                       "gdelt_entity_backfill.py first)")
+        if args.event_verdicts:
+            n = res.get("verdictsLoaded") or 0
+            print(f"judge telemetry    : model verdicts loaded {n:,}; in-band edges vetoed "
+                  f"{vs.get('eventEdgeVetoed', 0):,}"
+                  + ("   *** NO VERDICTS — the worker has not judged anything yet (is "
+                     "RWE_EVENT_JUDGE=1 with a key?); this is not a measurement" if n == 0 else ""))
+        if args.anchor_veto or story_service.anchor_veto():
+            # Per-slot edge counts, so the --pieces read can attribute a split to calendar
+            # dates or to a series slot rather than to "anchors" as one undifferentiated rule.
+            slots = ", ".join(f"{k.split(':', 1)[1]} {v:,}" for k, v in sorted(vs.items())
+                              if k.startswith("anchorEdgeVetoed:"))
+            print(f"anchor telemetry   : edges vetoed {vs.get('anchorEdgeVetoed', 0):,}"
+                  f"{' (' + slots + ')' if slots else ''}; "
+                  f"merges vetoed {vs.get('anchorMergeVetoed', 0):,}; "
+                  f"dup-merge vetoed {vs.get('dupMergeAnchorVetoed', 0):,}; "
+                  f"entity-merge vetoed {vs.get('entityMergeAnchorVetoed', 0):,}")
         if args.geo_veto and not any(vs.values()):
             print("                     NOTE: the veto was never consulted — either nothing "
                   "lexically matched or no event locations exist in this catalog")

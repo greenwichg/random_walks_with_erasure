@@ -33,7 +33,7 @@ judge that is built, benchmarked and dark. Its record shows what is left:
 | **F1 chaining** — transitive closure welding unrelated events | largely closed: largest cluster 787 → 64 [M], deep chains −93% [M] | done (quorum 0.2, repair, vetoes) |
 | **F2 template welds** — headlines sharing format words, not event words | closed for the registered lexicons [M]; **open for instance-numbered templates** ("Day 2" vs "Day 21", "package 0" vs "package 5") because pure digits are dropped from tokens | **number/ordinal anchors** (deterministic, zero deps) |
 | **F3 bridge articles** — a round-up genuinely about two events | open; support breadth priced at 8.7% coverage and rejected [M]; entity veto reaches ~6% of merges [M] | the **LLM judge** (built, dark) and **graph-level bridge tests** |
-| **F4 false splits** — one event in disjoint vocabulary; and one event in two languages | open and **the largest remaining loss**: the Seattle shooting in four pieces at title Jaccard 0.15 [M]; ru/ar/ko at 0.0% story participation vs 27.9% English [M] | **embeddings as a second channel** (never as sole evidence) plus a working Unicode tokenizer |
+| **F4 false splits** — one event in disjoint vocabulary; and one event in two languages | open and **the largest remaining loss**: the Seattle shooting in four pieces at title Jaccard 0.15 [M]; ru/ar/ko at 0.0% story participation vs 27.9% English before the fallback tokenizer [M], and only ar 9 / ja 13 / ko 4 / ru 2 in-story articles after it [M] — the tokenizer was the blocker, corpus density per language is the constraint underneath | **embeddings as a second channel** (never as sole evidence); the Unicode fallback tokenizer is already live |
 | **F5 same actor, different event** | residual, < 0.1% of covered [M] | judge only; no structural rule reaches it |
 
 So the strongest approach for Hidden View is not a replacement algorithm. It is an
@@ -58,7 +58,7 @@ Every approach below is judged against this baseline, so it is stated precisely.
 
 | stage | rule | source |
 |---|---|---|
-| representation | headline content tokens: lowercase `[a-z0-9]+`, length > 2, **pure digits dropped**, two stop-lists (function words; calendar/editorial filler). Optional dek tokens (first 12, off). Unicode/bigram tokenizer built, **off** (replace mode measured and rejected; fallback mode unmeasured) | `clustering.title_tokens` |
+| representation | headline content tokens: lowercase `[a-z0-9]+`, length > 2, **pure digits dropped**, two stop-lists (function words; calendar/editorial filler). Optional dek tokens (first 12, off). Unicode/bigram tokenizer in **fallback** mode — **on since 2026-08-28** (fires only when ASCII yields < 3 tokens; replace mode measured and rejected: 78 rescued for 149 lost). *Correction 2026-09-02: an earlier draft of this row called the fallback "unmeasured"; it was measured ADOPT and is live, see `story_service.unicode_words`.* | `clustering.title_tokens` |
 | candidate generation | inverted token postings — only pairs sharing ≥ 1 token are scored; exact, not approximate | `clustering.cluster` |
 | pairwise gate | plain Jaccard ≥ 0.28 **and** ≥ 3 shared tokens **and** ≥ 3 tokens each side **and** within a 6-day window; IDF weighting built, **off** (measured −10.5% coverage) | `pair_admits` |
 | evidence vetoes on the edge | template gate: an edge must share ≥ 1 token outside the registered lexicons (announce, tracker, preview, recall) — **on**; geo veto on cluster growth — **on**; banded LLM judge verdicts — built, **off** (`RWE_EVENT_JUDGE=0`) | `_template_closure`, `_geo_closures`, `_event_identity_closure` |
@@ -88,7 +88,7 @@ Every approach below is judged against this baseline, so it is stated precisely.
 | cost driver | the ten most frequent tokens = 86.4% of candidate-walk work | `PERFORMANCE.md` |
 | entity coverage | 24% of articles carry any extracted person/org (GDELT GKG) | X6 Phase 0 |
 | event-geography coverage | 18.7% of articles located | X4 |
-| language participation | en 27.9%; de 19.0%; fr 12.7%; es 5.6%; **ru 0.0%, ar 0.0%, ko 0.0%, ja 0.7%** | M14 §3 |
+| language participation | en 27.9%; de 19.0%; fr 12.7%; es 5.6%; **ru 0.0%, ar 0.0%, ko 0.0%, ja 0.7%** (2026-08-27, before the Unicode fallback; after it ar 0→9, ja 1→13, ko 0→4, ru 0→2 in-story articles — 79 of 2,653 structurally-excluded articles reached, 3.0%) | M14 §3; `story_service.unicode_words` |
 | judge triage band | ~451 new pairs/day; the lexical layer auto-decides 78% of labeled pairs with 0/60 errors | `event_identity.py` |
 | box | t3.medium, 2 vCPU, 4 GiB; image carries numpy only, no torch/sklearn; judge is stdlib HTTP | `CAPACITY_AND_COST.md`, `Dockerfile.api` |
 
@@ -521,32 +521,71 @@ this repo has.
 
 ### Stage 0 — no new dependency (deterministic, days each)
 
-1. **Instance anchors (numbers, ordinals, dates, places) as a veto and a feature.** Extract
-   digits and ordinals from the headline *separately from* the similarity tokens (so the
-   digit-drop trade for similarity stands) and refuse an edge whose two sides carry a **shared
-   template and a conflicting instance anchor** — "Day 2" vs "Day 21", "Q2" vs "Q3", "package 0"
-   vs "package 5", "Ohio" vs "Iowa" via the location resolver's place names. This is rubric
-   rules 6 and 7 as code, targets the open template class directly, and composes through the
-   same `evidence` hook every gate uses (it can only remove edges). Bar: the anchor exhibits
-   resolve; droppedOut ≤ 1%; no story-count fall.
-2. **Time decay inside the gate.** Replace the hard 6-day window with an age-scaled
-   requirement (a pair three days apart needs more evidence than a pair three hours apart),
-   and consider replacing the merge pass's 48-hour hard cap with the same curve. Bar: recurring
-   series (daily columns, price reports) stop chaining; the Fauci-class sagas do not fragment
-   further than today.
-3. **Stdlib pseudo-entity extraction at ingest** — capitalised multi-word spans not at sentence
-   start, plus the anchors above — stored beside the GDELT entities and consumed by the
-   existing X5b/X5c rules. Bar: entity coverage rises from 24% toward 70%+ on English [P];
-   X5c fires on more of the merges it currently cannot see; the Mirzapur-class welds are
-   vetoed without the lexicon.
-4. **Turn on the banded judge under its pre-registered bars.** The verifier, rubric, verdict
-   store, quote verification, transport discipline and budget exist; it needs the API key and
-   the V1 gate (one `same_event` on a labeled-different exhibit disqualifies). This is the only
-   mechanism in the list that reaches bridges and same-actor-different-event pairs, and it is
-   veto-only and fail-closed, so nothing regresses while it is learning the band.
-5. **Unicode tokenizer in fallback mode**, already built and unmeasured: an article that
-   already clusters keeps its exact token set, so the replace-mode loss cannot recur. Bar:
-   Group A languages move off 0.0% without English coverage moving.
+**Status 2026-09-02: items 1–4 are BUILT, tested, and shipped OFF behind their own knobs; item
+5 turned out to be already live.** Each item below records what was built, the knob, the
+measurement command, and the bar fixed before any production number. Every production run is
+from a container carrying the deploy environment (`cd /opt/ih && source deploy/ops/_compose.sh`,
+then `dc run --rm -T api …`); the record of each measurement goes on the named
+`story_service` function, as every adoption before it.
+
+1. **Instance anchors as a veto** — `clustering.instance_anchors` /
+   `story_service.anchor_veto`, knob `RWE_CLUSTER_ANCHOR_VETO` (off). Explicit calendar dates
+   and enumerated series slots (week/gameweek, matchday, game, episode, season, part, chapter,
+   leg, Test/ODI/T20I, volume/issue/edition, compact Q1–Q4 and S2E5) are read *separately from*
+   the similarity tokens, so the digit-drop trade stands; an edge, a build-time merge, an
+   aggregate profile merge and an entity merge are all refused when the two sides carry the same
+   slot with no value in common. Deliberately **not** anchored: `day` (rule 2 — the
+   `batwara-days` exhibit is one film's day 2 and day 3), rounds/laps/halves/the word quarter
+   (updates of one occurrence), years (context inside a six-day window) and bare counts (rule 6's
+   second clause). Places were dropped from the design: no gazetteer exists in the repo, and
+   country-level geography is already the X4 veto.
+   Measure: `dc run --rm -T api python examples/audit_clustering_change.py --anchor-veto
+   --pieces 8`. Bar: `batwara-days` stays together and `batwara-vishwanath` stays separated;
+   droppedOut ≤ 1%; no story-count fall; the pieces read shows series instances separating
+   (Wordle/Connections dates, gameweeks, fiscal quarters), never one event shredding.
+2. **Time decay inside the gate** — `clustering.required_sim` / `story_service.time_decay`, knob
+   `RWE_CLUSTER_TIME_DECAY` (0 = off). The requirement becomes `sim + decay × gap_days` inside
+   the unchanged six-day window, threaded through the one `pair_admits` rule to admission,
+   quorum cross-pairs and the repair re-cluster. The merge pass's 48-hour cap is left alone —
+   one variable per measurement.
+   Measure: `… audit_clustering_change.py --time-decay 0.02 --pieces 8`. Bar: recurring-series
+   chains separate in the pieces read; the Fauci-class sagas do not fragment further than
+   today; droppedOut ≤ 1%; no story-count fall. Titrate 0.01 / 0.02 / 0.04 if 0.02 misses.
+3. **Stdlib entity spans at ingest** — `entity_spans.extract` (capitalised multi-word spans,
+   connectors allowed, Title Case headlines and noun-capitalising languages skipped), written
+   as `span`-kind rows under their own source; two knobs on purpose: `RWE_INGEST_ENTITY_SPANS`
+   writes, `RWE_STORY_ENTITY_SPANS` (`story_service.entity_spans`) reads. The store returns
+   spans only to a caller that names the kind, so every existing consumer is byte-identical
+   while the table fills. Anchors are not stored — they are recomputed from the headline at
+   build time (item 1).
+   Measure, in order: `… entity_span_backfill.py --show 12` (prints provider coverage vs
+   coverage with spans, overall and for English — the 24% → 70%+ bar), then
+   `… audit_clustering_change.py --entity-spans --pieces 8`. Bar: X5c's
+   consulted-with-consensus share rises materially above 6.2%; droppedOut ≤ 1%; bad clusters do
+   not rise; largest cluster within noise; exhibits unmoved; every span-driven X5b join in the
+   pieces read is a duplicate family, never a same-name weld.
+4. **The banded judge under its pre-registered bars** — `event_identity` is built and dark.
+   What Stage 0 added: the V1 harness now takes `--adapter claude`, running the **production**
+   adapter and prompt (`event_identity.ClaudeAdapter`, model `RWE_EVENT_JUDGE_MODEL`) through
+   the same V1a–V1d scoring the Gemini arm ran, and the clustering audit takes
+   `--event-verdicts` so the judge's persisted vetoes can be priced as a counterfactual. The
+   gate is unchanged: one `same_event` on a labeled-different exhibit disqualifies. Needs
+   `ANTHROPIC_API_KEY` in `deploy/.env` (set by the operator; never pasted anywhere).
+   Runbook: (a) emit and label the sheet — `… audit_verifier_band.py --emit-pairs
+   /app/data/v1_pairs.jsonl` then `… audit_v1_labelset.py --pairs /app/data/v1_pairs.jsonl
+   --out /app/data/v1_labeled.jsonl`; (b) the gate on the production adapter —
+   `… audit_v1_verifier.py --adapter claude --pairs /app/data/v1_labeled.jsonl --out
+   /app/data/v1_claude.jsonl`; (c) only on SCREENING PASS with no KILL line, set
+   `RWE_EVENT_JUDGE=1` in `deploy/.env`, `dc up -d api`, let the worker drain the band for a
+   day (`dc logs api | grep event_judge`), then (d) `… audit_clustering_change.py
+   --event-verdicts --pieces 8` — droppedOut ≤ 1%, no story-count fall, the `--pieces` read
+   showing bridge round-ups and same-template-different-referent pairs separating.
+5. **Unicode tokenizer in fallback mode** — *already adopted 2026-08-28* (79
+   structurally-excluded articles reached a story, 0 lost, 0 splits, 0 merges; ar 0→9, ja
+   1→13, ko 0→4, ru 0→2) and live via `deploy/.env`. What Stage 0 changed: it is now the
+   **compose default** (`RWE_CLUSTER_UNICODE_WORDS: fallback`), the same lost-env-file
+   discipline as the quorum/veto/template knobs; `0` is the kill switch. The remaining Group A
+   loss is corpus density, not tokenization — Stage 1's cross-lingual bridge is the next lever.
 
 ### Stage 1 — one dependency decision: sentence embeddings at ingest
 

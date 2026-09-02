@@ -113,7 +113,7 @@ def test_entities_are_fetched_when_either_consumer_is_on(monkeypatch):
         def __init__(self):
             self.asked = 0
 
-        def entities_for_urls(self, urls):
+        def entities_for_urls(self, urls, kinds=None):
             self.asked += 1
             return {"u": {"person": ["x"], "org": []}}
 

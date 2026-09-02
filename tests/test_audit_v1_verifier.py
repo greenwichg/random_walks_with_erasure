@@ -105,7 +105,7 @@ def test_screening_pass_all_sections_and_resume(tmp_path, capsys):
     ad = FakeAdapter(_decider(truth))
     assert v1.main(argv, adapter=ad) == 0
     text = capsys.readouterr().out
-    for needed in ("MODEL UNDER TEST", "fake-model", "NOT Claude Opus",
+    for needed in ("MODEL UNDER TEST", "fake-model", "not the production judge",
                    "V1a", "V1b", "V1c", "V1d", "SCREENING PASS", "NOT production wiring"):
         assert needed in text
     # 6 judged + 2 sample pairs x (3-1) replays + 2 symmetry swaps

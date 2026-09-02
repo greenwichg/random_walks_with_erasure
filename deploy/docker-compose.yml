@@ -199,6 +199,11 @@ services:
       # pass reads article_entities every build, so this keeps the table current — without it the
       # recall silently ages out with the one-shot backfill. Kill switch: RWE_GDELT_ENTITIES=0.
       RWE_GDELT_ENTITIES: ${RWE_GDELT_ENTITIES:-1}
+      # Stage 0.3 (entity_spans.py): at ingest, ALSO write capitalised multi-word spans from the
+      # headline/dek as `span`-kind entity rows under their own source. WRITES only — the build
+      # reads them under RWE_STORY_ENTITY_SPANS below, so the table can fill while the
+      # counterfactual is measured against a baseline that does not consume it. Default off.
+      RWE_INGEST_ENTITY_SPANS: ${RWE_INGEST_ENTITY_SPANS:-0}
       # --- Publisher metadata enrichment (Wikipedia + Wikidata) ---------------------------------
       # Fills the logo / description / founded / HQ / parent gaps the curated registry leaves, so
       # the Publisher page renders complete profiles. Curated data is NEVER overwritten — enrichment
@@ -501,14 +506,16 @@ services:
       #             story. 0 splits, 0 merges, blindspot 220 -> 220, exhibits unchanged. ADOPT.
       #   1/true    REPLACE the tokenizer everywhere. MEASURED AND REJECTED — rescued 78 but cost
       #             149 already-working articles, and took Vietnamese from 32 in-story to 0.
-      #   unset     off, the shipped behaviour.
+      #   unset/0   off, the pre-2026-08-28 behaviour (the kill switch).
       #
-      # Listed here even while defaulting to off, and that is exactly the point: `environment:` is
-      # an explicit allowlist with no `env_file:`, so a variable absent from this block never
-      # reaches the container whatever deploy/.env says. This omission has now shipped FIVE times
-      # in this series; `test_every_clustering_env_var_the_code_reads_is_passed_into_the_container`
-      # is the generalised guard added with this line.
-      RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-}
+      # `fallback` is the DEFAULT here since 2026-09-02, for the reason the quorum/veto/template
+      # knobs above give: it was adopted on the live catalogue and had lived only in deploy/.env
+      # since 2026-08-28 — one lost env-file line away from silently reverting to a tokenizer
+      # that structurally excludes every ko/ar/zh/ja/ru/ta/hi headline. The allowlist reason
+      # still stands too: `environment:` has no `env_file:`, so a variable absent from this block
+      # never reaches the container whatever deploy/.env says (this omission shipped FIVE times;
+      # `test_every_clustering_env_var_the_code_reads_is_passed_into_the_container` guards it).
+      RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-fallback}
       # Cluster trust (docs/CLUSTER_TRUST.md). geoCoherence is the one signal independent of the
       # clusterer, so it gates the blindspot claim and demotes suspect clusters out of the default
       # ranking — single-linkage chaining accumulates publishers, which means a false merge's
@@ -581,6 +588,11 @@ services:
       # both sides), blindspot claims 202 -> 202. One cluster split, no article left a story.
       # 0 is the kill switch. Reads the same article_entities table X5b already requires.
       RWE_STORY_ENTITY_VETO: ${RWE_STORY_ENTITY_VETO:-1}
+      # Stage 0.3 (story_service.entity_spans): the X5b/X5c rules ALSO consume the rule-extracted
+      # `span` rows (RWE_INGEST_ENTITY_SPANS above writes them). Provider coverage is 24% of
+      # articles, so X5c is silent on 94% of the merges it is consulted about. OFF until
+      # audit_clustering_change.py --entity-spans passes its pre-registered bars.
+      RWE_STORY_ENTITY_SPANS: ${RWE_STORY_ENTITY_SPANS:-0}
       # Sole-template-evidence gate (adopted 2026-08-17, docs/STORY_TEMPLATE_GATE.md): a pairwise
       # edge must share >= 1 token outside the announcement-template lexicon — the entertainment
       # template chain's fix ("X-Men cast/release-date" welded to The Paper/Mirzapur/DJI over
@@ -604,6 +616,18 @@ services:
       # weld): measured against the live catalog, the ONE split was that exact story shedding its
       # one foreign article, at 0.0% dropped coverage and an untouched independent signal.
       RWE_CLUSTER_TEMPLATE_LEXICONS: ${RWE_CLUSTER_TEMPLATE_LEXICONS:-announce,tracker,preview,recall}
+      # Stage 0 candidates (docs/CLUSTERING_APPROACHES_RESEARCH.md §4) — both OFF until measured
+      # with audit_clustering_change.py against their pre-registered bars. Forwarded now, default
+      # off, for the reason the Unicode line above records: a flag that is not in this allowlist
+      # never reaches the process, and a null result then reads as a measurement.
+      #   ANCHOR_VETO (story_service.anchor_veto): refuse an edge or merge whose sides carry the
+      #   same instance slot — an explicit date, week/game/episode/season/Q1-Q4/2nd Test — with no
+      #   value in common. The numbered-template class the digit-drop leaves open ("Wordle hints
+      #   for Sept 2" vs "…Sept 3" are Jaccard 1.00 today). 1 enables.
+      #   TIME_DECAY (story_service.time_decay): extra similarity required per day of publication
+      #   gap, inside the unchanged 6-day window (0.02 = a 3-day pair needs 0.34 against 0.28).
+      RWE_CLUSTER_ANCHOR_VETO: ${RWE_CLUSTER_ANCHOR_VETO:-0}
+      RWE_CLUSTER_TIME_DECAY: ${RWE_CLUSTER_TIME_DECAY:-0}
       # Banded semantic event-identity (event_identity.py) — OFF until the pre-registered V1
       # bars (docs/EVENT_IDENTITY_RUBRIC.md) and the clustering counterfactual say the judge
       # earns edges. The build never waits on it: verdicts persist in the store, unjudged

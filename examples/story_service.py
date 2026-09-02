@@ -1579,6 +1579,118 @@ def _entity_closures(arts: list, entities: "Optional[dict]", on: bool,
     return None, merge_ok
 
 
+def anchor_veto() -> bool:
+    """Instance-anchor veto (``RWE_CLUSTER_ANCHOR_VETO``) — **candidate, OFF by default**. Stage 0
+    item 1 of ``docs/CLUSTERING_APPROACHES_RESEARCH.md``; the rule lives in
+    :func:`clustering.instance_anchors` and is spent through :func:`_anchor_closure`.
+
+    The failure class it targets is the one the tokenizer's digit-drop leaves open by
+    construction. ``title_tokens`` discards bare numbers (the right trade: a shared year would
+    otherwise weld unrelated listicles), so "Wordle hints for September 2" and "…for September 3",
+    "Week 3 picks" and "Week 4 picks", "Q2 results" and "Q3 results" reduce to IDENTICAL token sets
+    and score Jaccard 1.00 on nothing but the template. No threshold, quorum or lexicon can
+    separate them, because the only differing token was thrown away before any rule looked. Every
+    lexical lever against this class has been measured and rejected (``derived_boilerplate_on``,
+    ``use_idf``, the calendar stop-list that merely moved the collision from "july 21" to "news in
+    brief"). The rubric names the fix in rules 3, 3b and 6: numbers and ordinals are identity
+    anchors WHEN THEY NAME THE INSTANCE.
+
+    The rule: read the instance anchors (explicit calendar dates; enumerated series slots such as
+    week, game, episode, season, Q1–Q4, 2nd Test) SEPARATELY from the similarity tokens, and
+    refuse an edge whose two sides carry the same slot with no value in common. It composes
+    through the ``evidence`` hook (admission, quorum cross-pairs and the repair re-cluster consult
+    one rule) AND the cluster-level ``merge_ok`` hook, and the same corroborated-consensus test is
+    applied inside ``_merge_duplicates`` and ``_merge_by_entities`` — because a refusal inside
+    ``cluster()`` alone would be quietly undone one stage later by the profile merge, whose
+    IDF-weighted profiles of two same-template instances are near-identical (the containment
+    failure recorded on ``support_scope``).
+
+    What it deliberately does NOT anchor on, each with its receipt in ``clustering._ANCHOR_SLOTS``:
+    ``day`` (rule 2 — the ``batwara-days`` exhibit is one film's run across day 2 and day 3),
+    rounds/laps/halves/the word quarter (updates of one occurrence), years (context, not identity,
+    inside a six-day window), and bare counts (rule 6's second clause — "12 dead" and "15 dead"
+    are one disaster). Fail-open everywhere: a headline with no anchor has nothing to say.
+
+    Pre-registered bars, fixed before any production number: the ``batwara-days`` exhibit stays
+    together and ``batwara-vishwanath`` stays separated; droppedOut ≤ 1% of covered articles; no
+    story-count fall; the ``--pieces`` read shows series instances separating, not one event
+    shredding. Measure with ``audit_clustering_change.py --anchor-veto --pieces 8`` from a
+    container carrying the deploy environment. Junk values fall back to off."""
+    v = os.environ.get("RWE_CLUSTER_ANCHOR_VETO", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def time_decay() -> float:
+    """Time decay inside the pairwise gate (``RWE_CLUSTER_TIME_DECAY``) — **candidate, 0.0 = OFF
+    by default and byte-identical**. Stage 0 item 2 of ``docs/CLUSTERING_APPROACHES_RESEARCH.md``;
+    the arithmetic is :func:`clustering.required_sim`.
+
+    The value is the extra similarity a pair must reach PER DAY of publication gap, on top of
+    ``DEFAULT_SIM``: at 0.02 a pair three hours apart is judged at 0.28 as today, a pair three
+    days apart at 0.34 and a six-day pair at 0.40. The hard six-day window stays; this grades the
+    requirement inside it. Coverage of one event is burst-shaped (the finding behind
+    ``DEFAULT_MERGE_MAX_GAP_HOURS``), so two headlines far apart in time that still clear the
+    floor on their template alone are the recurring-series shape — the daily price report, the
+    weekly column — and a same-event pair days apart carries more than the template.
+
+    Threaded to candidate admission, quorum cross-pair scoring and the repair re-cluster through
+    the one ``pair_admits`` rule, so no pass judges a gap the others ignore. The merge pass keeps
+    its own 48-hour cap unchanged — one variable per measurement. Missing timestamps fail open.
+
+    Pre-registered bars: recurring-series chains separate in the ``--pieces`` read; the
+    Fauci-class sagas do not fragment further than today; droppedOut ≤ 1%; no story-count fall.
+    Measure with ``audit_clustering_change.py --time-decay 0.02 --pieces 8``. Junk and negative
+    values fall back to 0.0."""
+    return max(0.0, _env_float_allowing_zero("RWE_CLUSTER_TIME_DECAY", 0.0))
+
+
+def _anchor_closure(arts: list, on: bool, stats: Optional[dict] = None) -> tuple:
+    """``(evidence, merge_ok)`` for the instance-anchor veto — ``(None, None)`` when off, so the
+    clusterer's fast path survives byte-identical.
+
+    Anchors are computed once over EXACTLY the list handed to ``cluster`` (both callables receive
+    indices into it; a repair pass builds its own closures over its own sublist). The pairwise
+    rule refuses an edge whose sides disagree on a slot; the cluster rule refuses a merge whose
+    sides' CORROBORATED anchors (``clustering.anchor_consensus``, ≥ 2 members per value) disagree —
+    a singleton has no consensus and fails open, exactly like the geo and entity consensuses.
+    ``stats`` counts per slot so the ``--pieces`` read can attribute a split to dates or to a
+    series slot."""
+    if not on:
+        return None, None
+    anchors = [clustering.instance_anchors(a.get("headline") or "") for a in arts]
+
+    def bump(key: str) -> None:
+        if stats is not None:
+            stats[key] = stats.get(key, 0) + 1
+
+    def evidence(x: int, y: int) -> bool:
+        ax, ay = anchors[x], anchors[y]
+        if not ax or not ay:
+            return True                                 # fail-open: nothing to say
+        slot = clustering.anchors_conflict(ax, ay)
+        if slot is None:
+            return True
+        bump("anchorEdgeVetoed")
+        bump("anchorEdgeVetoed:" + slot)
+        return False
+
+    def merge_ok(a: list, b: list) -> bool:
+        ca = clustering.anchor_consensus([anchors[i] for i in a])
+        cb = clustering.anchor_consensus([anchors[i] for i in b])
+        if not ca or not cb or clustering.anchors_conflict(ca, cb) is None:
+            return True
+        bump("anchorMergeVetoed")
+        return False
+    return evidence, merge_ok
+
+
+def _anchor_consensus_members(members: list) -> dict:
+    """The corroborated anchors of a member list — the aggregate passes' form of the same test
+    :func:`_anchor_closure` applies inside the build."""
+    return clustering.anchor_consensus(
+        [clustering.instance_anchors(m.get("headline") or "") for m in members])
+
+
 def publisher_identity_enabled() -> bool:
     """Whether publisher counts collapse the name forms of one outlet. ON —
     ``RWE_STORY_PUBLISHER_IDENTITY=0`` counts raw strings again.
@@ -1767,7 +1879,8 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
             template: bool = False, lexicon: frozenset = TEMPLATE_TOKENS,
             hyphen: bool = False, uni: bool = False, ent_veto: bool = False,
             entities: "Optional[dict]" = None, event_verdicts: "Optional[dict]" = None,
-            band_out: "Optional[dict]" = None) -> Optional[list]:
+            band_out: "Optional[dict]" = None, anchor: bool = False,
+            decay: float = 0.0) -> Optional[list]:
     """Re-cluster ONE condemned cluster's members under a stricter linkage rule.
 
     Why targeted rather than global: measured on the live catalog, a global quorum splits the
@@ -1791,6 +1904,11 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
     # disagreement between the passes rather than on a defect in the cluster.
     _, r_ent_ok = _entity_closures(members, entities, ent_veto, veto_stats)
     r_merge_ok = _and_merge_ok(r_merge_ok, r_ent_ok)
+    # Anchors and decay thread here for the same reason: a repair that ignored a rule the
+    # primary build applied would re-split on the passes' disagreement, not on a defect.
+    r_anc_ev, r_anc_ok = _anchor_closure(members, anchor, veto_stats)
+    r_evidence = _and_evidence(r_anc_ev, r_evidence)
+    r_merge_ok = _and_merge_ok(r_merge_ok, r_anc_ok)
     if template:
         r_evidence = _and_evidence(
             _template_closure(members, desc, veto_stats, lexicon=lexicon, hyphen=hyphen, uni=uni),
@@ -1805,7 +1923,7 @@ def _repair(members: list, *, quorum: float, sim: float, window_days: float, min
                            sim=sim, window_days=window_days, min_shared=min_shared,
                            min_tokens=min_tokens, idf=idf, link_quorum=quorum,
                            min_support=support, support_scope=s_scope,
-                           evidence=r_evidence, merge_ok=r_merge_ok),
+                           evidence=r_evidence, merge_ok=r_merge_ok, time_decay=decay),
         members, min_articles=min_articles, min_publishers=min_publishers)
     if len(pieces) < 2:
         return None
@@ -1941,7 +2059,7 @@ def _gap_hours(a: list, b: list) -> float:
 def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max_size: int,
                       veto: str = "", veto_stats: Optional[dict] = None,
                       ent_veto: bool = False,
-                      entities: "Optional[dict]" = None) -> list:
+                      entities: "Optional[dict]" = None, anchor: bool = False) -> list:
     """Join clusters that are the same event described in different words.
 
     The recall failure the repair exposed: "Mass shooting reported at Seattle Center" and "…gunfire
@@ -2063,6 +2181,19 @@ def _merge_duplicates(groups: list, *, min_sim: float, max_gap_hours: float, max
                     veto_stats["dupMergeEntityVetoed"] = (
                         veto_stats.get("dupMergeEntityVetoed", 0) + 1)
                 continue
+        if anchor:
+            # Instance anchors at the AGGREGATE stage. Two instances of one template ("Wordle
+            # hints for Sept 2" / "…Sept 3") that the edge-level veto kept apart have
+            # near-identical IDF profiles, so this pass is exactly where they would be rejoined
+            # — the containment failure `support_scope` records. Same corroborated-consensus
+            # test as the build-time hook; a side without consensus fails open.
+            ca = _anchor_consensus_members([m for x in gi for m in groups[x]])
+            cb = _anchor_consensus_members([m for x in gj for m in groups[x]])
+            if ca and cb and clustering.anchors_conflict(ca, cb) is not None:
+                if veto_stats is not None:
+                    veto_stats["dupMergeAnchorVetoed"] = (
+                        veto_stats.get("dupMergeAnchorVetoed", 0) + 1)
+                continue
         combined = tuple(sorted(gi + gj))
         for x in combined:
             member_of[x] = combined
@@ -2093,7 +2224,10 @@ def _story_entity_consensus(members: list, entities: dict) -> frozenset:
     votes: dict = {}
     for m in members:
         ents = entities.get(m.get("id") or m.get("url")) or {}
-        seen = {name for kind in ("person", "org") for name in ents.get(kind, ())
+        # Every kind the FETCH returned counts: the store hands back provider kinds by default
+        # and the rule-extracted spans only when `entity_kinds()` asked for them, so which
+        # provenances take part is decided once, at the query, never here.
+        seen = {name for names in ents.values() for name in names
                 if name and not entity_noise(name)}
         for name in seen:
             votes[name] = votes.get(name, 0) + 1
@@ -2102,7 +2236,7 @@ def _story_entity_consensus(members: list, entities: dict) -> frozenset:
 
 def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
                        max_gap_hours: float, max_size: int,
-                       stats: Optional[dict] = None) -> list:
+                       stats: Optional[dict] = None, anchor: bool = False) -> list:
     """Join stories that are the same event according to corroborated ENTITY consensus (X5b).
 
     The recall population this exists for is measured, not assumed: 65% of confusable story
@@ -2143,7 +2277,7 @@ def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
         votes: dict = {}
         for m in members:
             ents = entities.get(m.get("id") or m.get("url")) or {}
-            seen = {name for kind in ("person", "org") for name in ents.get(kind, ())
+            seen = {name for names in ents.values() for name in names
                     if name and not entity_noise(name)}
             for name in seen:
                 votes[name] = votes.get(name, 0) + 1
@@ -2229,6 +2363,14 @@ def _merge_by_entities(groups: list, *, entities: dict, min_names: int,
                 and (ta >= GEO_MIN_CONSENSUS or tb >= GEO_MIN_CONSENSUS)):
             bump("entityMergeGeoVetoed")
             continue                                  # X4's rule: geography outranks entities
+        if anchor:
+            # Instance anchors outrank entities the way geography does: two instances of a
+            # series share every entity (the puzzle's maker, the league) and differ only in
+            # the slot the tokenizer dropped.
+            aa, ab = _anchor_consensus_members(side_a), _anchor_consensus_members(side_b)
+            if aa and ab and clustering.anchors_conflict(aa, ab) is not None:
+                bump("entityMergeAnchorVetoed")
+                continue
         merged_members = side_a + side_b
         coherence, located = _geo_coherence(merged_members, _country_votes(merged_members))
         if (coherence is not None and located >= MIN_LOCATED_FOR_TRUST
@@ -2276,7 +2418,9 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                   derived_df: Optional[int] = None,
                   derived_days: Optional[int] = None,
                   event_verdicts: "Optional[dict]" = None,
-                  band_out: "Optional[dict]" = None) -> list:
+                  band_out: "Optional[dict]" = None,
+                  anchor: Optional[bool] = None,
+                  decay: Optional[float] = None) -> list:
     """Cluster FeedArticle rows into Story objects (the pure builder). Keeps clusters with
     ≥ ``min_articles`` from ≥ ``min_publishers`` distinct outlets; sorted biggest+freshest first,
     with independently-suspect clusters demoted (see ``_size_rank``).
@@ -2353,6 +2497,17 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
     ent_on = entity_veto() if ent_veto is None else bool(ent_veto)
     _, e_merge_ok = _entity_closures(arts, entities, ent_on, veto_stats)
     g_merge_ok = _and_merge_ok(g_merge_ok, e_merge_ok)
+    # Instance anchors (Stage 0.1, `anchor_veto`): the number the tokenizer drops, read back as a
+    # slot->value fact and spent on BOTH hooks — the edge (admission, quorum cross-pairs, repair)
+    # and the cluster merge — and again inside the aggregate passes below. Fail-open on absence
+    # like every channel before it; None resolves to production, which is off.
+    anc_on = anchor_veto() if anchor is None else bool(anchor)
+    a_evidence, a_merge_ok = _anchor_closure(arts, anc_on, veto_stats)
+    g_evidence = _and_evidence(a_evidence, g_evidence)
+    g_merge_ok = _and_merge_ok(g_merge_ok, a_merge_ok)
+    # Time decay (Stage 0.2, `time_decay`): resolved once, threaded to the clusterer and the
+    # repair re-cluster so both judge a gap by one rule. 0.0 is byte-identical.
+    dec = time_decay() if decay is None else max(0.0, float(decay))
     # The sole-template-evidence rule (Phase B; template_gate) — an edge must share >= 1
     # non-template token. Composed through the SAME evidence hook as the geo veto, so admission,
     # quorum scoring and repair consult one rule; None/off is byte-identical by construction.
@@ -2401,7 +2556,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         time=lambda a: clustering.parse_time(a["publishedAt"]), sim=sim, window_days=window_days,
         min_shared=shared, min_tokens=tokens_floor, idf=weighting,
         link_quorum=link_quorum() if quorum is None else quorum, min_support=prop,
-        support_scope=scope, evidence=g_evidence, merge_ok=g_merge_ok)
+        support_scope=scope, evidence=g_evidence, merge_ok=g_merge_ok, time_decay=dec)
     mend = repair_quorum() if repair is None else repair
     admitted = []
     for members in _admit(groups, arts, min_articles=min_articles, min_publishers=min_publishers):
@@ -2412,7 +2567,8 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
                              veto=veto_mode, veto_stats=veto_stats, template=use_gate,
                              lexicon=lex_union, hyphen=hyph, uni=uni_on,
                              ent_veto=ent_on, entities=entities,
-                             event_verdicts=event_verdicts, band_out=band_out)
+                             event_verdicts=event_verdicts, band_out=band_out,
+                             anchor=anc_on, decay=dec)
             if pieces is not None:
                 admitted.extend(pieces)
                 continue
@@ -2424,7 +2580,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
             admitted, min_sim=join,
             max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
             max_size=merge_max_size(), veto=veto_mode, veto_stats=veto_stats,
-            ent_veto=ent_on, entities=entities)
+            ent_veto=ent_on, entities=entities, anchor=anc_on)
     # X5b entity-corroborated merge recall — dormant twice over: the env default is 0 AND the
     # entity mapping must be injected by the caller (the audit does; _fetch never queries it,
     # so a production build costs nothing whatever the env says).
@@ -2433,7 +2589,7 @@ def build_stories(rows: list, *, min_articles: int = 2, min_publishers: int = 2,
         admitted = _merge_by_entities(
             admitted, entities=entities, min_names=em,
             max_gap_hours=merge_max_gap_hours() if merge_gap is None else merge_gap,
-            max_size=merge_max_size(), stats=veto_stats)
+            max_size=merge_max_size(), stats=veto_stats, anchor=anc_on)
     # Story-hero guard (docs/STORY_HERO_IMAGES.md) — presentation only, resolved AFTER membership
     # is final because the reuse index is a property of the whole build: an image fronting more
     # than HERO_MAX_CLUSTER_REUSE distinct clusters is by definition about none of them. Measured
@@ -2687,6 +2843,46 @@ def _event_flush(store_, band_out: "dict | None") -> None:
         pass
 
 
+#: The provider-extracted entity kinds — what every build has consumed since X5b.
+ENTITY_KINDS_PROVIDER = ("person", "org")
+
+
+def entity_spans() -> bool:
+    """Whether the build CONSUMES the rule-extracted ``span`` entity rows
+    (``RWE_STORY_ENTITY_SPANS``) — **candidate, OFF by default**. Stage 0.3 of
+    ``docs/CLUSTERING_APPROACHES_RESEARCH.md``; the extractor is ``entity_spans.extract``.
+
+    The problem is coverage, not rule design. X5c is silent on 93.8% of the merges it is
+    consulted about because only 24% of articles carry a provider-extracted name (GDELT's GKG
+    sees only the articles GDELT monitors), and X5b can only propose a join between two stories
+    that BOTH cleared extraction. Every adopted entity rule already treats a name as a heuristic
+    — corroborated by >= 2 members, mutually anchored, story-df-floored, identity-denoised — so a
+    weaker but far broader extractor (capitalised multi-word spans from the headline and dek,
+    stdlib, no dependency) can be measured against the same bars through the same rules.
+
+    Two switches on purpose. ``RWE_INGEST_ENTITY_SPANS`` (``entity_spans.enabled``) decides
+    whether rows are WRITTEN; this one decides whether a build READS them — so the table can be
+    filled (ingest + ``entity_span_backfill.py``) and the counterfactual measured against a
+    baseline that does not consume it. With this off, ``_entities_for`` fetches the provider
+    kinds only and the build is byte-identical whatever the table holds.
+
+    Pre-registered bars: entity coverage of the window rises from 24% toward 70%+ on English
+    (the backfill prints it); on ``audit_clustering_change.py --entity-spans --pieces 8``, X5c's
+    consulted-with-consensus share rises materially above 6.2%, droppedOut ≤ 1%, no rise in bad
+    clusters, largest cluster within noise, the recorded exhibits unmoved; X5b's joins are read
+    by hand under the merge bars (a span-driven join must be a duplicate family, never a
+    same-name weld). Junk values fall back to off."""
+    v = os.environ.get("RWE_STORY_ENTITY_SPANS", "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def entity_kinds() -> tuple:
+    """Which entity kinds a build fetches: the provider kinds, plus ``span`` under
+    :func:`entity_spans`. Resolved once per build and handed to the store, so the choice of
+    provenance is made at the query and nowhere else."""
+    return ENTITY_KINDS_PROVIDER + (("span",) if entity_spans() else ())
+
+
 def _entities_for(store_, rows: list) -> "dict | None":
     """The entity mapping for a build — fetched only when a pass that CONSUMES it is enabled,
     one batched side-table query per build, ``None`` (free) when both are off. Every serving-path
@@ -2698,7 +2894,7 @@ def _entities_for(store_, rows: list) -> "dict | None":
     side table."""
     if entity_merge_min() <= 0 and not entity_veto():
         return None
-    return store_.entities_for_urls([r.get("canonicalUrl") for r in rows])
+    return store_.entities_for_urls([r.get("canonicalUrl") for r in rows], kinds=entity_kinds())
 
 
 def _subprocess_build(db_url: str, topic, date_from, date_to, max_scan,

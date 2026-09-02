@@ -409,6 +409,12 @@ pre-register bars before any rule run.
 * `store.ArticleEntity` — a side table with the `ArticleEventLocation` contract
   (provider-extracted, provenance per row, never inferred by us). **Nothing in the serving path
   reads it.** Auto-created like every other table; no migration.
+  *Amended 2026-09-02 (Stage 0.3, `docs/CLUSTERING_APPROACHES_RESEARCH.md` §4):* the table now
+  also admits a `span` kind under `source = "headline-caps"` — capitalised multi-word spans
+  read from the headline/dek by `entity_spans.py`, i.e. inferred from text by us. The
+  "never inferred" contract survives as a boundary rather than a prohibition: the kind names the
+  weaker provenance, `entities_for_urls` returns it only to a caller that asks, and the build
+  consumes it only under `RWE_STORY_ENTITY_SPANS=1`. Provider rows are untouched.
 * `gdelt_gkg.parse_gkg_entity_lines` — a SEPARATE streaming pass over the same downloaded zip
   (V1PERSONS col 11, V1ORGANIZATIONS col 13; normalized lower-case, deduped before a 24-name
   cap), so the location/image record shape and every consumer of it stay byte-identical.

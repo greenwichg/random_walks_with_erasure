@@ -673,21 +673,27 @@ def test_every_clustering_env_var_the_code_reads_is_passed_into_the_container():
         "result reads as a measurement.")
 
 
-def test_the_measured_unicode_fallback_is_available_and_defaults_off():
-    """Both halves. The flag must be reachable — `--unicode-fallback` measured ADOPT on the live
-    catalogue (79 structurally-excluded articles reached a story, 0 lost, 0 splits, 0 merges) —
-    and it must stay OFF until someone turns it on deliberately, because the sibling value
-    `1`/`true` is the REPLACE mode that was measured and rejected at 78 rescued for 149 lost."""
+def test_the_measured_unicode_fallback_is_the_compose_default_and_replace_is_not():
+    """Both halves. `fallback` measured ADOPT on the live catalogue (79 structurally-excluded
+    articles reached a story, 0 lost, 0 splits, 0 merges) and has served production since
+    2026-08-28, so it is the compose DEFAULT — the same lost-env-file discipline as the
+    quorum/veto/template knobs; `0` in deploy/.env is the kill switch. The sibling value
+    `1`/`true` is the REPLACE mode measured and rejected at 78 rescued for 149 lost: it must
+    stay reachable only by someone setting it deliberately, never as a default."""
     compose = (ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8")
-    assert "RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-}" in compose, \
-        "the flag must be forwarded with an EMPTY default — off, but switchable without a deploy"
+    assert "RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-fallback}" in compose, \
+        "the adopted mode must be the compose default, not a deploy/.env line"
+    assert "RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-1}" not in compose \
+        and "RWE_CLUSTER_UNICODE_WORDS: ${RWE_CLUSTER_UNICODE_WORDS:-true}" not in compose, \
+        "the rejected REPLACE mode must never be a default"
 
     import story_service
     import os
-    for value, expected in (("", False), ("fallback", "fallback"), ("1", True), ("true", True)):
+    for value, expected in (("", False), ("0", False), ("fallback", "fallback"),
+                            ("1", True), ("true", True)):
         os.environ["RWE_CLUSTER_UNICODE_WORDS"] = value
         try:
             assert story_service.unicode_words() == expected, f"{value!r} -> {expected!r}"
         finally:
             os.environ.pop("RWE_CLUSTER_UNICODE_WORDS", None)
-    assert story_service.unicode_words() is False, "unset must be off"
+    assert story_service.unicode_words() is False, "unset (no compose) stays the library off"

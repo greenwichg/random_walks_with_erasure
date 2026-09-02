@@ -336,7 +336,7 @@ def pair_admits(tx: frozenset, ty: frozenset,
                 time_x: Optional[datetime], time_y: Optional[datetime], *,
                 sim: float = DEFAULT_SIM, window_days: float = DEFAULT_WINDOW_DAYS,
                 min_shared: int = MIN_SHARED_TOKENS, min_tokens: int = MIN_TITLE_TOKENS,
-                weights: Optional[dict] = None) -> bool:
+                weights: Optional[dict] = None, time_decay: float = 0.0) -> bool:
     """Whether two items are close enough to belong to the same story — **the** pairwise rule.
 
     Extracted from :func:`cluster`'s inner ``pair_ok`` so it can be asked OUTSIDE a build, which is
@@ -345,12 +345,17 @@ def pair_admits(tx: frozenset, ty: frozenset,
     event" quietly drift apart. ``cluster`` now delegates here, so there is one definition and any
     change to it moves both.
 
+    ``time_decay`` (**candidate, default 0.0 = off and byte-identical**) is the similarity a pair
+    must ADDITIONALLY reach per day of publication gap — see :func:`required_sim`. The hard window
+    stays; the decay is a graded requirement inside it, so a pair three hours apart is judged at
+    ``sim`` and a pair three days apart at ``sim + 3 * time_decay``.
+
     The ``evidence`` hook stays at ``cluster``'s call site rather than here: it is keyed on item
     INDICES into a specific build, which has no meaning to a caller holding two token sets."""
     floor = max(1, min_tokens)
     if len(tx) < floor or len(ty) < floor or len(tx & ty) < min_shared:
         return False
-    return (weighted_jaccard(tx, ty, weights) >= sim
+    return (weighted_jaccard(tx, ty, weights) >= required_sim(sim, time_decay, time_x, time_y)
             and within_window(time_x, time_y, window_days))
 
 
@@ -370,6 +375,203 @@ def within_window(a: Optional[datetime], b: Optional[datetime], days: float) -> 
     if a is None or b is None:
         return True
     return abs((a - b).total_seconds()) <= days * 86400.0
+
+
+def required_sim(sim: float, decay: float, a: Optional[datetime], b: Optional[datetime]) -> float:
+    """The similarity a pair published ``|a - b|`` apart must reach: ``sim`` plus ``decay`` per
+    day of gap. **Time decay inside the gate**, the Stage-0 candidate from
+    ``docs/CLUSTERING_APPROACHES_RESEARCH.md`` §2.7.
+
+    Why a graded requirement and not a shorter window: the hard window is one number for every
+    pair, so it either admits a six-day-old recurring-series instance on the same evidence as a
+    same-hour paraphrase, or it cuts the sagas that legitimately run for days. Coverage of one
+    event is burst-shaped — the same finding behind ``DEFAULT_MERGE_MAX_GAP_HOURS`` — so a pair
+    far apart in time SHOULD need more lexical evidence than a pair minutes apart; two instances of
+    a daily column share exactly the boilerplate, and that boilerplate does not grow with the gap.
+
+    ``decay <= 0`` returns ``sim`` untouched, and a missing timestamp on either side returns
+    ``sim`` too: absence of a date is never evidence of distance, the same fail-open rule
+    :func:`within_window` applies. At ``decay = 0.02`` a pair 3 days apart needs 0.34 against the
+    0.28 floor, and a 6-day pair 0.40. Deterministic; a pure function of its inputs."""
+    if decay <= 0.0 or a is None or b is None:
+        return sim
+    return sim + decay * (abs((a - b).total_seconds()) / 86400.0)
+
+
+# --------------------------------------------------------------------------- #
+# Instance anchors — the identity that pure digits carry, kept OUT of the similarity tokens.
+#
+# `title_tokens` drops bare numbers on purpose (a shared year linking two listicles is the commoner
+# case), and the price of that trade is a whole failure class the rubric names in rules 3, 3b and 6:
+# "Wordle hints for September 2" and "…for September 3", "Week 3 picks" and "Week 4 picks", "Q2
+# results" and "Q3 results" reduce to IDENTICAL token sets — Jaccard 1.00 on the template — and no
+# threshold, lexicon or quorum can separate them, because the only thing that differs is the number
+# the tokenizer threw away. These functions read that number back as an ANCHOR, a slot->value
+# fact carried beside the tokens rather than inside them, so the similarity trade stands and the
+# evidence hook can refuse an edge whose two sides name different instances.
+# --------------------------------------------------------------------------- #
+
+#: Month names -> month number for the calendar-date anchor: English plus the catalog's other
+#: large Latin-script languages (de, fr, es, pt, it), accented and ASCII-folded forms both, because
+#: headlines carry both. A month word is an anchor ONLY beside a day number ("Sept. 2",
+#: "2 September", "2. September", "2 de septiembre", "2026-09-02"), never on its own.
+_MONTHS = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3, "april": 4, "apr": 4,
+    "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7, "august": 8, "aug": 8,
+    "september": 9, "sept": 9, "sep": 9, "october": 10, "oct": 10, "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+    # de
+    "januar": 1, "februar": 2, "märz": 3, "marz": 3, "maerz": 3, "mai": 5, "juni": 6, "juli": 7,
+    "oktober": 10, "okt": 10, "dezember": 12, "dez": 12,
+    # fr
+    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4, "juin": 6, "juillet": 7,
+    "août": 8, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12,
+    "decembre": 12,
+    # es / pt
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6, "julio": 7,
+    "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11,
+    "diciembre": 12, "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "maio": 5,
+    "junho": 6, "julho": 7, "setembro": 9, "outubro": 10, "dezembro": 12,
+    # it
+    "gennaio": 1, "febbraio": 2, "aprile": 4, "maggio": 5, "giugno": 6, "luglio": 7,
+    "settembre": 9, "ottobre": 10, "dicembre": 12,
+}
+
+#: Month words that are also ordinary words ("Trump may 2 …", "march 5 miles", Spanish "mar"):
+#: these count only when the headline capitalises them.
+_AMBIGUOUS_MONTHS = frozenset({"may", "march", "mar", "sep", "jun", "jul"})
+
+#: Enumerated instance slots — the words that turn a number into WHICH ONE. Two headlines carrying
+#: the same slot with different values name different instances of a series: rubric rule 3
+#: (recurring series instances are different events), 3b (different fixtures of one competition)
+#: and 6 (numbers and ordinals are identity anchors when they name the instance). The value is the
+#: slot's canonical name; synonyms map onto one slot so "GW 3" and "gameweek 3" agree.
+#:
+#: What is deliberately ABSENT matters as much as what is here, and each absence has a rubric
+#: receipt. ``day`` — rule 2: "Batwara day 2 collection" and "Batwara day 3 collection" are ONE
+#: film's run (the ``batwara-days`` exhibit, same_event), while "Batwara day 2" vs "Vishwanath day
+#: 2" are two films, and the number cannot tell those apart (the template gate's ``tracker`` lexicon
+#: already handles the second). ``round``, ``lap``, ``half`` and the word ``quarter`` — a fight's
+#: round 3 and round 9, a race's lap 5 and lap 30, a match's first and second half or third and
+#: fourth quarter are updates of ONE occurrence. A slot whose consecutive values are usually the
+#: same event would split real stories, so those slots are excluded and the exclusion is pinned by
+#: test. Fiscal quarters keep their COMPACT form only (``Q1``–``Q4``), which basketball never uses.
+_ANCHOR_SLOTS = {
+    "week": "week", "gameweek": "week", "gw": "week",
+    "matchday": "matchday",
+    "game": "game",
+    "episode": "episode", "ep": "episode",
+    "season": "season",
+    "part": "part", "chapter": "chapter",
+    "leg": "leg",
+    "test": "test", "odi": "odi", "t20i": "t20i",
+    "volume": "volume", "vol": "volume", "issue": "issue", "edition": "edition",
+}
+
+_SLOT_ALT = "|".join(sorted(map(re.escape, _ANCHOR_SLOTS), key=len, reverse=True))
+#: "week 3", "Ep. 5", "Season #2", "vol 4" — the slot word THEN the number (1–3 digits, so a year
+#: can never be read as a slot value).
+_SLOT_AFTER_RE = re.compile(r"\b(" + _SLOT_ALT + r")\s*\.?\s*#?\s*(\d{1,3})\b(?![,.]\d)")
+#: "2nd Test", "1st leg", "3rd episode" — a numeric ordinal THEN the slot word.
+_SLOT_BEFORE_RE = re.compile(r"\b(\d{1,3})(?:st|nd|rd|th)\s+(" + _SLOT_ALT + r")\b")
+#: "first leg" / "second leg" — the one slot whose WORD ordinal is standard, unambiguous phrasing.
+_LEG_WORD_RE = re.compile(r"\b(first|second)[ -]leg\b")
+#: Fiscal quarters and TV episodes in their compact forms: "Q3", "Q3 2026", "S2E5", "S02E05".
+_QUARTER_RE = re.compile(r"\bq([1-4])\b")
+_SEASON_EPISODE_RE = re.compile(r"\bs(\d{1,2})\s*e(\d{1,3})\b")
+
+_MONTH_ALT = "|".join(sorted(map(re.escape, _MONTHS), key=len, reverse=True))
+#: "September 2", "Sept. 2nd", "Sept 2, 2026" — month THEN day.
+_DATE_MD_RE = re.compile(r"(?<![a-zäöüéèêàç])(" + _MONTH_ALT + r")\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?![,.:]\d)")
+#: "2 September", "2. September", "2nd of September", "2 de septiembre" — day THEN month.
+_DATE_DM_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\.?\s+(?:of\s+|de\s+|d['’]\s*)?(" + _MONTH_ALT
+                         + r")(?![a-zäöüéèêàç])")
+_DATE_ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+
+def instance_anchors(title: str) -> dict:
+    """``{slot: frozenset(values)}`` — the instance anchors a headline carries.
+
+    Slots are ``"date"`` (``"MM-DD"`` strings from explicit calendar dates) and the enumerated
+    series slots in :data:`_ANCHOR_SLOTS` (integers). A headline with no anchor returns ``{}``,
+    which every consumer treats as "nothing to say" — absence is never evidence.
+
+    Years are deliberately NOT a slot. Inside a six-day window two articles about one event
+    routinely carry different years as CONTEXT ("the 2024 campaign fine" / "ahead of the 2026
+    midterms"), while two different events differing only by year almost never share a window;
+    the precision of a year veto is poor exactly where the clusterer looks. Bare counts are not
+    anchors either — rule 6's second clause: conflicting figures for one occurrence (early counts
+    vs updated counts) are still one event, so "12 dead" and "15 dead" must stay joinable.
+
+    Pure and deterministic; ASCII case-folded once, with the month-word ambiguity check reading
+    the ORIGINAL capitalisation ("Trump may 2…" is not a date; "May 2" is)."""
+    raw = title or ""
+    lower = raw.lower()
+    out: dict = {}
+
+    def add(slot: str, value) -> None:
+        out[slot] = out.get(slot, frozenset()) | frozenset([value])
+
+    for m in _DATE_MD_RE.finditer(lower):
+        word, day = m.group(1), int(m.group(2))
+        if word in _AMBIGUOUS_MONTHS and not raw[m.start(1)].isupper():
+            continue
+        if 1 <= day <= 31:
+            add("date", f"{_MONTHS[word]:02d}-{day:02d}")
+    for m in _DATE_DM_RE.finditer(lower):
+        day, word = int(m.group(1)), m.group(2)
+        if word in _AMBIGUOUS_MONTHS and not raw[m.start(2)].isupper():
+            continue
+        if 1 <= day <= 31:
+            add("date", f"{_MONTHS[word]:02d}-{day:02d}")
+    for m in _DATE_ISO_RE.finditer(lower):
+        month, day = int(m.group(2)), int(m.group(3))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            add("date", f"{month:02d}-{day:02d}")
+    for m in _SLOT_AFTER_RE.finditer(lower):
+        add(_ANCHOR_SLOTS[m.group(1)], int(m.group(2)))
+    for m in _SLOT_BEFORE_RE.finditer(lower):
+        add(_ANCHOR_SLOTS[m.group(2)], int(m.group(1)))
+    for m in _LEG_WORD_RE.finditer(lower):
+        add("leg", 1 if m.group(1) == "first" else 2)
+    for m in _QUARTER_RE.finditer(lower):
+        add("quarter", int(m.group(1)))
+    for m in _SEASON_EPISODE_RE.finditer(lower):
+        add("season", int(m.group(1)))
+        add("episode", int(m.group(2)))
+    return out
+
+
+def anchors_conflict(a: dict, b: dict) -> Optional[str]:
+    """The first slot on which two anchor dicts DISAGREE — present on both sides with no value in
+    common — or ``None``. A slot missing on either side is silence, not disagreement, and a shared
+    value on a slot is agreement however many other values sit beside it (a "Sept 2–3" range
+    agrees with "Sept 3")."""
+    for slot in sorted(a):
+        va, vb = a[slot], b.get(slot)
+        if va and vb and not (va & vb):
+            return slot
+    return None
+
+
+def anchor_consensus(anchor_sets: "Sequence[dict]", min_votes: int = 2) -> dict:
+    """A cluster's CORROBORATED anchors: ``{slot: frozenset(values carried by >= min_votes
+    members)}``. The same corroboration discipline as the geo and entity consensuses — one
+    member's headline is a sample of one — so a singleton has no consensus and fails every
+    cluster-level test open, while a two-article story's consensus is exactly what its two
+    members agree on."""
+    votes: dict = {}
+    for anchors in anchor_sets:
+        for slot, values in anchors.items():
+            per = votes.setdefault(slot, {})
+            for v in values:
+                per[v] = per.get(v, 0) + 1
+    out: dict = {}
+    for slot, per in votes.items():
+        agreed = frozenset(v for v, c in per.items() if c >= min_votes)
+        if agreed:
+            out[slot] = agreed
+    return out
 
 
 class DSU:
@@ -467,7 +669,8 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
             min_support: int = DEFAULT_MIN_SUPPORT,
             support_scope: str = "any",
             evidence: Optional[Callable[[int, int], bool]] = None,
-            merge_ok: Optional[Callable[[list, list], bool]] = None) -> "list[list[int]]":
+            merge_ok: Optional[Callable[[list, list], bool]] = None,
+            time_decay: float = 0.0) -> "list[list[int]]":
     """Group item **indices** into clusters. ``tokens(item) → frozenset`` and
     ``time(item) → datetime | None`` are the accessors. Two items join the same cluster when their
     token Jaccard ≥ ``sim`` **and** their times are within ``window_days``. Returns a list of clusters,
@@ -516,10 +719,15 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
 
     Both default to ``None``, and ``None`` is byte-identical to the previous behaviour — the same
     opt-in discipline as ``idf`` and ``link_quorum``.
+
+    ``time_decay`` raises the similarity a pair must reach by that much per day of publication
+    gap (:func:`required_sim`); candidate admission and quorum cross-pair scoring both consult it,
+    through the one ``pair_admits`` rule. ``0.0`` is byte-identical.
     """
     n = len(items)
     toks = [tokens(it) for it in items]
     times = [time(it) for it in items]
+    decaying = time_decay > 0.0
 
     # token -> ascending item indices carrying it. Built once; membership tests below stay exact.
     postings: dict = {}
@@ -537,7 +745,7 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
         that could never merge on their own count as support for merging."""
         return (pair_admits(toks[x], toks[y], times[x], times[y],
                             sim=sim, window_days=window_days, min_shared=min_shared,
-                            min_tokens=min_tokens, weights=weights)
+                            min_tokens=min_tokens, weights=weights, time_decay=time_decay)
                 and (evidence is None or evidence(x, y)))
 
     def candidates():
@@ -570,7 +778,10 @@ def cluster(items: Sequence, *, tokens: Callable[[object], frozenset],
                 if overlap < min_shared or len(toks[j]) < floor:
                     continue
                 score = weighted_jaccard(ti, toks[j], weights)
-                if (score >= sim and within_window(times[i], times[j], window_days)
+                # The decay is resolved per pair only when it is on: the off path compares
+                # against the same `sim` it always did, so the baseline stays byte-identical.
+                need = required_sim(sim, time_decay, times[i], times[j]) if decaying else sim
+                if (score >= need and within_window(times[i], times[j], window_days)
                         and (evidence is None or evidence(i, j))):
                     yield i, j, score
 

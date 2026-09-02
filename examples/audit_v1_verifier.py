@@ -1,9 +1,14 @@
-"""audit_v1_verifier.py — V1-prime: the same-event verifier benchmark, offline, one model.
+"""audit_v1_verifier.py — V1-prime: the same-event verifier benchmark, offline, one model per run.
 
-**MODEL UNDER TEST: gemini-2.5-flash. This benchmark measures Gemini 2.5 Flash — not Claude
-Opus.** The model sits behind an adapter so the harness, rubric prompt, verdict schema,
-quote-verification, stability replays, and every pre-registered bar stay identical whatever
-model is plugged in; the report names the model on its first line and in the verdict.
+**The model under test is chosen by ``--adapter`` and named on the report's first line.** Two
+arms: ``gemini`` (gemini-2.5-flash, the original V1-prime run) and ``claude`` — which is not a
+second research model but the PRODUCTION judge itself: ``event_identity.ClaudeAdapter`` with its
+own prompt and the deployed ``RWE_EVENT_JUDGE_MODEL``, wrapped so the harness scores exactly the
+verdicts the serving path would persist. That is the Stage 0.4 gate (docs/
+CLUSTERING_APPROACHES_RESEARCH.md §4): ``RWE_EVENT_JUDGE=1`` is earned by this arm passing V1b on
+the labeled sheet, not by the Gemini arm having passed it. The model sits behind an adapter so
+the harness, verdict schema, quote-verification, stability replays, and every pre-registered bar
+stay identical whatever model is plugged in.
 
 Offline evaluation ONLY: reads the provenance-labeled sheet (audit_v1_labelset), calls the
 model per pair, writes verdicts to a JSONL store (append + resume — reruns skip judged pairs,
@@ -188,6 +193,55 @@ class GeminiAdapter:
                 "reason": f"api-error after retries: {last}", "_api_error": True}
 
 
+class ClaudeHarnessAdapter:
+    """The PRODUCTION judge, scored by this harness — ``event_identity.ClaudeAdapter`` behind the
+    two-member contract (``name``, ``verdict(a, b)``).
+
+    Deliberately NOT a re-implementation with the harness's Gemini prompt: the question Stage
+    0.4 asks is whether the adapter that would serve — its system prompt, its JSON contract, its
+    quote demotion, its transport discipline — clears the V1 bars. So the sheet's sides are
+    mapped onto the article shape the worker hands the adapter (``headline`` / ``description`` /
+    ``publishedAt``; the sheet's ``entities`` and ``countries`` are NOT shown, because production
+    does not show them), and the adapter's ``quote_a``/``quote_b`` come back as the harness's
+    ``quoted_span_a``/``quoted_span_b`` so :func:`quote_ok` re-checks them against the sheet's
+    text exactly as it does for any other arm. An adapter-side demotion (a decisive verdict whose
+    quotes were not substrings of its inputs) arrives as ``uncertain`` with its reason.
+    ``_api_error`` passes through as the fail-closed marker the store and breaker read."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.name = getattr(inner, "name", "claude")
+
+    @property
+    def calls(self) -> int:
+        return getattr(self._inner, "calls", 0)
+
+    @property
+    def tokens_in(self) -> int:
+        return getattr(self._inner, "tokens_in", 0)
+
+    @property
+    def tokens_out(self) -> int:
+        return getattr(self._inner, "tokens_out", 0)
+
+    @staticmethod
+    def _article(side: dict) -> dict:
+        return {"headline": side.get("headline") or "", "description": side.get("dek") or "",
+                "publishedAt": side.get("publishedAt") or ""}
+
+    def verdict(self, a: dict, b: dict) -> dict:
+        out = self._inner.verdict(self._article(a), self._article(b))
+        rec = {"verdict": out.get("verdict", "uncertain"),
+               "quoted_span_a": out.get("quote_a", "") or "",
+               "quoted_span_b": out.get("quote_b", "") or "",
+               "reason": (out.get("_demoted") and f"adapter demoted: {out['_demoted']}")
+                         or out.get("reason", "") or ""}
+        if out.get("_api_error"):
+            rec["_api_error"] = True
+            rec["reason"] = str(out["_api_error"])
+        return rec
+
+
 _WS = re.compile(r"\s+")
 
 
@@ -214,6 +268,14 @@ def main(argv=None, adapter=None) -> int:
     ap.add_argument("--sleep", type=float, default=0.35,
                     help="pace between calls (seconds); free-tier gemini-2.5-flash allows "
                          "10 requests/min — use 6.5 there")
+    ap.add_argument("--adapter", choices=("gemini", "claude"), default="gemini",
+                    help="which model arm: 'gemini' (gemini-2.5-flash, GEMINI_API_KEY) or "
+                         "'claude' — the PRODUCTION judge (event_identity.ClaudeAdapter, "
+                         "ANTHROPIC_API_KEY, model RWE_EVENT_JUDGE_MODEL unless --model). The "
+                         "claude arm is the Stage 0.4 enablement gate")
+    ap.add_argument("--model", default=None,
+                    help="claude arm only: override the model id (default: the deployed "
+                         "RWE_EVENT_JUDGE_MODEL, so the gate measures what would serve)")
     args = ap.parse_args(argv)
 
     rows = [json.loads(l) for l in open(args.pairs, encoding="utf-8")]
@@ -225,14 +287,28 @@ def main(argv=None, adapter=None) -> int:
     if args.limit:
         rows = rows[: args.limit]
 
-    if adapter is None:
+    if adapter is None and args.adapter == "claude":
+        import event_identity
+        key = event_identity.api_key()
+        if not key:
+            print("ANTHROPIC_API_KEY is not set — refusing to run. (Set it in deploy/.env; the "
+                  "api service passes it through, so `dc run --rm -T api …` carries it.)")
+            return 1
+        adapter = ClaudeHarnessAdapter(
+            event_identity.ClaudeAdapter(key, model=args.model, sleep=args.sleep))
+    elif adapter is None:
         key = os.environ.get("GEMINI_API_KEY", "").strip()
         if not key:
             print("GEMINI_API_KEY is not set — refusing to run.")
             return 1
         adapter = GeminiAdapter(key, sleep=args.sleep)
     print(f"MODEL UNDER TEST     : {adapter.name}")
-    print(f"  This benchmark measures {adapter.name} — NOT Claude Opus.")
+    if isinstance(adapter, ClaudeHarnessAdapter):
+        print(f"  This benchmark measures the PRODUCTION judge adapter on {adapter.name} — the "
+              f"Stage 0.4 gate for RWE_EVENT_JUDGE=1.")
+    else:
+        print(f"  This benchmark measures {adapter.name} — a research arm, not the production "
+              f"judge.")
     print(f"pairs                : {len(rows)}  (store: {args.out}; judged pairs are skipped)")
 
     # verdict store: append + resume
