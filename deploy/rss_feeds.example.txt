@@ -22,7 +22,10 @@
 # --- Left / center-left ---
 The Guardian|https://www.theguardian.com/us-news/rss
 NPR|https://feeds.npr.org/1001/rss.xml
-CNN|http://rss.cnn.com/rss/cnn_topstories.rss
+# CNN's RSS is abandoned: on 2026-09-02 rss.cnn.com/rss/cnn_topstories.rss still listed
+# April-2023 articles (median publication date 3.4 years old at first sight), and every poll
+# re-inserted them after retention pruned them. Reach CNN through its news sitemap via the
+# source-admission flow instead of a feed.
 The New York Times|https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml
 
 # --- Center ---
