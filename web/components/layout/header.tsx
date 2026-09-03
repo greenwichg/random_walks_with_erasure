@@ -85,7 +85,9 @@ export function Header() {
   }, []);
 
   return (
-    <header className="glass safe-top sticky top-0 z-20 border-b">
+    // On desktop the bar is a tile like every other surface (card, not page) over the grey page;
+    // below lg it is the page-tinted glass it always was.
+    <header className="glass safe-top sticky top-0 z-20 border-b lg:bg-card/85">
       {/* Desktop top strip — the reference's utility line above the bar. Below lg the utility bar
           renders under the header instead (chrome-slots.tsx), as it always has. */}
       <div className="hidden border-b lg:block">

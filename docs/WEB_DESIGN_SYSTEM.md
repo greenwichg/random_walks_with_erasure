@@ -94,6 +94,36 @@ live in `globals.css`):
 - **Subsets.** Latin and Latin-extended are shipped (all five UI languages); scripts neither
   face covers (Hangul, CJK, Vietnamese tone marks) fall through to the system stack.
 
+## 3b · Desktop surface tier (≥ lg) — the page is grey, the content is tiles
+
+From `lg` the page and the content sit on **different** surfaces, the way the desktop reference
+does. Below `lg` nothing changes: the phone keeps its near-white page.
+
+| Token | < lg | ≥ lg light | ≥ lg dark |
+|---|---|---|---|
+| `--background` (the page) | near-white / near-black | `220 10% 94%` | `220 7% 7%` |
+| `--card` / `--popover` (tiles) | white / `11%` | white | `220 6% 11%` |
+| `--muted` · `--secondary` · `--accent` · `--border` · `--input` | base | step down with the page | base |
+
+- **Every module is a tile.** `bg-card` + `border` is the default for anything that groups
+  content; the page grey is only ever the ground between tiles. Existing `bg-card` surfaces
+  (story cards, rail modules, `SectionCard`, menus, the masthead at `lg:bg-card/85`) became
+  tiles with no component change — that is the point of moving only the page-level tokens.
+- **A field is a tile** (`Input` → `bg-card`), so it stays visible whether it sits on the page or
+  inside a card. **A raised element inside a recessed control is a tile too** — the selected
+  segment of a segmented control, the switch thumb, the slider thumb (`bg-card`, not
+  `bg-background`; on desktop the page and the recessed track are both grey).
+- **A deliberate recess keeps `bg-background`**: the masthead search pill, the filter popovers'
+  own search inputs, the story-intelligence stat boxes and publisher chips. They read as wells in
+  the surface above them.
+- **Ring offsets default to `--card`** (`tailwind.config.ts`), because that is the surface most
+  focusable elements sit on; the few chrome controls on the page itself say
+  `ring-offset-background` explicitly.
+- **Scope each tier to its own theme.** `:root` and `.dark` share specificity, so the desktop
+  block uses `:root:not(.dark)` and `:root.dark`. A bare `:root` there repaints *both* themes —
+  it shipped once and turned dark-mode topic chips pale-on-pale. Pinned by
+  `lib/theme-tokens.test.ts`.
+
 ## 4 · Spacing & elevation rule
 
 - Rail modules: `p-4`, **border-only** cards.

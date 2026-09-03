@@ -40,6 +40,54 @@ function colorsBlock(): string {
   throw new Error("unbalanced braces in the colors block");
 }
 
+/** globals.css, read as text for the same reason the config is. */
+const CSS = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "app", "globals.css"),
+  "utf-8",
+);
+
+describe("desktop surface tier", () => {
+  it("scopes each theme's overrides so they cannot leak into the other", () => {
+    // `:root` and `.dark` share specificity (0,1,0), so a bare `:root` block inside the desktop
+    // media query — which sits after `.dark` in the file — wins in BOTH themes. That shipped
+    // once: the light tier's `--accent` (89% lightness) landed under the dark theme's
+    // `--accent-foreground` (92%) and every topic chip became pale-on-pale. The `:not(.dark)` /
+    // `.dark` pair is what keeps each tier inside its own theme.
+    const at = CSS.indexOf("@media (min-width: 1024px)");
+    assert.ok(at >= 0, "globals.css has no desktop surface tier");
+    const block = CSS.slice(at, CSS.indexOf("\n  }\n}", at));
+    assert.ok(
+      block.includes(":root:not(.dark)"),
+      "the light desktop tier must be scoped `:root:not(.dark)`, or it also repaints dark mode",
+    );
+    assert.ok(
+      block.includes(":root.dark"),
+      "the dark desktop tier must be scoped `:root.dark`",
+    );
+    assert.ok(
+      !/\n\s*:root\s*\{/.test(block),
+      "an unscoped `:root` block inside the desktop tier overrides BOTH themes",
+    );
+  });
+
+  it("keeps the card surface distinct from the page surface in both desktop themes", () => {
+    // The whole tier rests on this: tiles are `--card`, the page is `--background`. If a theme
+    // ever set them to the same value the desktop layout would flatten into one sheet.
+    for (const [scope, expectedPage] of [
+      [":root:not(.dark)", "220 10% 94%"],
+      [":root.dark", "220 7% 7%"],
+    ] as const) {
+      const at = CSS.indexOf(scope, CSS.indexOf("@media (min-width: 1024px)"));
+      assert.ok(at >= 0, `the desktop tier defines ${scope}`);
+      const body = CSS.slice(at, CSS.indexOf("}", at));
+      assert.ok(
+        body.includes(`--background: ${expectedPage}`),
+        `${scope} sets the desktop page surface`,
+      );
+    }
+  });
+});
+
 describe("tailwind theme colours", () => {
   it("defines no colour whose name shadows a built-in utility", () => {
     const block = colorsBlock();

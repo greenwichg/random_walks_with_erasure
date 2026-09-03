@@ -31,7 +31,10 @@ const TabsTrigger = React.forwardRef<
       // MB1: `shrink-0` keeps each tab at its natural width so the strip scrolls (see TabsList)
       // instead of squishing labels when it overflows a narrow screen.
       "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
-      "data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-soft",
+      // The selected segment is a TILE lifted out of the recessed list (`bg-muted`), so it takes
+      // the card surface — on desktop the page and the list are both grey and `bg-background`
+      // would have left it 4% apart from its own track.
+      "data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-soft",
       className,
     )}
     {...props}

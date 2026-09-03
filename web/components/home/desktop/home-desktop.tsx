@@ -42,6 +42,8 @@ import { cn } from "@/lib/utils";
 const SECTION_TITLE = "text-[19px] font-semibold leading-tight tracking-tight";
 const LABEL = "text-[13px] font-medium text-muted-foreground";
 const OUTLINE_BTN = "h-8 rounded-md px-3 text-[13px] font-medium";
+/** Every module is a tile on the page surface (globals.css, desktop surfaces): card, hairline, 16px. */
+const TILE = "rounded-md border bg-card p-4";
 
 /**
  * Hands out stories in page order. Every module prefers events no module above has shown; the
@@ -131,7 +133,7 @@ export function HomeDesktop({
               <div className="col-span-3 min-w-0">
                 <Briefing facts={facts} />
                 {plan.side.length > 0 && (
-                  <section aria-labelledby="news-stories-heading" className="mt-6">
+                  <section aria-labelledby="news-stories-heading" className={cn(TILE, "mt-4")}>
                     <h2 id="news-stories-heading" className={cn(SECTION_TITLE, "mb-1")}>
                       {t("home.newsStories")}
                     </h2>
@@ -144,7 +146,7 @@ export function HomeDesktop({
                 )}
               </div>
 
-              <div className="col-span-6 min-w-0">
+              <div className={cn("col-span-6 min-w-0", TILE)}>
                 {hero && <LeadStory story={hero} />}
                 {plan.centre.length > 0 && (
                   <ul className="mt-4 border-t">
@@ -155,24 +157,22 @@ export function HomeDesktop({
                 )}
               </div>
 
-              <div className="col-span-3 min-w-0">
+              <div className="col-span-3 min-w-0 space-y-4">
                 <BlindspotRail stories={plan.spots} />
                 <MyNewsBias dashboard={dashboard} />
               </div>
             </div>
 
-            <hr className="my-8" />
-
             {/* Row 2 — stories with thumbnails beside the local module */}
-            <div className="grid grid-cols-12 gap-6">
-              <div className="col-span-9 min-w-0">
+            <div className="mt-4 grid grid-cols-12 gap-6">
+              <div className={cn("col-span-9 min-w-0", TILE)}>
                 <ul className="-mt-3">
                   {plan.band.map((s) => (
                     <StoryRow key={s.id} story={s} size="md" thumb />
                   ))}
                 </ul>
               </div>
-              <div className="col-span-3 min-w-0 border-l pl-6">
+              <div className={cn("col-span-3 min-w-0", TILE)}>
                 <LocalNews />
               </div>
             </div>
@@ -180,9 +180,8 @@ export function HomeDesktop({
             {plan.sections[0] && <TopicSection {...plan.sections[0]} />}
 
             {/* Latest stories beside the topic index */}
-            <hr className="my-8" />
-            <div className="grid grid-cols-12 gap-6">
-              <div className="col-span-9 min-w-0">
+            <div className="mt-4 grid grid-cols-12 gap-6">
+              <div className={cn("col-span-9 min-w-0", TILE)}>
                 <h2 className={cn(SECTION_TITLE, "mb-1")}>{t("home.latest.title")}</h2>
                 <ul>
                   {plan.latestList.map((s) => (
@@ -190,7 +189,7 @@ export function HomeDesktop({
                   ))}
                 </ul>
               </div>
-              <div className="col-span-3 min-w-0 border-l pl-6">
+              <div className={cn("col-span-3 min-w-0", TILE)}>
                 <SimilarTopics topics={rail} active={topic} onSelect={setTopic} />
               </div>
             </div>
@@ -198,8 +197,7 @@ export function HomeDesktop({
             {plan.sections[1] && <TopicSection {...plan.sections[1]} />}
 
             {/* Closing run */}
-            <hr className="my-8" />
-            <section aria-labelledby="latest-news-heading">
+            <section aria-labelledby="latest-news-heading" className={cn(TILE, "mt-4")}>
               <h2 id="latest-news-heading" className={cn(SECTION_TITLE, "mb-1")}>
                 {t("home.latestNewsStories")}
               </h2>
@@ -253,7 +251,7 @@ function TopicStrip({
   );
 
   return (
-    <div className="border-b">
+    <div className="border-b bg-card">
       <div className="mx-auto flex h-11 w-full max-w-6xl items-center gap-2 px-8">
         <button type="button" aria-hidden tabIndex={-1} onClick={() => scroll(-1)} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
           <ChevronLeft className="h-4 w-4" />
@@ -282,7 +280,7 @@ function Briefing({ facts }: { facts: HomeModel["facts"] }) {
   const { t, timeAgo, formatCompact } = useTranslation();
   const flagged = facts.blindspotCount > 0;
   return (
-    <section aria-labelledby="briefing-heading" className="border-b pb-4">
+    <section aria-labelledby="briefing-heading" className={TILE}>
       <h2 id="briefing-heading" className={cn(SECTION_TITLE, "mb-2")}>
         {t("home.briefing.title")}
       </h2>
@@ -382,7 +380,7 @@ function SpotCard({ story, showTopic = true }: { story: Story; showTopic?: boole
 function BlindspotRail({ stories }: { stories: Story[] }) {
   const { t } = useTranslation();
   return (
-    <section aria-labelledby="blindspot-rail-heading" className="border-b pb-5">
+    <section aria-labelledby="blindspot-rail-heading" className={TILE}>
       <h2 id="blindspot-rail-heading" className="inline-flex items-center gap-2 font-sans text-[15px] font-bold uppercase tracking-wide">
         <EyeOff className="h-5 w-5" aria-hidden />
         {t("home.blindspots.title")}
@@ -412,7 +410,7 @@ function MyNewsBias({ dashboard }: { dashboard: DashboardSummary | undefined }) 
   const days = dashboard?.streakDays ?? 0;
 
   return (
-    <section aria-labelledby="my-bias-heading" className="pt-5">
+    <section aria-labelledby="my-bias-heading" className={TILE}>
       <h2 id="my-bias-heading" className={SECTION_TITLE}>
         {t("home.myBias.title")}
       </h2>
@@ -497,7 +495,7 @@ function TopicSection({ group, lead, gaps }: { group: TopicGroup; lead: Story; g
   const href = `/stories?topic=${encodeURIComponent(group.topic)}`;
   const headingId = `topic-${group.topic.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
-    <section aria-labelledby={headingId} className="mt-8 border-t pt-6">
+    <section aria-labelledby={headingId} className={cn(TILE, "mt-4")}>
       <div className="mb-4 flex items-center justify-between gap-4">
         <h2 id={headingId} className="text-[22px] font-bold leading-tight tracking-tight">
           {t("home.topic.section", { topic: group.topic })}

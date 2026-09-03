@@ -283,7 +283,8 @@ function ViewToggle({
       onClick={onClick}
       className={cn(
         "touch-target inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition-colors",
-        active ? "bg-background text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground",
+        // `bg-card`: the selected segment is a tile lifted out of the recessed track (ui/tabs.tsx).
+        active ? "bg-card text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground",
       )}
     >
       <Icon className="h-4 w-4" /> {label}

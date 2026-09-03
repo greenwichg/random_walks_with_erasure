@@ -130,6 +130,42 @@
     --own-corporation: 215 24% 60%;
     --own-other: 330 50% 68%;
   }
+
+  /*
+   * DESKTOP SURFACES (≥ lg). The reference desktop layout is tiered: a light-grey PAGE with white
+   * tiles on it in the light theme, a near-black page with slightly lifted tiles in the dark one.
+   * Below lg the palette above stands — the phone keeps its near-white page.
+   *
+   * Only the page-level tokens move. `--card` / `--popover` stay white in light, so every surface
+   * that already paints itself (`bg-card` modules, story cards, filter pills, inputs, menus) rises
+   * off the page as a tile without a single component changing; the neutral elevated surfaces
+   * (`--muted`, `--secondary`, `--accent`) and the hairline (`--border`) step down with the page so
+   * they still read as darker-than-their-ground everywhere, including directly on the page
+   * (skeletons, hover tints, chips). Anything that intentionally uses another surface keeps it.
+   *
+   * THE SELECTORS MATTER. `:root` and `.dark` have the SAME specificity (0,1,0), so a bare
+   * `:root` block here — sitting later in the file — would win in BOTH themes and paint the dark
+   * app with the light tier's greys. It did, briefly: `--accent` at 89% lightness under
+   * `--accent-foreground` at 92% turned every topic chip into pale-on-pale. The light tier is
+   * therefore `:root:not(.dark)` (0,2,0) and the dark tier `:root.dark` (0,2,0), so each theme's
+   * desktop values beat only its own base block.
+   */
+  @media (min-width: 1024px) {
+    :root:not(.dark) {
+      --background: 220 10% 94%;
+      --muted: 220 10% 90%;
+      --secondary: 220 10% 91%;
+      --accent: 220 12% 89%;
+      --border: 220 12% 86%;
+      --input: 220 12% 84%;
+    }
+    :root.dark {
+      --background: 220 7% 7%;
+      --card: 220 6% 11%;
+      --popover: 220 6% 12%;
+      --border: 220 6% 19%;
+    }
+  }
 }
 
 @layer base {

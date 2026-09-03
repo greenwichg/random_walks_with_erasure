@@ -369,7 +369,7 @@ export default function SettingsPage() {
                       className={cn(
                         "touch-target inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                         theme === opt.value
-                          ? "bg-background text-foreground shadow-soft"
+                          ? "bg-card text-foreground shadow-soft"
                           : "text-muted-foreground hover:text-foreground",
                       )}
                     >

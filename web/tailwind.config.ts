@@ -76,6 +76,12 @@ const config: Config = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      // A ring OFFSET is the gap between an element and its focus ring, painted in the colour of
+      // whatever the element sits on. Tailwind's default is a hardcoded white, which was invisible
+      // while every page was near-white and is not once the desktop page is grey (and never was
+      // right in dark mode). `--card` is the surface most focusable things actually sit on; the
+      // few chrome controls that sit on the page itself say `ring-offset-background` explicitly.
+      ringOffsetColor: { DEFAULT: "hsl(var(--card))" },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
         // Headline face (globals.css sets it on h1–h3 by default); the utility is for the
