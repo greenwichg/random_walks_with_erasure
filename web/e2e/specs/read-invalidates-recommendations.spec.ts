@@ -10,7 +10,7 @@ import { seedReads } from "../helpers";
  * article and returned to Recommendations inside that minute was served the PRE-read feed from
  * cache, with no network request at all.
  *
- * EVERY navigation here is a SOFT one (sidebar link clicks), and that is the whole design of the
+ * EVERY navigation here is a SOFT one (masthead nav link clicks), and that is the whole design of the
  * test: `page.goto` is a full document load that throws the QueryClient away, so a fresh fetch
  * afterwards proves nothing — the first draft of this test passed against the un-fixed hook for
  * exactly that reason. Under soft navigation the cache survives, React Query does not refetch a
@@ -33,6 +33,12 @@ test("a recorded read marks the recommendations feed stale, not 60s-cached", asy
   await page.context().route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (r) => r.abort());
 
   const nav = (name: string) => page.getByRole("link", { name, exact: true }).first();
+  // Reading History sits under the desktop masthead's "More" menu (desktop-nav.tsx); the item is
+  // still a Next <Link>, so the navigation stays SOFT — the property this whole test rests on.
+  const navMore = async (name: string) => {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("menuitem", { name, exact: true }).click();
+  };
 
   // 1. One hard load to enter the app, then prime the feed by SOFT-navigating to it.
   await page.goto("/history");
@@ -43,7 +49,7 @@ test("a recorded read marks the recommendations feed stale, not 60s-cached", asy
   await primed;                                  // the feed is now cached and 60 s fresh
 
   // 2. Soft-navigate back and record a read. The QueryClient — and its fresh feed entry — persist.
-  await nav("Reading History").click();
+  await navMore("Reading History");
   const read = page.getByTitle("Open the article and record it as read").first();
   await expect(read).toBeVisible();
   const clickedAt = Date.now();

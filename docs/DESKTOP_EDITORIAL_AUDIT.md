@@ -79,9 +79,56 @@ discover, a publisher, search).
   paint, latin-ext (~21 KB + ~11 KB) only when such characters render; all served from
   `/_next/static/media` with immutable hashes.
 
-## 5 · Follow-ups (not done here)
+## 5 · Follow-ups from part 1
 
 - Mobile: the type system applies everywhere automatically, but the mobile headline scale was
   not re-tuned; check the hero at 390px before shipping a mobile-specific pass.
 - The home lead could lose its card frame and sit on the page ground with a hairline rule below —
   a stronger editorial "front page" move than a boxed hero. Left for a decision with screenshots.
+
+---
+
+# Part 2 · Structural rework — layout, navigation, hierarchy, cards, filters, responsive
+
+**Scope.** Desktop only (`lg` ≥ 1024px and up). The mobile and tablet chrome is byte-for-byte
+what it was: the drawer, the page label, the icon buttons, the account menu. Every route, query,
+control and data field is preserved; what changed is where things sit and how they read.
+
+**Method.** All fifteen `(app)` routes were screenshotted at 1024, 1280 and 1440 (light) before
+and after — home, recommendations, guide, discover, stories, story, analyze, saved, report,
+analytics, history, profile, settings, publisher, search — and compared against the desktop
+patterns of Ground News (see the sourcing caveat at the top of this document).
+
+## 6 · Gaps found, and what closed them
+
+| Area | Before | Ground News-grade pattern | After |
+|---|---|---|---|
+| **Layout / shell** | Fixed 256px sidebar + sticky header. The sidebar took a fifth of a 1280px screen and a quarter of 1024px; content was ~1120px at 1440 and 704px at 1024. | Full-width masthead; one centred content column (~1280px); the page gets the whole width. | Sidebar retired on desktop. Header, utility strip, page and footer share one `max-w-7xl` column with the same gutters. Content is 1280px at 1440 and 960px at 1024. |
+| **Navigation** | 12-item grouped rail (a directory), the current page named three times (rail row + header label + h1), a "Reading streak" card in the rail duplicating the Home rail's stat. | Six-or-so section links in the top bar, current section underlined; overflow under a menu; account under the avatar. | `DesktopNav`: Home · Stories · Discover · Recommendations · Health Report · Guide + "More" (Saved, Reading History, Analytics, Analyze). Active section = a rule on the header border. Page label hidden at lg+; the h1 is the one title. Order lives in `@ih/core/logic/nav`. |
+| **Search** | A small "Search ⌘K" pill. | A real search field in the masthead. | From xl a 320px field with the real placeholder; at lg an icon (the masthead budget); both open the same ⌘K overlay. |
+| **Information hierarchy** | Story page's rail at 1024px was 230px: stat boxes wrapped, timeline rows broke mid-word. | Two-column story page with a rail wide enough for its own modules. | Rail is ~310px at 1024 and ~410px at 1440; nothing wraps. Headline-first order from part 1 kept. |
+| **Spacing** | Header gutters (`px-4 lg:px-8`, no max width) did not align with page gutters (`max-w-7xl`); the install prompt used a third set. | Every horizontal edge on one grid. | One gutter definition; the install prompt sits on the content column. |
+| **Cards** | Stories cards lifted on hover (`-translate-y-0.5`); topic chips indigo (part 1). | Flat cards, hover as tone/shadow, colour reserved for data. | Hover is a shadow change only; chips neutral. Coverage plate, spectrum bars, freshness badges unchanged — they are the product's own data marks. |
+| **Filters** | Four pages, four hand-rolled filter rows; only two showed a result count; Discover showed none. | One filter row, count always in the same place. | `FilterBar`: pills left, count right (`N stories`, `N articles`, `N results`), one margin. Stories, Discover, Search, Reading History. |
+| **Typography** | Part 1. | — | Unchanged from part 1. |
+| **Interactions** | Sidebar spring-animated active pill. | Section underline; menus that never lock the page. | `ActiveRule`; "More" and the account menu are non-modal (no scroll lock, no `aria-hidden` on the document). ⌘K unchanged. |
+| **Responsive** | Grids went to three columns only at xl (1280); at 1024 two columns of 330px cards. Story rail broken at 1024 (above). | Three columns from ~1000px; masthead that fits at 1024. | Every article/story grid is three columns from lg. Masthead measured at 1024: nav `px-2` (xl `px-3`), search icon-only, action cluster `shrink-0`. |
+
+## 7 · Preserved, deliberately
+
+- Every route is reachable from the masthead (inline, "More", or the account menu) and the
+  footer; the ⌘K palette is unchanged.
+- The mobile drawer still renders the full grouped `NAV`, sections and all.
+- All page content, queries, filters, sorts, pagination, feedback strips, save/read pipelines,
+  settings and the floating save bar (now centred without the sidebar offset) are unchanged.
+- Hidden View's own identity: the indigo mark, the charcoal neutrals, the coverage plate, blind
+  spots, story intelligence, the reader's health rail beside the day's coverage.
+
+## 8 · Verification (part 2)
+
+- `tsc --noEmit`, `next lint`, `check:i18n` (parity across 5 languages; the two retired sidebar
+  keys removed, `nav.more` and `header.primaryNav` added), web unit suite, `next build`.
+- Screenshots at 1024 / 1280 / 1440 after the change: no horizontal scroll on any route, masthead
+  fits at 1024 in English, three-column grids from lg, story rail intact at 1024.
+- One e2e spec updated for the new overflow: `read-invalidates-recommendations.spec.ts` reaches
+  Reading History through the "More" menu — still a soft navigation, which is what it tests.

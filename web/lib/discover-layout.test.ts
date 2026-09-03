@@ -17,9 +17,12 @@ import { join } from "node:path";
 
 const WEB = join(import.meta.dirname, "..");
 const read = (p: string) => readFileSync(join(WEB, p), "utf8");
-const GRID = "grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3";
+// Three columns from lg, not xl (desktop rework, docs/DESKTOP_EDITORIAL_AUDIT.md part 2): with
+// the sidebar gone the content column is 960px at 1024, which holds three ~300px cards — the
+// density of a news product's desktop feed — where two 460px cards read as a tablet layout.
+const GRID = "grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3";
 
-test("every card stream renders the same responsive grid: 1 column, md 2, xl 3", () => {
+test("every card stream renders the same responsive grid: 1 column, md 2, lg 3", () => {
   for (const page of [
     "app/(app)/discover/page.tsx",
     "app/(app)/search/page.tsx",

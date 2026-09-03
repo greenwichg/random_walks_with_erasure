@@ -15,7 +15,7 @@ import { queryKeys, services } from "@ih/core/api/services";
  *
  * This component collapses the phases: it mounts with the providers (the same commit that starts
  * the push reconciler at ~311 ms — the measured earliest) and prefetches the three shell queries
- * through the SHARED QueryClient. The sidebar's `useDashboard`, the settings surfaces'
+ * through the SHARED QueryClient. The home rail's `useDashboard`, the settings surfaces'
  * `useSettings`, and the header's `useNotifications` then adopt the already-in-flight promises by
  * key — React Query deduplicates, so nothing fetches twice and no consumer changes.
  *
@@ -36,7 +36,7 @@ export function ShellPrefetch({ hasSession }: { hasSession: boolean }) {
     if (!hasSession || fired.current) return;
     fired.current = true;               // once per app load; StrictMode double-mount included
     // R1b: ONE round trip for the whole shell. The mechanism matters more than the endpoint: a
-    // seed applied AFTER the response arrives loses the race — the sidebar's, header's and
+    // seed applied AFTER the response arrives loses the race — the home rail's, header's and
     // reconciler's hooks fire their own queryFns in this same commit, milliseconds from now. So
     // each shell key gets an in-flight PREFETCH registered synchronously here, whose queryFn
     // resolves from one shared bootstrap promise; a consumer mounting later joins the pending

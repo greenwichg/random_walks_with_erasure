@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { FooterSlot, UtilityBarSlot } from "@/components/layout/chrome-slots";
@@ -9,11 +8,17 @@ import { engineAuthHeaders } from "@/lib/engine-auth";
 import { needsOnboarding, type OnboardingState } from "@/lib/onboarding";
 
 /**
- * The authenticated app shell (Template-4): fixed sidebar (lg+) + sticky header + the global
- * utility strip + scrolling main + the global footer. Every `(app)` page inherits the full
- * editorial chrome by being rendered here — pages no longer carry their own utility bar or
+ * The authenticated app shell (Template-4): a sticky full-width masthead (wordmark + primary
+ * nav on desktop, drawer + page label below lg) + the global utility strip + scrolling main +
+ * the global footer, all sharing one centred content column. Every `(app)` page inherits the
+ * full editorial chrome by being rendered here — pages no longer carry their own utility bar or
  * footer. The layout persists across route changes (App Router), so none of this chrome
  * remounts on navigation.
+ *
+ * The desktop shell was a fixed 256px sidebar until the desktop rework
+ * (docs/DESKTOP_EDITORIAL_AUDIT.md, part 2): it spent a fifth of a 1280px screen on a directory,
+ * named the page twice, and at 1024px left every companion rail too narrow to hold its own
+ * stat boxes. The masthead gives the whole width back to the page.
  *
  * THE ONBOARDING GATE lives here, and here only.
  *
@@ -51,19 +56,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           Settings, and this layout is the one client boundary every authenticated page passes
           through. It persists across route changes, so it runs once per app load, not per navigation. */}
       <PushReconciler />
-      <Sidebar />
-      <div className="lg:pl-64">
-        <Header />
-        <UtilityBarSlot />
-        {/* Below the header and above the page, inside the content column so it inherits the
-            sidebar offset and the page's own max width. Renders nothing at all unless the browser
-            has offered an install path and the reader has not dismissed one recently. */}
-        <div className="px-4 pt-4 sm:px-6 lg:px-8">
-          <InstallPrompt />
-        </div>
-        <main className="min-h-[calc(100vh-4rem)]">{children}</main>
-        <FooterSlot />
+      <Header />
+      <UtilityBarSlot />
+      {/* Below the header and above the page, on the same centred column as the page content.
+          Renders nothing at all unless the browser has offered an install path and the reader
+          has not dismissed one recently. */}
+      <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+        <InstallPrompt />
       </div>
+      <main className="min-h-[calc(100vh-4rem)]">{children}</main>
+      <FooterSlot />
     </div>
   );
 }

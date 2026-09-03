@@ -11,6 +11,7 @@ import type { StoryQuery } from "@ih/core/domain/types";
 import { PageContainer } from "@/components/layout/page-container";
 import { StoryCard } from "@/components/stories/story-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
+import { FilterBar } from "@/components/shared/filter-bar";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { sortByCountryName } from "@ih/core/logic/countries";
 import { activeLang } from "@/lib/active-lang";
@@ -218,7 +219,15 @@ export function StoryBrowser({
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">{description}</p>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      <FilterBar
+        trailing={
+          total > 0
+            ? total === 1
+              ? t("stories.count.one", { n: total })
+              : t("stories.count.other", { n: total })
+            : undefined
+        }
+      >
         <FilterSelect label={t("filter.topic")} value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />
         <FilterSelect
           label={t("filter.publisher")}
@@ -242,12 +251,7 @@ export function StoryBrowser({
           />
         )}
         <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} resettable={false} />
-        {total > 0 && (
-          <span className="ml-auto text-sm text-muted-foreground">
-            {total === 1 ? t("stories.count.one", { n: total }) : t("stories.count.other", { n: total })}
-          </span>
-        )}
-      </div>
+      </FilterBar>
 
       {/* Counted facts for the selected country (the former Countries-page overview, folded in):
           all three numbers come straight from the places facets already fetched for the picker. */}
@@ -260,7 +264,7 @@ export function StoryBrowser({
       )}
 
       {isLoading && (
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-52 rounded-lg" />
           ))}
@@ -272,7 +276,7 @@ export function StoryBrowser({
         <EmptyState icon={icon} title={t("stories.empty.title")} description={emptyDescription} className="mt-4" />
       )}
 
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
         {stories.map((story, i) => (
           <StoryCard key={story.id} story={story} index={i} priority={i < 2} />
         ))}

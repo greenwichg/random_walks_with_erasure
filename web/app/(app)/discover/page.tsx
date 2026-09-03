@@ -8,6 +8,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
+import { FilterBar } from "@/components/shared/filter-bar";
 import { interleavePublishers } from "@ih/core/logic/discover-order";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -97,7 +98,8 @@ export default function DiscoverPage() {
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("discover.subtitle")}</p>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      {/* The count is the filters' answer, said where Stories and Search say theirs. */}
+      <FilterBar trailing={total > 0 ? t("stories.articlesCount", { n: total }) : undefined}>
         <FilterSelect label={t("filter.topic")} value={topic} options={opt(data?.topics ?? [])} onChange={setTopic} />
         <FilterSelect
           label={t("filter.publisher")}
@@ -112,12 +114,12 @@ export default function DiscoverPage() {
         {countryOptions.length > 0 && (
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}
-      </div>
+      </FilterBar>
 
       {isLoading && (
         /* Uniform tall skeletons — an honest preview: every card carries the occupied image
            slot, so real cards land at near-identical heights in a stretch grid. */
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-[480px] rounded-lg" />
           ))}
@@ -147,7 +149,7 @@ export default function DiscoverPage() {
           display-title hygiene (engine), publisher interleave (above), the visible lean-pill
           tint (Badge variants), lean-said-once (leanDot={false} here), and the shared read/save
           flows. */}
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
         {shown.map((article, i) => (
           <DiscoverCard key={article.id} article={article} index={i % PAGE} priority={i < 2} leanDot={false} />
         ))}

@@ -49,7 +49,9 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
     <Wrapper className="cv-card" {...entrance}>
       <Link
         href={`/stories/${story.id}`}
-        className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card"
+        // Hover is a tone change, not a lift: the grid stays a flat, aligned sheet of cards and
+        // the headline's colour carries the affordance (desktop rework).
+        className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
       >
         {showImage ? (
           <ArticleImage

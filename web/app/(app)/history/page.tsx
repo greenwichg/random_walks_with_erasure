@@ -16,6 +16,7 @@ import { ReadingPatternStrip } from "@/components/history/reading-pattern";
 import { DailySummary } from "@/components/history/daily-summary";
 import { CalendarView } from "@/components/history/calendar-view";
 import { FilterSelect } from "@/components/shared/filter-select";
+import { FilterBar } from "@/components/shared/filter-bar";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { summarizeHistory, readingPattern, sessionize, dayKey, type ReadingSession } from "@ih/core/logic/history-insights";
 import { Input } from "@/components/ui/input";
@@ -125,8 +126,8 @@ export default function HistoryPage() {
         </div>
       </div>
 
-      {/* filter bar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      {/* filter bar — the shared row, with the search box as its leading, growing control */}
+      <FilterBar className="mb-4">
         <div className="relative min-w-[12rem] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("history.searchPlaceholder")} className="pl-9" />
@@ -150,7 +151,7 @@ export default function HistoryPage() {
             <X className="h-4 w-4" /> {t("common.clear")}
           </Button>
         )}
-      </div>
+      </FilterBar>
 
       {/* selected-day chip — a Calendar selection filtering the Timeline; removable */}
       {selectedDay && (

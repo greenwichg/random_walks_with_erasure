@@ -11,6 +11,7 @@ import type { SearchParams } from "@ih/core/domain/types";
 import { PageContainer } from "@/components/layout/page-container";
 import { DiscoverCard } from "@/components/discover/discover-card";
 import { FilterSelect, type FilterOption } from "@/components/shared/filter-select";
+import { FilterBar } from "@/components/shared/filter-bar";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Input } from "@/components/ui/input";
@@ -92,7 +93,15 @@ function SearchInner() {
         />
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      <FilterBar
+        trailing={
+          total > 0
+            ? total === 1
+              ? t("common.resultOne", { n: total })
+              : t("common.results", { n: total })
+            : undefined
+        }
+      >
         <FilterSelect label={t("filter.topic")} value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />
         <FilterSelect
           label={t("filter.publisher")}
@@ -106,15 +115,10 @@ function SearchInner() {
           <FilterSelect label={t("filter.country")} value={country} options={countryOptions} onChange={setCountry} />
         )}
         <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} resettable={false} />
-        {total > 0 && (
-          <span className="ml-auto text-sm text-muted-foreground">
-            {total === 1 ? t("common.resultOne", { n: total }) : t("common.results", { n: total })}
-          </span>
-        )}
-      </div>
+      </FilterBar>
 
       {isLoading && (
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-56 rounded-lg" />
           ))}
@@ -131,7 +135,7 @@ function SearchInner() {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
         {results.map((article, i) => (
           <DiscoverCard key={article.id} article={article} index={i} openedFrom="search" />
         ))}

@@ -8,14 +8,29 @@ the shell** (`web/app/(app)/layout.tsx`). This document is the map, not a second
 ## 1 · Shell (every `(app)` page inherits automatically)
 
 ```
-Sidebar (fixed rail lg+, Sheet drawer below)      components/layout/sidebar.tsx + nav-links.tsx
-Header  (sticky: nav trigger · page label ·       components/layout/header.tsx
-         search ⌘K · notifications · theme · user menu)
-UtilityBarSlot (date · extension)                 components/layout/chrome-slots.tsx
+Header  (sticky, full width; inner row on the      components/layout/header.tsx
+         content column)
+  lg+ : wordmark · primary nav (6 links + More)     components/layout/desktop-nav.tsx
+        · search field (xl; icon at lg) · bell ·     nav order/overflow: @ih/core/logic/nav
+        theme · account menu
+  <lg : drawer trigger · page label · search icon ·  components/layout/nav-links.tsx (drawer)
+        bell · theme · account menu   (unchanged by the desktop rework)
+UtilityBarSlot (date · extension)                  components/layout/chrome-slots.tsx
 main            (the page renders ONLY its content)
-FooterSlot      (site footer)                     components/layout/chrome-slots.tsx
+FooterSlot      (site footer)                      components/layout/chrome-slots.tsx
 ```
 
+- **One content column.** Header row, utility strip, pages and footer all sit on
+  `mx-auto max-w-7xl px-4 sm:px-6 lg:px-8`, so every edge lines up. There is no sidebar offset
+  any more (the fixed 256px rail was retired in the desktop rework — `docs/DESKTOP_EDITORIAL_AUDIT.md`
+  part 2); nothing may assume `lg:pl-64`.
+- **Desktop nav is a reading order, not a directory.** Home · Stories · Discover ·
+  Recommendations · Health Report · Guide inline; Saved · Reading History · Analytics · Analyze
+  under "More". The grouped `NAV` still drives the mobile drawer. The active section is a rule on
+  the header's bottom border (`ActiveRule`), never a filled pill.
+- **Masthead budget at lg (1024–1279px):** ~960px for wordmark + seven items + actions. Nav links
+  are `px-2` there (`xl:px-3`), the search control is icon-only (`xl:` field). Adding an inline
+  nav item means re-measuring at 1024 in every language.
 - Pages never render their own utility bar or footer.
 - **Immersive routes** (pinned-composer layouts like `/coach`) opt out of both slots via
   `IMMERSIVE_ROUTES` in `chrome-slots.tsx`.
@@ -30,6 +45,8 @@ FooterSlot      (site footer)                     components/layout/chrome-slots
 | Editorial 8/4 two-column | `PageGrid` with a `rail` (`components/layout/page-grid.tsx`) |
 | Full width | `PageContainer` alone |
 | Section heading (title · eyebrow · View-all) | `SectionHeader` (`components/shared/section-header.tsx`) |
+| Filter row (pills left · result count right) | `FilterBar` (`components/shared/filter-bar.tsx`) — Stories, Discover, Search, Reading History |
+| Card grid | `grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3` — three columns from lg on every article/story grid |
 
 ## 3 · Tokens (defined in `globals.css`, consumed via Tailwind)
 
@@ -43,7 +60,8 @@ FooterSlot      (site footer)                     components/layout/chrome-slots
 - Status colors (`--positive/--caution/--negative`, freshness badge palette) are semantic and never
   reused as accents.
 - Radius: `--radius: 0.6rem` (editorial, not app-round). Shadows: `shadow-soft` (resting),
-  `shadow-card` (hover/feature).
+  `shadow-card` (hover/feature). Hover is a tone or shadow change, never a lift/translate — the
+  grids stay flat, aligned sheets.
 
 ## 3a · Type system (desktop editorial audit, `docs/DESKTOP_EDITORIAL_AUDIT.md`)
 
