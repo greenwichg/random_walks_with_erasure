@@ -1023,5 +1023,10 @@
   "topics.section.topics": "Themen",
   "topics.section.places": "Orte",
   "topics.section.sources": "Quellen",
-  "topics.showAll": "Alle anzeigen"
+  "topics.showAll": "Alle anzeigen",
+  "alerts.title": "Meldungen",
+  "alerts.subtitle": "Alles, was Hidden View für dich markiert hat.",
+  "alerts.manage": "Verwalten",
+  "alerts.empty.title": "Noch keine Meldungen",
+  "alerts.empty.body": "Berichte, Serien-Erinnerungen und Blindspot-Hinweise erscheinen hier."
 }

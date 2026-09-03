@@ -1023,5 +1023,10 @@
   "topics.section.topics": "Sujets",
   "topics.section.places": "Lieux",
   "topics.section.sources": "Sources",
-  "topics.showAll": "Tout afficher"
+  "topics.showAll": "Tout afficher",
+  "alerts.title": "Alertes",
+  "alerts.subtitle": "Tout ce que Hidden View a signalé pour vous.",
+  "alerts.manage": "Gérer",
+  "alerts.empty.title": "Aucune alerte",
+  "alerts.empty.body": "Rapports, rappels de série et alertes d'angles morts apparaîtront ici."
 }

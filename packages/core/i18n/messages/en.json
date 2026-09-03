@@ -1023,5 +1023,10 @@
   "topics.section.topics": "Topics",
   "topics.section.places": "Places",
   "topics.section.sources": "Sources",
-  "topics.showAll": "Show all"
+  "topics.showAll": "Show all",
+  "alerts.title": "Alerts",
+  "alerts.subtitle": "Everything Hidden View has flagged for you.",
+  "alerts.manage": "Manage",
+  "alerts.empty.title": "No alerts yet",
+  "alerts.empty.body": "Reports, streak reminders and blind-spot alerts will appear here."
 }

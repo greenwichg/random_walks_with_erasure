@@ -76,6 +76,7 @@ export function MenuPanel({ onNavigate }: { onNavigate: () => void }) {
         <Row href="/" chevron={false} onNavigate={onNavigate}>{t("nav.dashboard")}</Row>
         <Row href="/profile" chevron={false} onNavigate={onNavigate}>{t("home.menu.myAccount")}</Row>
         <Row href="/report" chevron={false} onNavigate={onNavigate}>{t("home.myBias.title")}</Row>
+        <Row href="/alerts" chevron={false} onNavigate={onNavigate}>{t("alerts.title")}</Row>
         <Row chevron={false} onClick={() => signOut({ callbackUrl: "/signin" })}>{t("header.signOut")}</Row>
         <Divider />
         <Row href="/recommendations" onNavigate={onNavigate}>{t("nav.forYou")}</Row>

@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryKeys, services } from "@ih/core/api/services";
 import { useDiscover } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
+import { AccountTabs } from "@/components/shared/account-tabs";
 import { CountryBadge } from "@/components/shared/country-badge";
 import { FollowButton } from "@/components/shared/follow-button";
 import { PublisherLogo } from "@/components/shared/publisher-logo";
@@ -109,6 +110,7 @@ export default function TopicsPage() {
 
   return (
     <PageContainer className="pt-4">
+      <AccountTabs />
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">{t("topics.title")}</h1>
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">{t("topics.subtitle")}</p>

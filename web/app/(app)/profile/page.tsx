@@ -19,6 +19,7 @@ import {
 import type { Achievement, Profile } from "@ih/core/domain/types";
 import { useProfile } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
+import { AccountTabs } from "@/components/shared/account-tabs";
 import { SectionCard } from "@/components/shared/section-card";
 import { TrendChart } from "@/components/shared/trend-chart";
 import { DeltaBadge } from "@/components/shared/delta-badge";
@@ -72,6 +73,7 @@ export default function ProfilePage() {
 
   return (
     <PageContainer>
+      <AccountTabs />
       {/* Hero */}
       <Card className="mb-6 overflow-hidden">
         <div className="h-28 bg-gradient-to-r from-primary/25 via-lean-center/20 to-lean-right/20" />

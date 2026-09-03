@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useReport } from "@/hooks/use-data";
 import { track } from "@/lib/analytics";
 import { PageContainer } from "@/components/layout/page-container";
+import { AccountTabs } from "@/components/shared/account-tabs";
 import { ScoreRing } from "@/components/shared/score-ring";
 import { DeltaBadge } from "@/components/shared/delta-badge";
 import { MetricRadar } from "@/components/shared/metric-radar";
@@ -98,6 +99,7 @@ export default function ReportPage() {
 
   return (
     <PageContainer>
+      <AccountTabs />
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t("report.title")}</h1>

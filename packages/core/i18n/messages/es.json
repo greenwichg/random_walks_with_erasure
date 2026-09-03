@@ -1023,5 +1023,10 @@
   "topics.section.topics": "Temas",
   "topics.section.places": "Lugares",
   "topics.section.sources": "Fuentes",
-  "topics.showAll": "Ver todo"
+  "topics.showAll": "Ver todo",
+  "alerts.title": "Alertas",
+  "alerts.subtitle": "Todo lo que Hidden View ha marcado para ti.",
+  "alerts.manage": "Gestionar",
+  "alerts.empty.title": "Sin alertas",
+  "alerts.empty.body": "Los informes, recordatorios de racha y avisos de puntos ciegos aparecerán aquí."
 }
