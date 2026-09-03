@@ -7,7 +7,6 @@ import { ArrowLeft, EyeOff, Newspaper, Users } from "lucide-react";
 import { useRecommendations, useStories, useStory } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageGrid } from "@/components/layout/page-grid";
-import { SectionHeader } from "@/components/shared/section-header";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { ArticleImage } from "@/components/shared/article-image";
 import { ShareButton } from "@/components/shared/share-button";
@@ -19,7 +18,7 @@ import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-
 import { CoverageList } from "@/components/stories/coverage-list";
 import { FramingComparison } from "@/components/stories/framing-comparison";
 import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
-import { StoryListItem } from "@/components/home/story-list-item";
+import { MAX_CARDS, SimilarStories } from "@/components/stories/similar-stories";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
@@ -37,10 +36,10 @@ const fmtDate = (iso?: string) =>
  * (filterable coverage list + the intelligence timeline), where coverage is thin (breakdown panel's
  * zero-side callouts), and what to read next (related stories + the reader's own feed).
  *
- * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the four-item
- * related module — two SMALL story queries instead of the home page's full 60-story list. The RUM
+ * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the Similar
+ * Stories rail — two SMALL story queries instead of the home page's full 60-story list. The RUM
  * investigation measured that list at ~200 KB and ~a third of this page's entire API transfer, all
- * to pick 4 cards; on the entry paths that matter most (a shared link, a push-notification tap)
+ * to pick a handful of cards; on the entry paths that matter most (a shared link, a notification tap)
  * nothing has warmed the cache, so every such visitor paid it. The reader's recommendations reuse
  * their existing cached feed. No new endpoints — both queries are existing `/api/stories` filters.
  */
@@ -49,12 +48,12 @@ export default function StoryDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
   const { data: story, isLoading, isError, error, refetch } = useStory(id);
-  // Related coverage, same editorial rule as before — same topic first, then the day's top events,
-  // never this story itself — served by two bounded queries whose limits are worst-case sized: the
-  // topic query needs 4 after excluding self (5 covers it), and the top-6 fill still yields 4 when
-  // every one of its members is either self or a topic duplicate. One deliberate edge improved: a
-  // same-topic story ranked below the old top-60 window is now eligible — deeper topic coverage,
-  // same intent. The topic query waits for the story (its input); the fill query fires at once.
+  // Related coverage — same topic first, then the day's top events, never this story itself. Two
+  // bounded queries, deliberately left at their original limits: together they yield up to eleven
+  // candidates, and the rail's cap (MAX_CARDS) sits under that, so widening the module from four
+  // cards to a scrollable rail added NO request and no bytes — it spends candidates the page was
+  // already fetching and throwing away. A same-topic story ranked below the old top-60 window is
+  // eligible here. The topic query waits for the story (its input); the fill query fires at once.
   const topStories = useStories({ sort: "top", limit: 6 });
   const topicStories = useStories(
     { topic: story?.topic, sort: "top", limit: 5 },
@@ -83,7 +82,7 @@ export default function StoryDetailPage() {
         merged.push(s);
       }
     }
-    return merged.slice(0, 4);
+    return merged.slice(0, MAX_CARDS);
   }, [topicSettled, topicStories.data, topStories.data, id]);
 
   const back = (
@@ -295,22 +294,10 @@ export default function StoryDetailPage() {
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
 
-          {/* What to read next — same-topic first, from the same cached top-stories page. */}
-          {related.length > 0 && (
-            <section aria-labelledby="related-heading">
-              <SectionHeader
-                id="related-heading"
-                title={t("story.related")}
-                href="/stories"
-                actionLabel={t("home.viewAll")}
-              />
-              <ul className="divide-y">
-                {related.map((s) => (
-                  <StoryListItem key={s.id} story={s} variant="compact" showImage />
-                ))}
-              </ul>
-            </section>
-          )}
+          {/* What to read next — same-topic first, from the same cached top-stories page, as a
+              collapsible rail (similar-stories.tsx). Same selection the vertical list rendered;
+              only the presentation changed. */}
+          <SimilarStories stories={related} />
       </PageGrid>
     </PageContainer>
   );
