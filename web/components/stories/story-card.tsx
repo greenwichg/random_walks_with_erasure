@@ -8,30 +8,21 @@ import type { Story } from "@ih/core/domain/types";
 import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
-import { ArticleImage } from "@/components/shared/article-image";
+import { CardImage } from "@/components/shared/card-image";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
-import { CoveragePlate } from "@/components/stories/coverage-plate";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { cn } from "@/lib/utils";
 
 /** A clustered-story preview card — one event, coverage across the spectrum.
  *
- * Imageless stories render the COVERAGE PLATE in the image slot (coverage-plate.tsx): kicker,
- * publisher chips, the publisher-count credential and the labeled distribution band, composed as
- * a designed object. Same slot, same aspect, so imaged and imageless cards share one skeleton
- * and grid rows never leave a void — and every mark is a counted fact unique to each story,
- * never a stock illustration or category artwork. (The plate replaces the small spectrum strip
- * AND, on gap stories, the thin-side chip; each fact is said once.) */
+ * Imageless stories get the shared newspaper fallback in the image slot (card-image.tsx), the same
+ * one every article and story card in the app falls back to. It replaced the COVERAGE PLATE, which
+ * put this card's facts INSIDE the image slot and therefore had to suppress the spectrum strip and
+ * the thin-side chip below to avoid saying each thing twice. With one fallback image for every
+ * card, that conditional goes away: an imageless card now renders exactly like an imaged one —
+ * same strip, same chip, same rhythm — and the grid has one skeleton instead of two. */
 export function StoryCard({ story, index = 0, priority = false }: { story: Story; index?: number; priority?: boolean }) {
   const { t, formatCompact, timeAgo } = useTranslation();
-  // A hero URL that fails to LOAD is a third state the engine cannot see (it never downloads
-  // images, so a dead or hotlink-protected URL is only observable here): the reserved slot used
-  // to become a silent void with the spectrum strip still attached beneath it. Failure hands the
-  // slot to the plate and the strip/chip logic follows, so a dead hero and an absent hero end in
-  // the same designed card. Reset when a refetch changes the URL.
-  const [heroFailed, setHeroFailed] = React.useState(false);
-  React.useEffect(() => setHeroFailed(false), [story.image]);
-  const showImage = Boolean(story.image) && !heroFailed;
   // The entrance animation exists for the cards a reader can SEE arrive. Below the first grid rows
   // it plays offscreen — pure main-thread cost with no visible effect (R3: a framer wrapper per
   // card was a measurable share of the 24-card grid's 1.4 s of 4x-CPU long tasks). Static cards
@@ -53,20 +44,13 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
         // the headline's colour carries the affordance (desktop rework).
         className="group flex h-full flex-col rounded-lg border bg-card p-5 shadow-soft transition-shadow hover:shadow-card"
       >
-        {showImage ? (
-          <ArticleImage
-            src={story.image}
-            alt={story.title}
-            priority={priority}
-            className="mb-3"
-            onHidden={() => {
-              setHeroFailed(true);
-              track("story_hero_error", { host: urlHost(story.image), surface: "card" });
-            }}
-          />
-        ) : (
-          <CoveragePlate story={story} />
-        )}
+        <CardImage
+          src={story.image}
+          alt={story.title}
+          priority={priority}
+          className="mb-3"
+          onFallback={() => track("story_hero_error", { host: urlHost(story.image), surface: "card" })}
+        />
 
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -95,17 +79,14 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
 
         <div className="flex-1" />
 
-        {showImage && (
-          <div className="mt-4">
-            <SpectrumBar distribution={story.distribution} height={8} showLegend={false} />
-          </div>
-        )}
+        <div className="mt-4">
+          <SpectrumBar distribution={story.distribution} height={8} showLegend={false} />
+        </div>
 
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-          {/* On imageless gap stories the plate already STATES the thin side (with its rated
-              share) — repeating it here as a chip would say the same thing twice, so those
-              cards show the update time like any other. */}
-          {story.blindspotSide && showImage ? (
+          {/* Unconditional now: the fallback image carries no facts, so nothing below it can be a
+              repeat. Every card states its distribution and its thin side the same way. */}
+          {story.blindspotSide ? (
             <span
               className="inline-flex items-center gap-1 font-medium"
               style={{ color: LEAN_META[story.blindspotSide].color }}

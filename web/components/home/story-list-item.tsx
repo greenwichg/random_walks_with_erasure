@@ -4,7 +4,7 @@ import Link from "next/link";
 import { EyeOff } from "lucide-react";
 import type { LeanBucket, Story } from "@ih/core/domain/types";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
-import { ArticleImage } from "@/components/shared/article-image";
+import { CardImage } from "@/components/shared/card-image";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
@@ -185,9 +185,11 @@ export function StoryListItem({
           </div>
         </div>
 
-        {showImage && story.image && (
-          // Fixed width + ratio so thumbnails form a clean right-hand column across rows.
-          <ArticleImage
+        {showImage && (
+          // Fixed width + ratio so thumbnails form a clean right-hand column across rows — and
+          // the column is now unbroken: a story with no art gets the shared fallback rather than
+          // collapsing its cell and letting the text of that one row run full width.
+          <CardImage
             src={story.image}
             alt=""
             aspect="aspect-[16/10]"

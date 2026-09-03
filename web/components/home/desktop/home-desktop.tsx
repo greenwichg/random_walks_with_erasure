@@ -9,11 +9,10 @@ import type { TopicGroup } from "@ih/core/logic/home";
 import { countryName } from "@ih/core/logic/countries";
 import { useReport, useSearch, useSettings } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
-import { ArticleImage } from "@/components/shared/article-image";
+import { CardImage } from "@/components/shared/card-image";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useReadArticleAction } from "@/components/shared/read-article-button";
 import { Button } from "@/components/ui/button";
-import { CoveragePlate } from "@/components/stories/coverage-plate";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { BiasStrip } from "@/components/shared/bias-strip";
 import { StoryRow } from "@/components/shared/story-row";
@@ -308,35 +307,26 @@ function Briefing({ facts }: { facts: HomeModel["facts"] }) {
   );
 }
 
-/** The lead: picture (or the coverage plate), the headline at display scale, the labelled strip. */
+/** The lead: picture (or the shared fallback), the headline at display scale, the labelled strip. */
 function LeadStory({ story }: { story: Story }) {
   const { t, formatCompact } = useTranslation();
-  const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => setFailed(false), [story.image]);
-  const showImage = Boolean(story.image) && !failed;
   const publisherCount = story.publisherCount ?? story.publishers?.length ?? null;
 
   return (
     <article className="group">
       <Link href={`/stories/${story.id}`} className="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-        {showImage ? (
-          <ArticleImage
-            src={story.image}
-            alt={story.title}
-            priority
-            aspect="aspect-[16/9]"
-            className="rounded-md"
-            onHidden={() => setFailed(true)}
-          />
-        ) : (
-          <CoveragePlate story={story} className="mb-0" />
-        )}
-        {/* The plate already carries the labelled band; only a picture needs the strip under it. */}
-        {showImage && (
-          <div className="mt-3">
-            <BiasStrip distribution={story.distribution} labels />
-          </div>
-        )}
+        <CardImage
+          src={story.image}
+          alt={story.title}
+          priority
+          aspect="aspect-[16/9]"
+          className="rounded-md"
+        />
+        {/* Unconditional: the fallback carries no facts of its own, so the strip below it is never
+            a repeat — every lead reads the same whether or not a picture was published. */}
+        <div className="mt-3">
+          <BiasStrip distribution={story.distribution} labels />
+        </div>
         <h2 className="mt-3 text-balance text-[26px] font-bold leading-[1.15] tracking-tight transition-colors group-hover:text-primary">
           {story.title}
         </h2>
@@ -357,16 +347,10 @@ function SpotCard({ story, showTopic = true }: { story: Story; showTopic?: boole
   return (
     <li className="group">
       <Link href={`/stories/${story.id}`} className="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-        {story.image ? (
-          <>
-            <ArticleImage src={story.image} alt="" aspect="aspect-[16/9]" className="rounded-md" />
-            <div className="mt-2">
-              <BiasStrip distribution={story.distribution} labels />
-            </div>
-          </>
-        ) : (
-          <CoveragePlate story={story} className="mb-0 p-3" />
-        )}
+        <CardImage src={story.image} alt="" aspect="aspect-[16/9]" className="rounded-md" />
+        <div className="mt-2">
+          <BiasStrip distribution={story.distribution} labels />
+        </div>
         {kicker && <p className="mt-1.5 text-[11px] text-muted-foreground">{kicker}</p>}
         <h3 className="mt-1 text-[13px] font-semibold leading-snug tracking-tight transition-colors group-hover:text-primary">
           {story.title}
@@ -509,16 +493,10 @@ function TopicSection({ group, lead, gaps }: { group: TopicGroup; lead: Story; g
           <p className={cn(LABEL, "mb-3")}>{t("home.topic.latest", { topic: group.topic })}</p>
           <article className="group">
             <Link href={`/stories/${lead.id}`} className="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-              {lead.image ? (
-                <>
-                  <ArticleImage src={lead.image} alt={lead.title} aspect="aspect-[16/9]" className="rounded-md" />
-                  <div className="mt-3">
-                    <BiasStrip distribution={lead.distribution} labels />
-                  </div>
-                </>
-              ) : (
-                <CoveragePlate story={lead} className="mb-0" />
-              )}
+              <CardImage src={lead.image} alt={lead.title} aspect="aspect-[16/9]" className="rounded-md" />
+              <div className="mt-3">
+                <BiasStrip distribution={lead.distribution} labels />
+              </div>
               <h3 className="mt-3 text-balance text-[26px] font-bold leading-[1.15] tracking-tight transition-colors group-hover:text-primary">
                 {lead.title}
               </h3>

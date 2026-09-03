@@ -53,25 +53,31 @@ test("the masonry machinery stays retired", () => {
   }
 });
 
-test("every card leads with an occupied image slot — art or the publisher plate", () => {
+test("every card leads with an occupied image slot — art or the shared newspaper fallback", () => {
   const slot = read("components/shared/article-image-slot.tsx");
-  assert.ok(slot.includes("<ArticleImage"), "the slot renders article art when usable");
-  assert.ok(slot.includes("<PublisherLogo"), "and the publisher's mark otherwise");
-  assert.ok(slot.includes("article.imageSuspect"), "engine-flagged branding never fronts as art");
+  assert.ok(slot.includes("<CardImage"), "the article slot delegates to the one shared slot");
   assert.ok(
-    slot.includes('aria-hidden="true"'),
-    "the placeholder is decorative — the metadata row names the publisher",
+    slot.includes("suspect={article.imageSuspect}"),
+    "engine-flagged branding never fronts as art — it takes the fallback like an absent image",
   );
-  // The plate, not the void (2026-08-30): identity-derived colour from the shared core rule, so
-  // the same outlet is tinted identically on every surface — and the dimmed-grey treatment that
-  // read as a broken image beside real photos stays dead.
+  // The publisher plate is retired (the fallback brief): one image for every card in the app, so
+  // an article card and a story card with the same problem no longer look like two products.
   assert.ok(
-    slot.includes("placeholderHues(article.publisher"),
-    "the plate's colour must derive from the publisher via @ih/core/logic/placeholder-art",
+    !slot.includes("placeholderHues") && !slot.includes("<PublisherLogo"),
+    "the per-publisher plate stays retired — the outlet is named by the metadata row instead",
+  );
+  const image = read("components/shared/card-image.tsx");
+  assert.ok(
+    image.includes("<StoryFallbackArt"),
+    "CardImage falls back to the shared art rather than rendering nothing",
   );
   assert.ok(
-    !slot.includes("grayscale") && !slot.includes("opacity-35"),
-    "the dimmed-grey placeholder stays retired — the plate renders the mark in full colour",
+    image.includes('aria-hidden="true"'),
+    "the fallback is decorative — it carries no fact the card does not already state in text",
+  );
+  assert.ok(
+    !image.includes("return null"),
+    "the slot is never empty: a void in a grid row is the thing this component exists to end",
   );
   const card = read("components/discover/discover-card.tsx");
   const h3 = card.lastIndexOf("<h3");
@@ -99,6 +105,59 @@ test("the recommendation card reuses the SAME slot — one fallback implementati
       `${consumer} must not carry its own copy of the slot's internals`,
     );
   }
+});
+
+/**
+ * ONE fallback, every card surface. The requirement was "apply this consistently across the entire
+ * app", and the failure mode it replaced was ten surfaces each deciding for themselves: four
+ * rendered a plate, four rendered literally nothing (holes down a thumbnail column), two differed
+ * again. Anything that fronts a story or article card goes through CardImage, and no surface is
+ * allowed to reintroduce its own `image ? … : …` branch.
+ */
+test("every story surface fronts the ONE shared slot — no per-surface fallback, no voids", () => {
+  const surfaces = [
+    "components/stories/story-card.tsx",
+    "components/shared/lead-story.tsx",
+    "components/shared/spot-card.tsx",
+    "components/shared/story-row.tsx",
+    "components/home/story-list-item.tsx",
+    "components/home/hero-story.tsx",
+    "components/home/story-feature-card.tsx",
+    "components/home/desktop/home-desktop.tsx",
+  ];
+  for (const surface of surfaces) {
+    const src = read(surface);
+    assert.ok(src.includes("<CardImage"), `${surface} must front the shared slot`);
+    assert.ok(
+      !src.includes("<CoveragePlate"),
+      `${surface} must not re-introduce the plate as a card fallback`,
+    );
+    // The old `story.image ? … : …` / `&& story.image` guards are exactly what left the voids.
+    assert.ok(
+      !/\{\s*story\.image\s*(\?|&&)/.test(src) && !/\{\s*lead\.image\s*(\?|&&)/.test(src),
+      `${surface} must not branch on the image itself — CardImage owns that decision`,
+    );
+  }
+  // The fallback art itself: house-drawn, theme-aware, and clear of the lean axis, with the
+  // licensed-photo swap point kept to a single constant.
+  const art = read("components/shared/story-fallback-art.tsx");
+  assert.ok(art.includes("FALLBACK_PHOTO_SRC"), "the licensed-photo swap point stays a one-liner");
+  assert.ok(
+    art.includes("PLACEHOLDER_HUES"),
+    "accents come from the curated wheel, which is what keeps them off the lean axis",
+  );
+  assert.ok(
+    !/hsl\(\s*(214|356)\b/.test(art),
+    "no left-blue or right-red in art repeated on every imageless card — it would read as politics",
+  );
+  assert.ok(
+    art.includes("hsl(var(--card))") && art.includes("hsl(var(--foreground)"),
+    "the art is drawn in theme tokens, so dark mode is not a bright rectangle in a charcoal grid",
+  );
+  assert.ok(
+    art.includes('preserveAspectRatio="xMidYMid slice"'),
+    "the drawing crops like the photograph it stands in for (slice === object-fit: cover)",
+  );
 });
 
 test("the card flows image slot → headline → metadata → summary → slack → actions", () => {

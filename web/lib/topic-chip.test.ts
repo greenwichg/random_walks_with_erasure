@@ -52,6 +52,8 @@ const STUBS: Record<string, unknown> = {
     }),
   },
   "@/components/shared/article-image": { ArticleImage: () => null },
+  // The shared card slot — every story surface fronts it now, imaged or not.
+  "@/components/shared/card-image": { CardImage: () => null },
   "@/components/shared/spectrum-bar": { SpectrumBar: () => null },
   "@/components/stories/freshness-badge": { FreshnessBadge: () => null },
   "@ih/core/logic/metrics": {

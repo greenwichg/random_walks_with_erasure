@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { EyeOff } from "lucide-react";
 import type { Story } from "@ih/core/domain/types";
-import { ArticleImage } from "@/components/shared/article-image";
+import { CardImage } from "@/components/shared/card-image";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { LEAN_META } from "@ih/core/logic/metrics";
@@ -39,7 +39,7 @@ export function StoryFeatureCard({
         href={`/stories/${story.id}`}
         className="flex h-full flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
-        <ArticleImage
+        <CardImage
           src={story.image}
           alt=""
           className="rounded-none border-0 transition-transform duration-700 ease-out motion-safe:group-hover:scale-[1.02]"

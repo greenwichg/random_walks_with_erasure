@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, EyeOff, Newspaper } from "lucide-react";
 import type { Story } from "@ih/core/domain/types";
-import { ArticleImage } from "@/components/shared/article-image";
+import { CardImage } from "@/components/shared/card-image";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { FreshnessBadge } from "@/components/stories/freshness-badge";
 import { LEAN_META } from "@ih/core/logic/metrics";
@@ -26,7 +26,7 @@ export function HeroStory({ story }: { story: Story }) {
       <Link href={`/stories/${story.id}`} className="block focus-visible:outline-none">
         {/* Slow, motion-safe zoom on hover — the card's overflow-hidden clips it. The one image
             micro-interaction on the page; rows and modules stay still. */}
-        <ArticleImage
+        <CardImage
           src={story.image}
           alt={story.title}
           priority

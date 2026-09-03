@@ -3,14 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import type { Story } from "@ih/core/domain/types";
-import { ArticleImage } from "@/components/shared/article-image";
+import { CardImage } from "@/components/shared/card-image";
 import { BiasStrip } from "@/components/shared/bias-strip";
-import { CoveragePlate } from "@/components/stories/coverage-plate";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * The lead — one story at display scale: picture (or the coverage plate), the labelled coverage
+ * The lead — one story at display scale: picture (or the shared newspaper fallback), the labelled coverage
  * strip, the headline, and a dateline of counted facts. Shared by the desktop front page, the
  * desktop topic sections and the mobile feed, at two headline sizes.
  *
@@ -30,9 +29,6 @@ export function LeadStory({
   className?: string;
 }) {
   const { t, formatCompact } = useTranslation();
-  const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => setFailed(false), [story.image]);
-  const showImage = Boolean(story.image) && !failed;
   const publisherCount = story.publisherCount ?? story.publishers?.length ?? null;
 
   return (
@@ -41,23 +37,18 @@ export function LeadStory({
         href={`/stories/${story.id}`}
         className="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
-        {showImage ? (
-          <>
-            <ArticleImage
-              src={story.image}
-              alt={story.title}
-              priority
-              aspect="aspect-[16/9]"
-              className="rounded-md"
-              onHidden={() => setFailed(true)}
-            />
-            <div className="mt-3">
-              <BiasStrip distribution={story.distribution} labels />
-            </div>
-          </>
-        ) : (
-          <CoveragePlate story={story} className="mb-0" />
-        )}
+        {/* Picture or the shared fallback, then the labelled strip — one composition for every
+            lead, so a story without art is still a lead and not a different card shape. */}
+        <CardImage
+          src={story.image}
+          alt={story.title}
+          priority
+          aspect="aspect-[16/9]"
+          className="rounded-md"
+        />
+        <div className="mt-3">
+          <BiasStrip distribution={story.distribution} labels />
+        </div>
         <Heading
           className={cn(
             "mt-3 text-balance font-bold leading-[1.15] tracking-tight transition-colors group-hover:text-primary",

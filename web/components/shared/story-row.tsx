@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Story } from "@ih/core/domain/types";
-import { ArticleImage } from "@/components/shared/article-image";
+import { CardImage } from "@/components/shared/card-image";
 import { BiasStrip } from "@/components/shared/bias-strip";
 import { useTranslation } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -73,8 +73,10 @@ export function StoryRow({
             </span>
           )}
         </div>
-        {thumb && story.image && (
-          <ArticleImage
+        {thumb && (
+          // Every row that asks for a thumbnail gets one: art, or the shared fallback. The old
+          // `&& story.image` left holes down the right-hand column of a mixed list.
+          <CardImage
             src={story.image}
             alt=""
             aspect="aspect-square"
