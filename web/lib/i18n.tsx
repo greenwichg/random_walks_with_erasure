@@ -49,7 +49,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const lang = normalizeLang(settings?.language);
 
   const value = React.useMemo<I18nValue>(() => {
-    const t = makeT(CATALOGS[lang], CATALOGS.en, (key) => {
+    const t = makeT(CATALOGS[lang], CATALOGS.en, lang, (key) => {
       if (process.env.NODE_ENV !== "production") console.warn(`[i18n] missing key: ${key}`);
     });
     return {
@@ -85,7 +85,7 @@ export function useTranslation(): I18nValue {
   if (ctx === null) {
     // A safe English fallback if a component renders outside the provider (e.g. a unit render),
     // so a missing provider never crashes the tree — it just renders English.
-    const t = makeT(CATALOGS.en, CATALOGS.en);
+    const t = makeT(CATALOGS.en, CATALOGS.en, "en");
     return {
       lang: "en",
       t,

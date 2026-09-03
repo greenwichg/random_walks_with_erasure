@@ -177,9 +177,7 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
         <div className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-3">
           <div className="flex items-center gap-1.5 text-sm font-medium text-primary">
             <Sparkles className="h-4 w-4" />
-            {nsv.count === 1
-              ? t("storyIntel.newArticleOne", { n: nsv.count })
-              : t("storyIntel.newArticles", { n: nsv.count })}
+            {t("storyIntel.newArticles", { n: nsv.count })}
             {nsv.lastVisited && (
               <span className="font-normal text-muted-foreground">· {t("storyIntel.lastRead", { time: timeAgo(nsv.lastVisited) })}</span>
             )}

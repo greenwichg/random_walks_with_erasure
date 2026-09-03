@@ -5,18 +5,23 @@
  * Fails (exit 1) if any of the following is wrong, so a broken catalog can never ship:
  *   1. Key parity      — all 5 catalogs (en/es/fr/de/pt) share an identical key set.
  *   2. No empty values — no key maps to "" / whitespace in any language.
- *   3. Placeholder parity — a key's `{name}` interpolation tokens are identical across languages
- *      (so a translation can't silently drop a `{publisher}` a component depends on).
+ *   3. Placeholder parity — a key's interpolation arguments are identical across languages (so a
+ *      translation can't silently drop a `{publisher}` a component depends on). "Arguments"
+ *      includes what each ICU plural block selects on; see messageArgs().
  *   3b. No-placeholder keys — copy that must never interpolate a quantity (see NO_PLACEHOLDERS).
+ *   3c. Well-formed plurals — balanced braces, and every plural block carries an `other` branch.
  *   4. Explanation coverage — every resolver (type, variant) from explanationKey() has a template.
  *   5. No unused keys  — every catalog key is referenced in source (literally, or under a
  *      documented dynamic-key prefix built via template literals).
+ *   5b. No hand-rolled interpolation — no `t(key).replace("{x}", …)`, which cannot work once a key
+ *      carries a plural block.
  *
  * Run: `node scripts/check-i18n.mjs` (wired into `npm run build` via `npm run check:i18n`).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { messageArgs } from "../../packages/core/i18n/core.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(__dirname, "..");
@@ -138,7 +143,41 @@ for (const lang of LANGS) {
 }
 
 // ---- 3. placeholder parity ----
-const placeholders = (s) => new Set([...String(s).matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+//
+// A value may carry ICU plural blocks (`{n, plural, one {# story} other {# stories}}`), so the
+// arguments a key needs are its plain `{name}` placeholders PLUS the argument each plural block
+// selects on. A language whose grammar does not change with the count keeps a plain `{n}` — German
+// "Artikel" is the same word either way — and that must still count as the same argument, or the
+// parity check would force noise into the catalog to satisfy itself.
+const PLURAL_ARG = /\{\s*(\w+)\s*,\s*plural\s*,/g;
+// The one parser, imported from the module that renders these messages at runtime — a second
+// implementation here would be a second thing to keep right, and the first two hand-rolled ones
+// both read `other {are}` as an argument named `are`.
+const placeholders = (s) => messageArgs(String(s));
+
+// ---- 3c. plural blocks must be well formed and must cover `other` ----
+// `other` is the branch every language falls back to; a block without it renders its own source at
+// the reader. Braces must balance for the same reason.
+for (const lang of LANGS) {
+  for (const [key, val] of Object.entries(cats[lang] ?? {})) {
+    const str = String(val);
+    if (!PLURAL_ARG.test(str)) continue;
+    PLURAL_ARG.lastIndex = 0;
+    let depth = 0;
+    for (const ch of str) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      if (depth < 0) break;
+    }
+    if (depth !== 0) fail(`"${key}" (${lang}) has unbalanced braces in its plural block`);
+    for (const m of str.matchAll(PLURAL_ARG)) {
+      const body = str.slice(m.index + m[0].length);
+      if (!/(^|[\s}])other\s*\{/.test(body))
+        fail(`"${key}" (${lang}) has a plural block on {${m[1]}} with no \`other\` branch`);
+    }
+  }
+}
+
 for (const key of enKeys) {
   const base = placeholders(en[key]);
   for (const lang of LANGS) {
@@ -215,6 +254,22 @@ for (const root of SRC_ROOTS) {
 }
 const blob = sources.map((f) => fs.readFileSync(f, "utf8")).join("\n");
 
+// ---- 5b. no hand-rolled interpolation on a translated string ----
+// `t(key).replace("{x}", …)` predates plural support and stops working the moment a key gains a
+// plural block: the reader is shown the message format instead of the message. It was how
+// analyze.coverage.scope filled its two counts, and pluralising that key is what surfaced it.
+// Params belong in the `t` call, which is the only place that knows the active language.
+for (const file of sources) {
+  const text = fs.readFileSync(file, "utf8");
+  if (/\bt\((?:[^()]|\([^()]*\))*\)\s*(?:\/\/[^\n]*\n|\s)*\.replace\(\s*["'`]\{/.test(text)) {
+    fail(
+      `${path.relative(WEB, file)} interpolates a translated string by hand ` +
+        `(t(...).replace("{…}")). Pass the values as t()'s params instead — a plural key cannot be ` +
+        `patched after the fact.`,
+    );
+  }
+}
+
 // every dotted, quoted token that looks like a catalog key
 const usedLiteral = new Set();
 for (const m of blob.matchAll(/["'`]([a-zA-Z][\w-]*(?:\.[\w-]+)+)["'`]/g)) usedLiteral.add(m[1]);
@@ -234,7 +289,8 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(`✓ check-i18n passed — ${enKeys.size} keys × ${LANGS.length} languages`);
+const pluralKeys = Object.values(en).filter((v) => /,\s*plural\s*,/.test(v)).length;
 console.log(
-  `  parity · no empty values · placeholder parity · ` +
+  `  parity · no empty values · placeholder parity · ${pluralKeys} plural messages · ` +
     `${REQUIRED_EXPLANATION_KEYS.length} explanation templates · no unused keys`,
 );

@@ -45,5 +45,5 @@ export function deviceLang(): Lang {
  * and then to the key itself — visible and greppable, never a blank space where a sentence was.
  */
 export function translatorFor(lang: Lang): TFunction {
-  return makeT(CATALOGS[lang], CATALOGS.en);
+  return makeT(CATALOGS[lang], CATALOGS.en, lang);
 }

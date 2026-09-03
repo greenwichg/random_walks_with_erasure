@@ -32,7 +32,7 @@ async function asMobile<T>(path: string, token: string): Promise<{ status: numbe
   return { status: res.status, data: (await res.json()) as T };
 }
 
-const t = makeT(en as Record<string, string>, en as Record<string, string>);
+const t = makeT(en as Record<string, string>, en as Record<string, string>, "en");
 
 test.describe("the mobile Recommendations path", () => {
   test("a token reaches the feed, the settings, and the explain endpoint", async ({ uid }) => {
@@ -133,7 +133,7 @@ test.describe("the mobile Recommendations path", () => {
     // The i18n split: `@ih/core/i18n/core` resolves, and the platform only supplies WHICH language —
     // `<html lang>` on the web, the device locale on a phone (mobile/lib/i18n.ts). Same key, same
     // params, different catalog.
-    const spanish = makeT(es as Record<string, string>, en as Record<string, string>);
+    const spanish = makeT(es as Record<string, string>, en as Record<string, string>, "es");
     const key = "rec.strategy.rwe-b";
     expect(t(key)).toBe("Other side");
     expect(spanish(key)).toBeTruthy();

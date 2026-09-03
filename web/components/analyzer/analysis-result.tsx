@@ -403,10 +403,11 @@ function CoverageComparisonCard({
   return (
     <SectionCard title={t("analyze.coverage.title")}>
       <div className="space-y-3">
+        {/* Params go through `t`, never a hand-rolled `.replace` on the returned string: the
+            catalog now selects singular and plural forms per count, and a caller that patches the
+            template afterwards would print the message format at the reader instead. */}
         <p className="text-xs text-muted-foreground">
-          {t("analyze.coverage.scope")
-            .replace("{outlets}", String(data.outlets))
-            .replace("{articles}", String(data.articles))}
+          {t("analyze.coverage.scope", { outlets: data.outlets, articles: data.articles })}
         </p>
 
         {data.timing && (
@@ -414,10 +415,11 @@ function CoverageComparisonCard({
             <span className="text-sm">
               {data.timing.isFirstReport
                 ? t("analyze.coverage.timingFirst")
-                : t("analyze.coverage.timingLater")
-                    .replace("{position}", String(data.timing.position))
-                    .replace("{of}", String(data.timing.of))
-                    .replace("{hours}", String(data.timing.hoursAfterFirst))}
+                : t("analyze.coverage.timingLater", {
+                    position: data.timing.position,
+                    of: data.timing.of,
+                    hours: data.timing.hoursAfterFirst,
+                  })}
             </span>
           </Row>
         )}
@@ -477,9 +479,7 @@ function FindingRow({ f }: { f: CoverageFinding }) {
         </span>
         {f.support > 0 && (
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-            {t("analyze.coverage.support")
-              .replace("{support}", String(f.support))
-              .replace("{of}", String(f.of))}
+            {t("analyze.coverage.support", { support: f.support, of: f.of })}
           </span>
         )}
       </div>

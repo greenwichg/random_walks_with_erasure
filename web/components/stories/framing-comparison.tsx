@@ -47,7 +47,7 @@ export function FramingComparison({ coverage }: { coverage: StoryCoverage[] }) {
                 >
                   <span>{t(`filter.${side}`)}</span>
                   <span className="font-normal normal-case tracking-normal text-muted-foreground">
-                    {t(count === 1 ? "stories.framing.sources.one" : "stories.framing.sources.other", { n: count })}
+                    {t("stories.framing.sources", { n: count })}
                   </span>
                 </p>
                 {/* A quoted headline is still a headline — display face, like every other. */}

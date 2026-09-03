@@ -95,11 +95,7 @@ function SearchInner() {
 
       <FilterBar
         trailing={
-          total > 0
-            ? total === 1
-              ? t("common.resultOne", { n: total })
-              : t("common.results", { n: total })
-            : undefined
+          total > 0 ? t("common.results", { n: total }) : undefined
         }
       >
         <FilterSelect label={t("filter.topic")} value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />

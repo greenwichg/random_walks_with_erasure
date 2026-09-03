@@ -221,11 +221,7 @@ export function StoryBrowser({
 
       <FilterBar
         trailing={
-          total > 0
-            ? total === 1
-              ? t("stories.count.one", { n: total })
-              : t("stories.count.other", { n: total })
-            : undefined
+          total > 0 ? t("stories.count", { n: total }) : undefined
         }
       >
         <FilterSelect label={t("filter.topic")} value={topic} options={opt(facets.data?.topics ?? [])} onChange={setTopic} />
