@@ -98,8 +98,22 @@ export function HomeDesktop({
   const plan = React.useMemo(() => {
     const a = allocator();
     if (hero) a.mark(hero);
-    const spots = a.take(blindspots, 2);
-    const side = a.take(topStories, 5);
+    // Row 1's three columns are stretched to the tallest of them, which is always the CENTRE
+    // (a 16/9 lead plus six thumbed rows). The outer two used to run out of content well short of
+    // that and leave the row's bottom third empty — measured at 1280/1440/1920/2560, identically
+    // at every width because the container caps the layout: 278px of dead space under News
+    // stories and 338px under My news bias.
+    //
+    // The fix is content, not geometry: hand the short columns enough of the page's own stories to
+    // reach the centre's height. One `sm` row measures 137px and one blind-spot card 230px (plus
+    // its 20px list gap), so 5 -> 7 rows fills 274 of the left column's 278, and 2 -> 3 cards fills
+    // ~250 of the right column's 338. Nothing else moves: same columns, same modules in the same
+    // order, same components — the two lists simply run to the bottom of the row they sit in.
+    //
+    // These are ceilings, not quotas. `take` returns what exists, so a thin day still renders a
+    // shorter column exactly as it does today rather than a padded one.
+    const spots = a.take(blindspots, 3);
+    const side = a.take(topStories, 7);
     const centre = a.take([...topStories, ...latest], 6);
     const band = a.take([...latest, ...visible], 4, true);
     const sections: { group: TopicGroup; lead: Story; gaps: Story[] }[] = [];
