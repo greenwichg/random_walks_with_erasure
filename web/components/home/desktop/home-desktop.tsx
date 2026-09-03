@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { Check, ChevronLeft, ChevronRight, EyeOff, Newspaper, Plus } from "lucide-react";
 import type { Article, DashboardSummary, Story } from "@ih/core/domain/types";
-import type { TopicGroup } from "@ih/core/logic/home";
+import type { PublisherCount, TopicGroup } from "@ih/core/logic/home";
 import { countryName } from "@ih/core/logic/countries";
 import { useReport, useSearch, useSettings } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
@@ -74,6 +74,17 @@ const SPOT_CARDS = 3;
 const CENTRE_ROWS = 6;
 /** Headline rows in the left column's "News stories". */
 const SIDE_ROWS = 7;
+/**
+ * Publishers listed when a thin day leaves the left column short (`TodaysPublishers`).
+ *
+ * Three, because the column is filling a gap and must not become the gap. The model offers six;
+ * all six measure ~330px and made the left column the TALLEST of row 1 on three of four demo
+ * categories — 133px past the lead, which inverts the hierarchy the featured column exists to
+ * hold. Three measures ~198px and lands inside the gap on every one of them: the shortfall under
+ * News stories goes from 286px to 88px on a one-event category and from 213px to ~15px on the
+ * full page, without ever out-topping the lead.
+ */
+const PUBLISHER_ROWS = 3;
 
 /**
  * Hands out stories in page order: every module gets events no module above it has shown, and a
@@ -130,7 +141,7 @@ export function HomeDesktop({
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
-  const { rail, topic, setTopic, visible, facts, hero, topStories, blindspots, categories, latest } = model;
+  const { rail, topic, setTopic, visible, facts, publishers, hero, topStories, blindspots, categories, latest } = model;
 
   // Page order: lead → blind-spot cards → centre column → side column → second band → topic
   // sections → closing lists.
@@ -211,6 +222,11 @@ export function HomeDesktop({
                     </ul>
                   </section>
                 )}
+                {/* A day too thin to fill the headline list leaves this column ending well above
+                    the lead beside it. The column answers with the one thing a thin topic makes a
+                    reader ask — who is actually covering it — counted from the same events already
+                    on the page. A full day fills the list and never reaches this. */}
+                {plan.side.length < SIDE_ROWS && <TodaysPublishers publishers={publishers} />}
               </div>
 
               <div className={cn("col-span-6 min-w-0", TILE)}>
@@ -300,6 +316,12 @@ export function HomeDesktop({
                 {rail.length > 0 && (
                   <div className={cn("col-span-6 min-w-0", TILE)}>
                     <SimilarTopics topics={rail} active={topic} onSelect={setTopic} />
+                    {/* The closing run carries this link on a full day. When the day was too thin
+                        for that run to render, the way out to the whole catalog goes here rather
+                        than off the page. */}
+                    <Button asChild variant="outline" size="sm" className={cn(OUTLINE_BTN, "mt-5 w-full")}>
+                      <Link href="/stories?sort=latest">{t("home.moreStories")}</Link>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -507,6 +529,48 @@ function MyNewsBias({ dashboard }: { dashboard: DashboardSummary | undefined }) 
       <Button asChild variant="outline" size="sm" className={cn(OUTLINE_BTN, "mt-4 w-full")}>
         <Link href="/history">{t("home.myBias.cta")}</Link>
       </Button>
+    </section>
+  );
+}
+
+/**
+ * "Publishers covering today" — who is carrying the events on this page, ranked by how many of
+ * them they appear in.
+ *
+ * Counted from the payload the page is already built from (`publisherStats`), never a curated
+ * masthead: the product does not claim a newsroom it cannot see in the corpus. Under a topic
+ * filter it counts that topic's events, which is the honest reading of the same question. There is
+ * no follow control because there is no follow contract in the engine.
+ */
+function TodaysPublishers({ publishers }: { publishers: PublisherCount[] }) {
+  const { t, formatCompact } = useTranslation();
+  const top = publishers.slice(0, PUBLISHER_ROWS);
+  if (top.length === 0) return null;
+  const max = top[0]?.stories || 1;
+  return (
+    <section aria-labelledby="publishers-heading" className={cn(TILE, "mt-4")}>
+      <h2 id="publishers-heading" className={cn(SECTION_TITLE, "mb-3")}>
+        {t("home.publishers.title")}
+      </h2>
+      <ul className="space-y-3">
+        {top.map((entry) => (
+          <li key={entry.publisher}>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate text-[13px] font-medium">{entry.publisher}</span>
+              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                {t("home.publishers.count", { n: formatCompact(entry.stories) })}
+              </span>
+            </div>
+            {/* Presentational only — the count beside it carries the same value for screen readers. */}
+            <div aria-hidden className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-foreground/30"
+                style={{ width: `${Math.max(4, (entry.stories / max) * 100)}%` }}
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
