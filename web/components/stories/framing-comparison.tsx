@@ -50,7 +50,8 @@ export function FramingComparison({ coverage }: { coverage: StoryCoverage[] }) {
                     {t(count === 1 ? "stories.framing.sources.one" : "stories.framing.sources.other", { n: count })}
                   </span>
                 </p>
-                <blockquote className="mb-2 flex-1 text-sm font-semibold leading-snug tracking-tight">
+                {/* A quoted headline is still a headline — display face, like every other. */}
+                <blockquote className="mb-2 flex-1 font-display text-sm font-semibold leading-snug tracking-tight">
                   <Quote aria-hidden className="mb-1 h-3 w-3 text-muted-foreground" />
                   {row.headline}
                 </blockquote>

@@ -32,9 +32,13 @@ const MASTHEAD_CHIPS = 6;
  * twice. A 0% side stays visibly present in the band as a hatched stub, never dropped (the
  * same "a missing side is VISIBLY missing" rule the old figure followed).
  *
- * `masthead` renders the 21:9 story-page variant, flush inside the article card where the hero
- * image would sit — before this, an imageless story PAGE had no designed state at all: the
- * hero self-hid and the page started abruptly at the topic label.
+ * `masthead` renders the story-page variant: a full-width COVERAGE STRIP that closes the hero
+ * block, flush under the headline/standfirst/dateline. It first took the hero image's slot
+ * ABOVE the headline (before it existed an imageless story page had no designed state at all —
+ * the hero self-hid and the page started abruptly at the topic label), but a 48px count above
+ * the headline led with a statistic about the story instead of the story; the desktop editorial
+ * audit moved it below, in reading order. Same facts, and the block's own spectrum bar steps
+ * aside for it (stories/[id]/page.tsx).
  */
 export function CoveragePlate({
   story,
@@ -104,7 +108,7 @@ export function CoveragePlate({
       className={cn(
         "flex flex-col justify-between gap-2 overflow-hidden",
         masthead
-          ? "aspect-[21/9] w-full border-b bg-card px-5 py-4"
+          ? "min-h-[11rem] w-full border-t bg-card px-5 py-4"
           : "mb-3 aspect-[16/9] rounded-lg border p-4",
         className,
       )}
@@ -173,7 +177,7 @@ export function CoveragePlate({
         <div className="flex items-baseline gap-2.5">
           <span
             className={cn(
-              "font-bold leading-none tracking-tight tabular-nums",
+              "font-display font-bold leading-none tracking-tight tabular-nums",
               masthead ? "text-5xl" : "text-4xl",
             )}
           >

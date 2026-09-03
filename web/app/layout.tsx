@@ -1,5 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import { getServerSession } from "next-auth";
+// The two typefaces of the house type system (docs/WEB_DESIGN_SYSTEM.md §3a): Schibsted Grotesk
+// for headlines, Instrument Sans for everything else. Self-hosted through Fontsource rather than
+// next/font/google — the production image is built on the box, and a build that has to reach
+// Google Fonts at `next build` time is a build that can fail for a reason unrelated to the code.
+// Fontsource ships one @font-face per Unicode subset (latin, latin-ext) with `unicode-range`, so
+// the browser fetches only the subset a page actually renders; scripts neither face covers
+// (Hangul, CJK, Vietnamese tone marks) fall through to the system stack, exactly as before.
+import "@fontsource-variable/instrument-sans";
+import "@fontsource-variable/schibsted-grotesk";
 import "./globals.css";
 import { authOptions } from "@/lib/auth";
 import { Providers } from "@/components/providers";

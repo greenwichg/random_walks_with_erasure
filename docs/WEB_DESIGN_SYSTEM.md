@@ -35,14 +35,39 @@ FooterSlot      (site footer)                     components/layout/chrome-slots
 
 - **Surfaces are neutral charcoal** (hue 220, saturation 5–8%); never blue-tinted.
 - **Purple (`--primary`) is interactive state and identity marks only** — focus rings, links,
-  active chips, the cross-cutting badge. Never surfaces, meters, or kickers (kickers are
-  `text-muted-foreground`, uppercase, tracked).
+  active chips, the cross-cutting badge. Never surfaces, meters, kickers (kickers are
+  `text-muted-foreground`, uppercase, tracked) or topic labels (a topic chip is `bg-accent`,
+  the neutral elevated surface, on every card).
 - **The political spectrum is a diverging scale**: `--left` blue / `--center` neutral grey /
   `--right` red. The centre is never a hue.
 - Status colors (`--positive/--caution/--negative`, freshness badge palette) are semantic and never
   reused as accents.
 - Radius: `--radius: 0.6rem` (editorial, not app-round). Shadows: `shadow-soft` (resting),
   `shadow-card` (hover/feature).
+
+## 3a · Type system (desktop editorial audit, `docs/DESKTOP_EDITORIAL_AUDIT.md`)
+
+Two faces, one job each, self-hosted via Fontsource (imported in `app/layout.tsx`; the variables
+live in `globals.css`):
+
+| Token | Face | Used for |
+|---|---|---|
+| `--font-display` | Schibsted Grotesk (variable, 400–900) | every `h1`–`h3` by default (base rule in `globals.css`), plus `font-display` on non-heading headline moments: the framing quotes, the coverage plate's big count |
+| `--font-sans` | Instrument Sans (variable, 400–700) | running text, labels, kickers, controls, numbers (real tabular figures — keep `tabular-nums` on every stats column) |
+
+- **Headline scale.** Page lead and story headline: `text-[1.75rem] sm:text-[2.125rem] font-bold
+  leading-[1.12] tracking-tight` (`HeroStory`, the story page `h1`). Section titles `text-lg`,
+  card titles `text-base`/`text-sm`, all `font-semibold tracking-tight`. Do not add a third
+  headline size between the lead and the section title — the gap is the hierarchy.
+- **Kickers stay in the text face.** A tracked-uppercase label that happens to be an `h2`/`h3`
+  (story-intelligence panel, footer columns, the attached-coverage group) opts out with
+  `font-sans`, so kickers read as one voice whether they are `<p>` or headings.
+- **Headlines are ink.** Never the accent colour at rest; `group-hover:text-primary` is the only
+  colour a headline takes, so it reads as content first and a link second.
+- **Reading order beats statistics.** A story block goes kicker → headline → standfirst →
+  dateline → coverage; the coverage plate closes the block, it never opens it.
+- **Subsets.** Latin and Latin-extended are shipped (all five UI languages); scripts neither
+  face covers (Hangul, CJK, Vietnamese tone marks) fall through to the system stack.
 
 ## 4 · Spacing & elevation rule
 

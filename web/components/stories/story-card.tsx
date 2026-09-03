@@ -68,8 +68,11 @@ export function StoryCard({ story, index = 0, priority = false }: { story: Story
 
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
+            {/* Neutral chip, same as the home lead's: the topic is a label, not a control, and
+                accent colour is reserved for interactive state (globals.css). This was the one
+                surface still painting it purple, so a grid of 24 cards read as 24 buttons. */}
             {story.topic && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
                 {story.topic}
               </span>
             )}

@@ -20,8 +20,26 @@
  */
 @layer base {
   :root {
-    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-      Helvetica, Arial, sans-serif;
+    /*
+     * TYPE SYSTEM (desktop editorial audit, docs/WEB_DESIGN_SYSTEM.md §3a). Two faces, one job
+     * each, loaded in app/layout.tsx:
+     *  - `--font-display` — Schibsted Grotesk, a grotesk drawn for a newspaper group's headlines.
+     *    Every h1–h3 takes it by default (rule below), plus the few non-heading headline moments
+     *    that opt in with `font-display` (the framing quotes, the coverage plate's big count).
+     *  - `--font-sans` — Instrument Sans for running text, labels, controls and numbers. It has
+     *    real tabular figures, so `tabular-nums` aligns the stats columns instead of hoping.
+     * The system stack stays as the fallback for scripts neither face covers.
+     *
+     * Before this the whole product rendered in whatever the OS offered (Segoe on Windows,
+     * DejaVu on Linux, SF on a Mac) — the same UI read as three different products, and none of
+     * them as an editorial one. The polished news products all set their headlines in one
+     * disciplined face at a real headline scale; that discipline, not a specific typeface, is
+     * what this system borrows.
+     */
+    --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+      Roboto, Helvetica, Arial, sans-serif;
+    --font-display: "Schibsted Grotesk Variable", "Instrument Sans Variable", ui-sans-serif,
+      system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
     --background: 220 14% 98%;
@@ -140,6 +158,15 @@
      * sideways by 500px), which is the exact regression MB1 H1 exists to prevent. */
     overflow-x: clip;
   }
+  /* Headlines are set in the display face by default — every page heading, section title,
+   * story headline and card title, without each component having to remember. A heading that
+   * is really a tracked-uppercase kicker (the story-intelligence panel's, the footer columns')
+   * opts back out with `font-sans`, so kickers stay one voice whether they are <p> or <h3>. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+  }
   /* Anchor jumps glide instead of teleporting — but only for users who haven't asked for
    * reduced motion. */
   @media (prefers-reduced-motion: no-preference) {
@@ -149,7 +176,9 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv11", "ss01";
+    /* No `font-feature-settings` here: the "cv11"/"ss01" pair that used to sit on body were
+       Inter's alternate-glyph tags, and Inter was never loaded. In Instrument Sans those same
+       tags mean something else, so carrying them over would have restyled glyphs at random. */
     text-rendering: optimizeLegibility;
     overflow-x: clip;
     /* MB1 M3: kill the grey tap-flash on Android and let controls opt out of double-tap zoom. */

@@ -225,7 +225,7 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
           drawn where the data draws it. Dashed border + no lean badge = "carried, not rated". */}
       {showAttached && (
         <div className="mt-5 rounded-lg border border-dashed bg-card/40 px-4 py-3">
-          <h3 className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="font-sans text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
             {t("story.beyondPanel", { n: formatCompact(attachedRows.length) })}
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">{t("story.beyondPanelNote")}</p>

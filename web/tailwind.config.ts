@@ -78,6 +78,9 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        // Headline face (globals.css sets it on h1–h3 by default); the utility is for the
+        // non-heading headline moments — quoted framing headlines, the coverage plate's count.
+        display: ["var(--font-display)", "var(--font-sans)", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
       },
       boxShadow: {

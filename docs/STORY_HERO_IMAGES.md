@@ -114,9 +114,12 @@ documents). Compose defaults it ON. Junk values fall back to off, never to a gue
 - **The web tier** was untouched by the guard itself (`ArticleImage` self-hiding and the
   figure-card fallback already handled `image: null`). The no-image state was then *redesigned*
   in a follow-up: the COVERAGE PLATE (`web/components/stories/coverage-plate.tsx`) replaced the
-  bare coverage figure on cards, added a blindspot variant, and gave the story page a 21:9
-  coverage masthead where the hero previously self-hid with no designed state. Same principle,
-  better composition — every mark is still a counted fact of the story. The plate is also the
+  bare coverage figure on cards, added a blindspot variant, and gave the story page a coverage
+  masthead where the hero previously self-hid with no designed state. (It first sat in the
+  image's slot above the headline; the desktop editorial audit — `docs/DESKTOP_EDITORIAL_AUDIT.md`
+  — moved it below the headline block as a closing coverage strip, so the story leads and the
+  statistic follows.) Same principle, better composition — every mark is still a counted fact
+  of the story. The plate is also the
   **load-failure** fallback: a hero URL that 404s or blocks hotlinking is invisible to the engine
   (heroes are selected from metadata; nothing ever downloads an image), so the reader's browser
   is the only place it can be caught — `ArticleImage` hands the slot to the plate on error and

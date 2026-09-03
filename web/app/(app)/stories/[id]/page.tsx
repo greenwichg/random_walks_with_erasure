@@ -164,6 +164,7 @@ export default function StoryDetailPage() {
   // full list — members THEN the labeled addenda — belongs to CoverageList alone.
   const { panel: panelCoverage } = splitCoverage(story.coverage);
   const publisherCount = story.publisherCount ?? new Set(panelCoverage.map((c) => c.publisher)).size;
+  const showHero = Boolean(story.image) && !heroFailed;
 
   return (
     <PageContainer>
@@ -190,14 +191,21 @@ export default function StoryDetailPage() {
           </>
         }
       >
-          {/* What happened — the hero, with the cluster's real summary as the standfirst. An
-              imageless story opens with the COVERAGE MASTHEAD instead (coverage-plate.tsx):
-              before it, the hero simply self-hid and the page started abruptly at the topic
-              label — the one no-image surface that had no designed state at all. A hero URL
-              that FAILS to load ends in the same masthead, tracked as story_hero_error so the
-              failing hosts are measurable rather than guessed. */}
+          {/* What happened — the hero, with the cluster's real summary as the standfirst.
+
+              THE HEADLINE LEADS. With an image, the picture sits above it as on any front page.
+              Without one, the COVERAGE MASTHEAD (coverage-plate.tsx) used to take the picture's
+              slot — which put a 48px publisher count ABOVE the headline, so the first thing a
+              reader met on an imageless story was a statistic about it rather than what it was.
+              The plate now closes the block instead: kicker → headline → standfirst → dateline,
+              then the coverage strip (its labelled L/C/R band and, on a gap story, the thin-side
+              statement). Same counted facts, in reading order. The block's own spectrum bar and
+              thin-side pill render only when the image is present, since the plate carries both.
+
+              A hero URL that FAILS to load ends in the same masthead, tracked as
+              story_hero_error so the failing hosts are measurable rather than guessed. */}
           <article className="overflow-hidden rounded-lg border bg-card shadow-soft">
-            {story.image && !heroFailed ? (
+            {showHero && (
               <ArticleImage
                 src={story.image}
                 alt={story.title}
@@ -209,8 +217,6 @@ export default function StoryDetailPage() {
                   track("story_hero_error", { host: urlHost(story.image), surface: "detail" });
                 }}
               />
-            ) : (
-              <CoveragePlate story={story} masthead />
             )}
             <div className="p-5">
               <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -224,7 +230,8 @@ export default function StoryDetailPage() {
                 )}
               </div>
 
-              <h1 className="text-balance text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">
+              {/* Headline scale matches the home lead (hero-story.tsx): 34px bold, tight leading. */}
+              <h1 className="text-balance text-[1.75rem] font-bold leading-[1.12] tracking-tight sm:text-[2.125rem]">
                 {story.title}
               </h1>
 
@@ -250,22 +257,25 @@ export default function StoryDetailPage() {
                 {story.updatedAt && <span>{timeAgo(story.updatedAt)}</span>}
               </div>
 
-              <div className="mt-4 max-w-md">
-                <SpectrumBar distribution={story.distribution} height={10} />
-                {story.blindspotSide && (
-                  <p
-                    className="mt-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.68rem] font-medium"
-                    style={{
-                      color: LEAN_META[story.blindspotSide].color,
-                      borderColor: LEAN_META[story.blindspotSide].color,
-                    }}
-                  >
-                    <EyeOff className="h-3 w-3" aria-hidden />
-                    {t("stories.thinCoverage", { side: t(`filter.${story.blindspotSide}`).toLowerCase() })}
-                  </p>
-                )}
-              </div>
+              {showHero && (
+                <div className="mt-4 max-w-md">
+                  <SpectrumBar distribution={story.distribution} height={10} />
+                  {story.blindspotSide && (
+                    <p
+                      className="mt-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.68rem] font-medium"
+                      style={{
+                        color: LEAN_META[story.blindspotSide].color,
+                        borderColor: LEAN_META[story.blindspotSide].color,
+                      }}
+                    >
+                      <EyeOff className="h-3 w-3" aria-hidden />
+                      {t("stories.thinCoverage", { side: t(`filter.${story.blindspotSide}`).toLowerCase() })}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+            {!showHero && <CoveragePlate story={story} masthead />}
           </article>
 
           {/* Same event, side by side — the juxtaposition the filterable list below can never show.

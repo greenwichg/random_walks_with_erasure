@@ -62,7 +62,8 @@ export function SiteFooter() {
 
         {COLUMNS.map((col) => (
           <nav key={col.titleKey} aria-label={t(col.titleKey)}>
-            <h2 className="mb-2.5 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            {/* A kicker, not a headline: opts out of the h1–h3 display-face default. */}
+            <h2 className="mb-2.5 font-sans text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
               {t(col.titleKey)}
             </h2>
             <ul className="space-y-1.5">

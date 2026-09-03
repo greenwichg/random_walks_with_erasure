@@ -50,8 +50,12 @@ export function HeroStory({ story }: { story: Story }) {
             )}
           </div>
 
-          {/* The one <h2> of this module — the page's own <h1> stays the site heading. */}
-          <h2 className="text-balance text-2xl font-semibold leading-tight tracking-tight transition-colors group-hover:text-primary sm:text-3xl">
+          {/* The one <h2> of this module — the page's own <h1> stays the site heading. Set at
+              true headline scale (34px bold, tight leading) in the display face: the lead is the
+              page's thesis, and it has to be unmistakably larger than every card title below it.
+              Ink, not accent — the colour arrives only on hover, so the headline reads as content
+              first and a link second. */}
+          <h2 className="text-balance text-[1.75rem] font-bold leading-[1.12] tracking-tight transition-colors group-hover:text-primary sm:text-[2.125rem]">
             {story.title}
           </h2>
 

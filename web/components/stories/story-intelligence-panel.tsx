@@ -110,7 +110,9 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
 
   return (
     <section className="rounded-lg border bg-card p-4 shadow-soft">
-      <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+      {/* `font-sans`: a tracked-uppercase kicker, not a headline — it opts out of the h1–h3
+          display-face default so it matches every other kicker on the page. */}
+      <h2 className="inline-flex items-center gap-1.5 font-sans text-sm font-semibold uppercase tracking-wide text-muted-foreground">
         <Activity className="h-4 w-4" /> {t("storyIntel.title")}
       </h2>
 
@@ -197,7 +199,7 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
           a handful of beats instead of twenty near-identical lines. */}
       {rows.length > 0 && (
         <div className="mt-5">
-          <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-2 flex items-center gap-1.5 font-sans text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <Gauge className="h-3.5 w-3.5" /> {t("storyIntel.coverageTimeline")}
           </h3>
           <ol className="relative space-y-3 border-l border-border pl-4">
