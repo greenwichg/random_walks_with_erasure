@@ -5,10 +5,8 @@ import Link from "next/link";
 import type { LeanBucket } from "@ih/core/domain/types";
 import type { BiasGroups, OutletMark } from "@ih/core/logic/bias-distribution";
 import { BIAS_BUCKETS, dominantBucket, splitAtCap } from "@ih/core/logic/bias-distribution";
-import { hostIconCandidates, logoCandidates } from "@ih/core/logic/publisher-logo";
-import { monogram } from "@ih/core/logic/placeholder-art";
 import { LEAN_META } from "@ih/core/logic/metrics";
-import { PublisherLogo } from "@/components/shared/publisher-logo";
+import { OutletAvatar } from "@/components/shared/outlet-avatar";
 import { useReadArticleAction } from "@/components/shared/read-article-button";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
@@ -18,7 +16,19 @@ import { cn } from "@/lib/utils";
 /** Where a chip's read is recorded from — its own tag, so opens from the bias card can be told
  *  apart from the coverage list's Read button in the same pipeline. */
 const OPENED_FROM = "story-bias";
-const CHIP = "grid h-7 w-7 place-items-center overflow-hidden rounded-full border-2 border-card bg-muted";
+
+/**
+ * Mark sizes, in CSS px. These are legibility decisions, and because `PublisherLogo` treats the
+ * content box as a RESOLUTION DEMAND (see outlet-avatar.tsx), they are also quality decisions: the
+ * old 24px chip accepted a 32px favicon and drew it soft, where a 48px plate asks for a real
+ * ~64px asset and walks past anything that cannot supply one.
+ *
+ * The untracked strip runs a size smaller on purpose. Those outlets are shown but NOT counted, and
+ * a strip drawn at the capsules' weight would read as a fourth column of the distribution.
+ */
+const CHIP_PX = 48;
+const UNTRACKED_PX = 40;
+const ROW_PX = 32;
 
 const COLUMN_CHIPS = 5;
 const UNTRACKED_CHIPS = 8;
@@ -91,7 +101,13 @@ export function BiasDistribution({ groups }: { groups: BiasGroups }) {
                   key={bucket}
                   aria-label={`${t(`filter.${bucket}`)} (${outlets.length})`}
                   title={outlets.length === 0 ? `${t(`filter.${bucket}`)} 0` : undefined}
-                  className="mx-auto flex min-h-[3.25rem] w-10 flex-col items-center justify-center gap-1 rounded-full px-1 py-1.5"
+                  // w-14 = the 48px plate plus its 4px gutter each side; gap-2 is the air the
+                  // old gap-1 never gave the marks, which is most of why they read as compressed.
+                  // Capsules are equal height (the grid stretches them) and their marks stack from
+                  // the TOP, so how far down a stack reaches is itself the count — the three sides
+                  // stay comparable at a glance. Centring the marks threw that away and left a
+                  // short side floating in the middle of its own capsule.
+                  className="mx-auto flex min-h-[4rem] w-14 flex-col items-center justify-start gap-2 rounded-full px-1 py-2"
                   style={
                     outlets.length > 0
                       ? { background: `hsl(var(--${LEAN_META[bucket].token}) / 0.12)` }
@@ -102,13 +118,14 @@ export function BiasDistribution({ groups }: { groups: BiasGroups }) {
                   }
                 >
                   {shown.map((o) => (
-                    <OutletChip key={o.publisher} outlet={o} />
+                    <OutletChip key={o.publisher} outlet={o} size={CHIP_PX} />
                   ))}
                   {hidden.length > 0 && (
                     <OverflowChip
                       label={`+${formatCompact(hidden.length)}`}
                       title={`${t(`filter.${bucket}`)} — ${t("story.moreOutlets", { n: hidden.length })}`}
                       onClick={() => setPanel(bucket)}
+                      size={CHIP_PX}
                     />
                   )}
                 </ul>
@@ -123,9 +140,9 @@ export function BiasDistribution({ groups }: { groups: BiasGroups }) {
           <p className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground">
             {t("story.untrackedBias")}
           </p>
-          <ul className="mt-2 flex flex-wrap items-center gap-1.5">
+          <ul className="mt-2 flex flex-wrap items-center gap-2">
             {splitAtCap(groups.untracked, UNTRACKED_CHIPS).shown.map((o) => (
-              <OutletChip key={o.publisher} outlet={o} />
+              <OutletChip key={o.publisher} outlet={o} size={UNTRACKED_PX} />
             ))}
             {groups.untracked.length > UNTRACKED_CHIPS && (
               <OverflowChip
@@ -134,6 +151,7 @@ export function BiasDistribution({ groups }: { groups: BiasGroups }) {
                   n: groups.untracked.length - UNTRACKED_CHIPS,
                 })}`}
                 onClick={() => setPanel("untracked")}
+                size={UNTRACKED_PX}
               />
             )}
           </ul>
@@ -177,25 +195,6 @@ export function BiasDistribution({ groups }: { groups: BiasGroups }) {
   );
 }
 
-/** The outlet's mark at chip size — the server-resolved logo first when the row carried one,
- *  then the shared host-derived walk, monogram terminal. */
-function OutletIcon({ outlet, sizePx = 24 }: { outlet: OutletMark; sizePx?: number }) {
-  const icons = logoCandidates(outlet.logo, outlet.logoFallbacks ?? hostIconCandidates(outlet.url));
-  return (
-    <PublisherLogo
-      logo={icons[0]}
-      fallbacks={icons.slice(1)}
-      sizePx={sizePx}
-      className="h-6 w-6"
-      fallbackNode={
-        <span aria-hidden className="text-[0.55rem] font-bold text-muted-foreground">
-          {monogram(outlet.publisher)}
-        </span>
-      }
-    />
-  );
-}
-
 /**
  * One outlet's chip: a button that opens the outlet's NEWEST article on this story through the
  * shared Read pipeline — recorded like every other read, tagged `story-bias` — with the headline
@@ -203,7 +202,7 @@ function OutletIcon({ outlet, sizePx = 24 }: { outlet: OutletMark; sizePx?: numb
  * affordance is the cursor, a ring, and a slight lift on hover/focus. An outlet whose rows carried
  * no URL stays a plain mark: no affordance is offered that cannot be kept.
  */
-function OutletChip({ outlet }: { outlet: OutletMark }) {
+function OutletChip({ outlet, size }: { outlet: OutletMark; size: number }) {
   const { t } = useTranslation();
   const { actionable, opened, open } = useReadArticleAction(
     { url: outlet.url, headline: outlet.headline },
@@ -211,9 +210,9 @@ function OutletChip({ outlet }: { outlet: OutletMark }) {
   );
   if (!actionable) {
     return (
-      <li title={outlet.publisher} className={cn(CHIP, "shrink-0")}>
+      <li title={outlet.publisher} className="shrink-0">
         <span className="sr-only">{outlet.publisher}</span>
-        <OutletIcon outlet={outlet} />
+        <OutletAvatar outlet={outlet} size={size} />
       </li>
     );
   }
@@ -227,13 +226,20 @@ function OutletChip({ outlet }: { outlet: OutletMark }) {
         aria-label={label}
         aria-pressed={opened}
         className={cn(
-          CHIP,
-          "cursor-pointer transition-[transform,box-shadow] hover:scale-110 hover:ring-2 hover:ring-ring",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          opened && "ring-2 ring-positive/60",
+          "block rounded-full transition-transform hover:scale-105",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
         )}
       >
-        <OutletIcon outlet={outlet} />
+        <OutletAvatar
+          outlet={outlet}
+          size={size}
+          // The hover/opened state rides the plate's own ring, so the mark keeps its full box
+          // instead of losing pixels to a border drawn inside it.
+          className={cn(
+            "transition-shadow hover:ring-2 hover:ring-ring",
+            opened && "ring-2 ring-positive/60",
+          )}
+        />
       </button>
     </li>
   );
@@ -252,9 +258,7 @@ function HiddenOutletRow({ outlet, label, color }: { outlet: OutletMark; label: 
   );
   const body = (
     <>
-      <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-muted">
-        <OutletIcon outlet={outlet} />
-      </span>
+      <OutletAvatar outlet={outlet} size={ROW_PX} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{outlet.publisher}</span>
         {outlet.headline && (
@@ -294,10 +298,12 @@ function OverflowChip({
   label,
   title,
   onClick,
+  size,
 }: {
   label: string;
   title: string;
   onClick: () => void;
+  size: number;
 }) {
   return (
     <li className="shrink-0">
@@ -306,7 +312,10 @@ function OverflowChip({
         title={title}
         aria-label={title}
         onClick={onClick}
-        className="grid h-7 w-7 place-items-center rounded-full border-2 border-dashed border-border bg-card text-[0.55rem] font-semibold text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        // Deliberately NOT on a white plate: this is the house's own control, not a publisher's
+        // mark, and the dashed themed circle is what keeps "+6" from reading as a seventh outlet.
+        className="grid place-items-center rounded-full border border-dashed border-border bg-card font-semibold text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        style={{ width: size, height: size, fontSize: Math.round(size * 0.26) }}
       >
         {label}
       </button>
