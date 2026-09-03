@@ -73,25 +73,3 @@ export const NAV: NavSection[] = [
 
 /** Flat list for the command palette / breadcrumbs. */
 export const NAV_FLAT: NavItem[] = NAV.flatMap((s) => s.items);
-
-/**
- * The DESKTOP MASTHEAD (web, lg+): six destinations inline in the top bar, in reading order —
- * the day (Home), the events (Stories), the stream (Discover), the reader's own feed, their
- * health, their guide. A horizontal bar has room for an order, not a directory, so the records
- * and tools (`NAV_DESKTOP_MENU`) live under the account menu instead. The grouped `NAV` above is
- * untouched: the mobile drawer and the command palette still render every section.
- */
-const DESKTOP_PRIMARY_HREFS = ["/", "/stories", "/discover", "/recommendations", "/report", "/coach"];
-const DESKTOP_MENU_HREFS = ["/saved", "/history", "/analytics", "/analyze"];
-
-const byHref = (hrefs: string[]): NavItem[] =>
-  hrefs.map((href) => {
-    const item = NAV_FLAT.find((i) => i.href === href);
-    if (!item) throw new Error(`desktop nav names an href that is not in NAV: ${href}`);
-    return item;
-  });
-
-export const NAV_DESKTOP_PRIMARY: NavItem[] = byHref(DESKTOP_PRIMARY_HREFS);
-/** Records and tools — the account menu's middle group. Profile and Settings stay the menu's
- *  own account group, as they were. */
-export const NAV_DESKTOP_MENU: NavItem[] = byHref(DESKTOP_MENU_HREFS);

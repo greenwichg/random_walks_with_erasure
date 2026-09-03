@@ -61,7 +61,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       {/* Below the header and above the page, on the same centred column as the page content.
           Renders nothing at all unless the browser has offered an install path and the reader
           has not dismissed one recently. */}
-      <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-6xl px-4 pt-4 sm:px-6 lg:px-8">
         <InstallPrompt />
       </div>
       <main className="min-h-[calc(100vh-4rem)]">{children}</main>

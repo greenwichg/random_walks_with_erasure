@@ -8,29 +8,36 @@ the shell** (`web/app/(app)/layout.tsx`). This document is the map, not a second
 ## 1 · Shell (every `(app)` page inherits automatically)
 
 ```
-Header  (sticky, full width; inner row on the      components/layout/header.tsx
+Header  (sticky, full width; inner rows on the     components/layout/header.tsx
          content column)
-  lg+ : wordmark · primary nav (6 links + More)     components/layout/desktop-nav.tsx
-        · search field (xl; icon at lg) · bell ·     nav order/overflow: @ih/core/logic/nav
-        theme · account menu
+  lg+ : top strip (extension · analyze | date)
+        bar: menu button · wordmark · Home / For You /  components/layout/desktop-nav.tsx
+        Local / Blind spots · search field · bell ·    components/layout/desktop-menu.tsx (panel)
+        theme · "My account" (the account menu)
   <lg : drawer trigger · page label · search icon ·  components/layout/nav-links.tsx (drawer)
-        bell · theme · account menu   (unchanged by the desktop rework)
-UtilityBarSlot (date · extension)                  components/layout/chrome-slots.tsx
+        bell · theme · avatar menu   (unchanged by the desktop rework)
+UtilityBarSlot (date · extension)  — below lg only  components/layout/chrome-slots.tsx
 main            (the page renders ONLY its content)
-FooterSlot      (site footer)                      components/layout/chrome-slots.tsx
+FooterSlot      lg+: desktop-footer.tsx · <lg: site-footer.tsx (unchanged)
 ```
 
-- **One content column.** Header row, utility strip, pages and footer all sit on
-  `mx-auto max-w-7xl px-4 sm:px-6 lg:px-8`, so every edge lines up. There is no sidebar offset
-  any more (the fixed 256px rail was retired in the desktop rework — `docs/DESKTOP_EDITORIAL_AUDIT.md`
-  part 2); nothing may assume `lg:pl-64`.
-- **Desktop nav is a reading order, not a directory.** Home · Stories · Discover ·
-  Recommendations · Health Report · Guide inline; Saved · Reading History · Analytics · Analyze
-  under "More". The grouped `NAV` still drives the mobile drawer. The active section is a rule on
-  the header's bottom border (`ActiveRule`), never a filled pill.
-- **Masthead budget at lg (1024–1279px):** ~960px for wordmark + seven items + actions. Nav links
-  are `px-2` there (`xl:px-3`), the search control is icon-only (`xl:` field). Adding an inline
-  nav item means re-measuring at 1024 in every language.
+- **One content column.** Header rows, pages and footer all sit on
+  `mx-auto max-w-6xl px-4 sm:px-6 lg:px-8` (~1088px of content on desktop, the reference
+  layout's width), so every edge lines up. There is no sidebar offset any more (the fixed 256px
+  rail was retired in the desktop rework — `docs/DESKTOP_EDITORIAL_AUDIT.md` part 2); nothing
+  may assume `lg:pl-64`.
+- **Desktop nav is four section links + a slide-out directory.** Home · For You · Local · Blind
+  spots inline (Local = the Stories browser scoped to the reader's edition; Blind spots = the
+  coverage-gap lens). Everything else — the reader's surfaces, tools, the catalog's topics, the
+  records — is the menu button's slide-out panel (`DesktopMenu`), mirroring the reference. The
+  grouped `NAV` still drives the mobile drawer and the ⌘K palette. The active section is a rule
+  on the header's bottom border, never a filled pill.
+- **Home is two compositions, one model.** `components/home/home-model.ts` derives every
+  section once; `components/home/desktop/home-desktop.tsx` renders the desktop front page
+  (topic strip · Briefing + News stories | lead + rows | Blind spots + My news bias · rows |
+  Daily local news · {Topic} news sections · Latest stories | Similar topics · Latest news
+  stories) and `components/home/home-mobile.tsx` renders the untouched mobile page; the page
+  picks one by `lib/use-is-desktop.ts` so only one tree mounts.
 - Pages never render their own utility bar or footer.
 - **Immersive routes** (pinned-composer layouts like `/coach`) opt out of both slots via
   `IMMERSIVE_ROUTES` in `chrome-slots.tsx`.
@@ -98,10 +105,16 @@ Elevation encodes hierarchy; it is never decoration.
 
 ## 5 · Story hierarchy (one signal vocabulary: topic · freshness · spectrum · blind-spot)
 
-1. `HeroStory` — full-bleed lead (Home) / hero article block (Story page)
+1. `HeroStory` — full-bleed lead (Home, mobile) / hero article block (Story page)
 2. `StoryFeatureCard` — image-forward second tier
 3. `StoryListItem variant="summary"` — synopsis + labelled L/C/R split
 4. `StoryListItem variant="compact"` — dateline · headline · bar · count
+
+Desktop front page (lg+, `components/home/desktop/`): `LeadStory` (picture or coverage plate ·
+labelled `BiasStrip` · display headline), `StoryRow` (kicker · headline · 5px strip with the
+"N% Centre coverage: N sources" caption · optional 72px thumbnail), `SpotCard` (picture · labelled
+strip · kicker · headline). The strip is the same distribution the SpectrumBar draws; only the
+rendering is denser. A plate never gets a strip under it — the plate carries the band.
 
 `showTopic={false}` inside any single-topic section (the header already names it).
 

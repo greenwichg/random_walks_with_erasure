@@ -4,10 +4,11 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
-import { Menu, Search } from "lucide-react";
+import { Menu, Puzzle, ScanSearch, Search } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { NavLinks } from "@/components/layout/nav-links";
 import { DesktopNav } from "@/components/layout/desktop-nav";
+import { DesktopMenu } from "@/components/layout/desktop-menu";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { SearchCommand } from "@/components/layout/search-command";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -25,15 +26,26 @@ import {
 import { NAV_FLAT } from "@ih/core/logic/nav";
 import { useTranslation } from "@/lib/i18n";
 
+/** Today's date in the reader's locale, resolved after mount (SSR has no timezone to trust). */
+function useToday(): string {
+  const [today, setToday] = React.useState("");
+  React.useEffect(() => {
+    setToday(
+      new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }),
+    );
+  }, []);
+  return today;
+}
+
 /**
- * The sticky masthead. On desktop (lg+): wordmark · primary nav · search field · notifications ·
- * theme · account — one full-width bar whose inner row shares the page's centred column, so the
- * nav, the utility strip and the content all start on the same left edge. Below lg the bar is
- * exactly what it was: drawer trigger · page label · search icon · notifications · theme · account.
+ * The sticky masthead. On desktop (lg+) it is laid out to the reference: a thin top strip (tools
+ * on the left, today's date on the right), then the bar — menu button · wordmark · Home / For You /
+ * Local / Blind spots · search field · notifications · theme · "My account". The inner rows share
+ * the page's centred column, so the bar's edges are the content's edges.
  *
- * The page label shows only below lg. On desktop the nav's active rule names the section and the
- * page's own <h1> names the page; a third copy in the bar (the old sidebar shell had all three)
- * was chrome saying the same word three times.
+ * Below lg the bar is exactly what it was: drawer trigger · page label · search icon ·
+ * notifications · theme · account menu. The page label shows only below lg: on desktop the nav's
+ * rule names the section and the page's own <h1> names the page.
  */
 export function Header() {
   const pathname = usePathname();
@@ -51,6 +63,7 @@ export function Header() {
       .toUpperCase() || "U";
   const [mobileNav, setMobileNav] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const today = useToday();
 
   const { t } = useTranslation();
   const current = NAV_FLAT.find((n) => (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)));
@@ -73,10 +86,25 @@ export function Header() {
 
   return (
     <header className="glass safe-top sticky top-0 z-20 border-b">
-      {/* The inner row carries the same gutters as every page (PageContainer, chrome-slots) and
-          the same max width, so the masthead's edges are the content's edges. Below lg the
-          padding is the pre-rework `px-4` — nothing moves on a phone or tablet. */}
-      <div className="mx-auto flex min-h-[4rem] w-full max-w-7xl items-center gap-3 px-4 lg:px-8">
+      {/* Desktop top strip — the reference's utility line above the bar. Below lg the utility bar
+          renders under the header instead (chrome-slots.tsx), as it always has. */}
+      <div className="hidden border-b lg:block">
+        <div className="mx-auto flex h-8 w-full max-w-6xl items-center justify-between px-8 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-4">
+            <Link href="/settings" className="inline-flex items-center gap-1.5 rounded transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Puzzle className="h-3 w-3" aria-hidden />
+              {t("home.utility.extension")}
+            </Link>
+            <Link href="/analyze" className="inline-flex items-center gap-1.5 rounded transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <ScanSearch className="h-3 w-3" aria-hidden />
+              {t("home.footer.analyze")}
+            </Link>
+          </div>
+          <time aria-live="off" className="tabular-nums">{today}</time>
+        </div>
+      </div>
+
+      <div className="mx-auto flex min-h-[4rem] w-full max-w-6xl items-center gap-3 px-4 lg:px-8">
         {/* Mobile nav */}
         <Sheet open={mobileNav} onOpenChange={setMobileNav}>
           <SheetTrigger asChild>
@@ -97,7 +125,9 @@ export function Header() {
           </SheetContent>
         </Sheet>
 
-        {/* Desktop masthead: the wordmark, then the primary nav (both lg+ only). */}
+        {/* Desktop masthead: the slide-out menu's button, the wordmark, then the four section
+            links (all lg+ only). */}
+        <DesktopMenu />
         <Link
           href="/"
           aria-label={t("sidebar.homeAria")}
@@ -105,7 +135,9 @@ export function Header() {
         >
           <Logo />
         </Link>
-        <DesktopNav />
+        <React.Suspense fallback={null}>
+          <DesktopNav />
+        </React.Suspense>
 
         {/* Current-page label (below lg only) — NOT an <h1>: each page renders its own primary
             heading, so this stays a plain label to keep a single <h1> landmark per page
@@ -125,20 +157,18 @@ export function Header() {
               neither, so it was the one header control with no visible keyboard focus and the only
               one at `rounded-lg` while every sibling sits at `rounded-md`.
 
-              From xl it reads as the search FIELD a news site puts in its masthead — a fixed width
-              and the real placeholder — while still opening the ⌘K overlay, which is the one search
-              implementation. At lg (1024–1279px) the masthead has the nav to fit, so it is an icon
-              button (measured: a field there pushed the avatar off the right edge). Below lg it is
-              the compact "Search ⌘K" pill it always was. */}
+              On desktop it reads as the search FIELD in the reference's bar — a fixed width and the
+              real placeholder — while still opening the ⌘K overlay, which is the one search
+              implementation. Below lg it is the compact "Search ⌘K" pill it always was. */}
           <button
             onClick={() => setSearchOpen(true)}
             aria-label={t("header.search")}
-            className="hidden h-9 shrink-0 items-center gap-2 rounded-md border bg-background/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex lg:w-9 lg:justify-center lg:px-0 xl:w-80 xl:justify-start xl:px-3"
+            className="hidden h-9 shrink-0 items-center gap-2 rounded-md border bg-background/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex lg:w-56 xl:w-72"
           >
             <Search className="h-4 w-4 shrink-0" />
             <span className="lg:hidden">{t("header.search")}</span>
-            <span className="hidden min-w-0 flex-1 truncate text-left xl:inline">{t("search.placeholder")}</span>
-            <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[0.65rem] lg:hidden xl:inline">⌘K</kbd>
+            <span className="hidden min-w-0 flex-1 truncate text-left lg:inline">{t("header.search")}</span>
+            <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[0.65rem]">⌘K</kbd>
           </button>
           <Button variant="ghost" size="icon" className="text-muted-foreground sm:hidden" onClick={() => setSearchOpen(true)} aria-label={t("header.search")}>
             <Search />
@@ -167,7 +197,10 @@ export function Header() {
               every dropdown non-modal was tried and MEASURED to break the Stories filter reset —
               without the modal layer the menu dismisses when the router navigation from the previous
               pick lands, so "pick Left, then pick All" could not complete. The filters keep modal
-              semantics and are covered instead by the CSS override in globals.css. */}
+              semantics and are covered instead by the CSS override in globals.css.
+
+              The trigger is the avatar below lg (unchanged) and, on desktop, the reference's
+              outlined "My account" button — the same menu behind both. */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               {/* `ml-1` was extra spacing on top of the row's own `gap-1.5`, making this the one
@@ -176,12 +209,15 @@ export function Header() {
                   ring sat flush against the image while the others floated 2px clear. */}
               <button
                 aria-label={name}
-                className="touch-target grid h-9 w-9 place-items-center rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="touch-target grid h-9 place-items-center rounded-full outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:h-9 lg:rounded-md lg:border lg:bg-background/60 lg:px-3 lg:text-sm lg:font-medium lg:transition-colors lg:hover:bg-accent"
               >
-                <Avatar>
-                  <AvatarImage src={image} alt={name} />
-                  <AvatarFallback>{initials}</AvatarFallback>
-                </Avatar>
+                <span className="lg:hidden">
+                  <Avatar>
+                    <AvatarImage src={image} alt={name} />
+                    <AvatarFallback>{initials}</AvatarFallback>
+                  </Avatar>
+                </span>
+                <span className="hidden whitespace-nowrap lg:inline">{t("home.menu.myAccount")}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">

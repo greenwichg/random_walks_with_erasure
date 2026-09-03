@@ -579,7 +579,7 @@ test.describe("Story Continuation", () => {
 
     // Navigate to Recommendations WITHOUT any visibility transition. There is no hide for a
     // listener to observe here, which is precisely why the card-bound trigger cannot fire.
-    await authedPage.getByRole("link", { name: "Recommendations", exact: true }).first().click();
+    await authedPage.getByRole("link", { name: "For You", exact: true }).first().click();
 
     await expect(authedPage.getByText("Compare this story")).toBeVisible();
     await expect(authedPage.getByText(/Fox News is rated right of centre/)).toBeVisible();

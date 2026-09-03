@@ -20,7 +20,9 @@ export function PageContainer({
       // notch on the sides, home indicator at the bottom) via max(base, env(...)); `sm:px-6`/`lg`
       // take over at wider breakpoints where insets are irrelevant.
       className={cn(
-        "mx-auto w-full max-w-7xl pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:px-6 lg:px-8 lg:pb-8 lg:pt-8",
+        // max-w-6xl: the reference desktop layout runs ~1100px of content; the wider 7xl column
+        // stretched its three-column front page into a dashboard.
+        "mx-auto w-full max-w-6xl pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:px-6 lg:px-8 lg:pb-8 lg:pt-8",
         className,
       )}
     >

@@ -132,3 +132,54 @@ patterns of Ground News (see the sourcing caveat at the top of this document).
   fits at 1024 in English, three-column grids from lg, story rail intact at 1024.
 - One e2e spec updated for the new overflow: `read-invalidates-recommendations.spec.ts` reaches
   Reading History through the "More" menu — still a soft navigation, which is what it tests.
+  (Superseded in part 3: the overflow is now the slide-out menu.)
+
+---
+
+# Part 3 · The desktop homepage recreated to the reference composition
+
+**Ask.** Recreate the reference desktop homepage — left slide-out menu and all its rows, the bar,
+the topic strip, the three-column front page, the topic sections, the closing lists and the
+footer — as closely as the product's own data allows, without its branding, text or assets.
+Desktop only; the mobile page, drawer and footer are untouched.
+
+**How.** The page now has two compositions over one derived model (`home-model.ts`): the
+desktop front page (`components/home/desktop/home-desktop.tsx`) and the previous page, moved
+verbatim to `home-mobile.tsx`. `lib/use-is-desktop.ts` reads the viewport so exactly one tree
+mounts — no doubled DOM, no second set of animations.
+
+## 9 · Reference → Hidden View, module by module
+
+| Reference | Hidden View (desktop) | Data |
+|---|---|---|
+| Top strip: app links · date · edition | Browser extension · Analyze an article · today's date | — |
+| Bar: menu · logo · Home / For You / Local / Blindspot · search · account | Menu button · wordmark · Home / For You / Local / Blind spots · search field (⌘K) · bell · theme · "My account" | For You = `/recommendations`; Local = `/stories?country=<edition>`; Blind spots = `/stories?blindspot=any` |
+| Slide-out menu: account rows · sections with chevrons · topic list · product rows | Home · My account · Sign out │ For You · Health Report · Guide │ Settings · Analyze · Extension │ Topics (catalog) · Local · Blind spots · Discover more │ Stories · Saved · History · Analytics │ Privacy | topics from `/api/discover` facets, fetched on first open |
+| Topic chip strip with arrows | Same, the day's real topics; filters the page in place | `trendingTopics` |
+| Left: Briefing card · News Stories list | Briefing (the counted one-sided-coverage sentence) · News stories (5 rows) | `briefingFacts`, top stories |
+| Centre: lead picture + headline + labelled bias bar · rows with thumbnails | `LeadStory` (picture or coverage plate) · 6 `StoryRow`s with thumbnails | hero, top/latest |
+| Right: Blindspot module (mark, definition, 2 cards, feed button) · My News Bias (name, counts, bar, button) | Blind spots (2 cards, "View blind spot feed") · My news bias (name · articles read · streak · the reader's measured viewpoint split, or the honest empty line · "See what you're reading") | `blindspotStories`; dashboard coverage + streak; report `viewpoint` when measured |
+| Band: rows with thumbnails · Daily Local News + Read more | 4 rows · Daily local news from the reader's edition (setup pointer until one is chosen) | `useSearch(country)` |
+| "{Topic} News" sections: latest big card · topic blindspots · Follow/Read More | "{Topic} news": latest big card · "{topic} blind spots" (2 cards) · Read more | `groupByTopic`; no Follow (no follow contract in the engine) |
+| Latest Stories · Similar News Topics (+ / ✓) | Latest stories (6 rows) · Similar news topics (count, + / ✓ toggles the in-page filter) | latest, `trendingTopics` |
+| Latest News Stories · More stories | Latest news stories (5 rows) · More stories → `/stories?sort=latest` | — |
+| Footer: link columns · logo · Company/Help/Tools · legal | News · You · Tools · Account columns · wordmark + tagline · Privacy / Settings · © | all real routes |
+
+## 10 · Deliberate deviations (functionality over fidelity)
+
+- **No Follow buttons, no Send Gift, no Subscribe, no Suggest a Source, no app-store links.** None
+  has a backing feature; a control that does nothing is worse than its absence.
+- **Bell and theme toggle stay in the bar.** The reference has neither; removing them would drop
+  notifications and the theme switch from every desktop page.
+- **Coverage plate instead of stock art.** An imageless lead or card shows the product's own
+  counted plate (publisher chips, count, band), never a placeholder image.
+- **Small days repeat.** With fewer events than slots, the lower runs top themselves up from
+  their own order (the reference repeats events across sections too); a full day never repeats.
+
+## 11 · Verification (part 3)
+
+- `tsc`, `next lint`, `check:i18n` (25 keys added in 5 languages, `nav.more` retired), 469 web
+  unit tests, `next build`, e2e: header, navigation (soft nav through the slide-out menu),
+  Stories filters, Discover.
+- Screenshots at 1440 (light + dark, menu open), 1280 and 1024; the 390px mobile page compared
+  byte-for-byte in composition with the previous capture — unchanged.

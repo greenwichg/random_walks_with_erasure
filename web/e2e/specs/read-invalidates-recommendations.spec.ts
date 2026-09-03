@@ -33,11 +33,13 @@ test("a recorded read marks the recommendations feed stale, not 60s-cached", asy
   await page.context().route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (r) => r.abort());
 
   const nav = (name: string) => page.getByRole("link", { name, exact: true }).first();
-  // Reading History sits under the desktop masthead's "More" menu (desktop-nav.tsx); the item is
-  // still a Next <Link>, so the navigation stays SOFT — the property this whole test rests on.
-  const navMore = async (name: string) => {
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("menuitem", { name, exact: true }).click();
+  // "For You" is the masthead label of the recommendation feed (desktop-nav.tsx).
+  // Reading History sits in the desktop slide-out menu (desktop-menu.tsx); its rows are Next
+  // <Link>s, so the navigation stays SOFT — the property this whole test rests on. Scoped to the
+  // open dialog: the footer carries a link of the same name.
+  const navMenu = async (name: string) => {
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await page.getByRole("dialog").getByRole("link", { name, exact: true }).click();
   };
 
   // 1. One hard load to enter the app, then prime the feed by SOFT-navigating to it.
@@ -45,11 +47,11 @@ test("a recorded read marks the recommendations feed stale, not 60s-cached", asy
   const primed = page.waitForResponse(
     (r) => r.url().includes("/api/recommendations") && r.request().method() === "GET",
   );
-  await nav("Recommendations").click();
+  await nav("For You").click();
   await primed;                                  // the feed is now cached and 60 s fresh
 
   // 2. Soft-navigate back and record a read. The QueryClient — and its fresh feed entry — persist.
-  await navMore("Reading History");
+  await navMenu("Reading History");
   const read = page.getByTitle("Open the article and record it as read").first();
   await expect(read).toBeVisible();
   const clickedAt = Date.now();
@@ -67,7 +69,7 @@ test("a recorded read marks the recommendations feed stale, not 60s-cached", asy
     (r) => r.url().includes("/api/recommendations") && r.request().method() === "GET",
     { timeout: 10_000 },
   );
-  await nav("Recommendations").click();
+  await nav("For You").click();
   const res = await refetch;
   expect(res.ok()).toBeTruthy();
   console.log(`read -> updated recommendations visible: ${Date.now() - clickedAt} ms`);

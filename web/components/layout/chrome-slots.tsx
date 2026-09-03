@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { UtilityBar } from "@/components/home/utility-bar";
 import { SiteFooter } from "@/components/home/site-footer";
+import { DesktopFooter } from "@/components/layout/desktop-footer";
 
 /**
  * Global chrome slots (Template-4): the utility strip and the site footer, rendered ONCE in the
@@ -23,24 +24,32 @@ function immersive(pathname: string | null): boolean {
 }
 
 const GUTTERS =
-  "mx-auto w-full max-w-7xl pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:px-6 lg:px-8";
+  "mx-auto w-full max-w-6xl pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:px-6 lg:px-8";
 
+/** Below lg only: on desktop the masthead carries its own top strip (header.tsx). */
 export function UtilityBarSlot() {
   const pathname = usePathname();
   if (immersive(pathname)) return null;
   return (
-    <div className={GUTTERS}>
+    <div className={`${GUTTERS} lg:hidden`}>
       <UtilityBar />
     </div>
   );
 }
 
+/** The mobile footer below lg, the reference-layout footer from lg — two components, one slot,
+ *  so the mobile footer stays byte-for-byte what it was. */
 export function FooterSlot() {
   const pathname = usePathname();
   if (immersive(pathname)) return null;
   return (
     <div className={`${GUTTERS} pb-[max(1.5rem,env(safe-area-inset-bottom))] lg:pb-8`}>
-      <SiteFooter />
+      <div className="lg:hidden">
+        <SiteFooter />
+      </div>
+      <div className="hidden lg:block">
+        <DesktopFooter />
+      </div>
     </div>
   );
 }
