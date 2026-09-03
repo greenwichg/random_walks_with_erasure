@@ -67,6 +67,42 @@ const TIMELINE_LIMIT = 4;
 /** How many publisher chips a grouped join row names before the "+n" overflow chip. */
 const GROUP_CHIP_LIMIT = 4;
 
+/* Timeline row geometry, in one place so the node, the time column and the label can never drift
+ * out of alignment with each other.
+ *
+ * `pl-7` (28px) clears the 16px node plus its gutter. The node is 16px wide at `left-0`, so its
+ * centre lands on 8px — which is exactly where the spine is drawn. The time column is sized for
+ * the widest 12-hour stamp ("11:32 AM") at 11px and comfortably over-serves 24-hour locales; a
+ * FIXED width is the point, since a shrink-to-fit column would make the labels start at a
+ * different x on every row. */
+const ROW = "relative pl-7";
+const GRID = "grid grid-cols-[3.5rem_minmax(0,1fr)] items-baseline gap-x-3";
+const LABEL = "text-[13px] leading-snug";
+const CHIP = "rounded-full bg-muted/70 px-2 py-0.5 text-[11px] leading-normal ring-1 ring-border";
+
+/** A node on the spine: an opaque disc so the thread reads as passing behind it. */
+function TimelineNode({ icon: Icon, accent }: { icon: LucideIcon; accent?: string }) {
+  return (
+    <span
+      aria-hidden
+      className="absolute left-0 top-0 grid h-4 w-4 place-items-center rounded-full bg-card text-muted-foreground ring-1 ring-border"
+      style={accent ? { color: accent } : undefined}
+    >
+      <Icon className="h-2.5 w-2.5" />
+    </span>
+  );
+}
+
+/** The row's time of day. `dateTime` carries the full instant the label omits, so the machine
+ *  reading is complete even though the human one is deliberately just a clock time. */
+function Time({ iso }: { iso?: string }) {
+  return (
+    <time dateTime={iso} className="text-[11px] font-medium tabular-nums text-muted-foreground">
+      {fmtTime(iso)}
+    </time>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border bg-background/50 px-3 py-2">
@@ -194,22 +230,43 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
         />
       </div>
 
-      {/* Condensed timeline: day dividers carry the date ONCE, rows carry only a time of day, and
-          consecutive publisher joins collapse into one row of chips — a 20-event pile-on reads as
-          a handful of beats instead of twenty near-identical lines. */}
+      {/* THE COVERAGE TIMELINE.
+          Three alignment decisions carry the readability, and each replaces something that made
+          the old column hard to scan:
+
+          TIME LEADS, in a fixed column. It used to be pushed to the far right by `justify-between`,
+          so every row put a ragged gap between the event and its timestamp and the eye had to
+          zig-zag. A fixed left column means one straight edge of times and one straight edge of
+          labels — the shape a timeline is supposed to have.
+
+          THE SPINE IS A REAL SPINE. One continuous hairline, with every node centred ON it, rather
+          than a border-left that the nodes sat beside and half-covered. The day divider masks it
+          with its own `bg-card`, so a date reads as a break in the thread instead of a label
+          floating next to it.
+
+          CHIPS HANG OFF THE LABEL, not the row: they start where the label starts, so a joins row
+          reads as one block of text rather than two unrelated left edges. */}
       {rows.length > 0 && (
         <div className="mt-5">
-          <h3 className="mb-2 flex items-center gap-1.5 font-sans text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-3 flex items-center gap-1.5 font-sans text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <Gauge className="h-3.5 w-3.5" /> {t("storyIntel.coverageTimeline")}
           </h3>
-          <ol className="relative space-y-3 border-l border-border pl-4">
+          <ol className="relative space-y-3">
+            {/* Inset top and bottom so the thread starts and ends at the first and last node
+                rather than running past them into the panel's padding. */}
+            <span aria-hidden className="absolute bottom-2 left-[8px] top-2 w-px bg-border" />
+
             {visibleRows.map((row, i) => {
               if (row.kind === "day") {
                 return (
-                  <li key={`day-${row.iso}`} className="relative list-none pt-1 first:pt-0">
-                    <span className="text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {fmtDate(row.iso)}
-                    </span>
+                  <li key={`day-${row.iso}`} className="relative list-none pt-2 first:pt-0">
+                    <div className="flex items-center gap-2">
+                      {/* `bg-card` is what cuts the spine behind the date. */}
+                      <span className="bg-card pr-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {fmtDate(row.iso)}
+                      </span>
+                      <span aria-hidden className="h-px flex-1 bg-border" />
+                    </div>
                   </li>
                 );
               }
@@ -218,29 +275,21 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
                 const shown = row.publishers.slice(0, GROUP_CHIP_LIMIT);
                 const overflow = row.publishers.length - shown.length;
                 return (
-                  <li key={`joins-${row.date}-${i}`} className="relative">
-                    <span className="absolute -left-[1.35rem] flex h-4 w-4 items-center justify-center rounded-full bg-card ring-1 ring-border">
-                      <UserPlus className="h-3 w-3" />
-                    </span>
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-sm">
-                        {t("storyIntel.joinedGroup", { n: row.publishers.length })}
-                      </span>
-                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                        {fmtTime(row.date)}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-                      {shown.map((p) => (
-                        <span key={p} className="rounded-full bg-background px-2 py-0.5 ring-1 ring-border">
-                          {p}
-                        </span>
-                      ))}
-                      {overflow > 0 && (
-                        <span className="rounded-full bg-background px-2 py-0.5 tabular-nums text-muted-foreground ring-1 ring-border">
-                          +{overflow}
-                        </span>
-                      )}
+                  <li key={`joins-${row.date}-${i}`} className={ROW}>
+                    <TimelineNode icon={UserPlus} />
+                    <div className={GRID}>
+                      <Time iso={row.date} />
+                      <div className="min-w-0">
+                        <p className={LABEL}>{t("storyIntel.joinedGroup", { n: row.publishers.length })}</p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          {shown.map((p) => (
+                            <span key={p} className={CHIP}>{p}</span>
+                          ))}
+                          {overflow > 0 && (
+                            <span className={cn(CHIP, "tabular-nums text-muted-foreground")}>+{overflow}</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </li>
                 );
@@ -248,20 +297,18 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
 
               const e = row.event;
               const Icon = TIMELINE_ICON[e.type] ?? ArrowRight;
-              const accent = e.type === "perspective_expansion" && e.perspective
-                ? LEAN_META[e.perspective]?.color
-                : undefined;
+              const accent =
+                e.type === "perspective_expansion" && e.perspective
+                  ? LEAN_META[e.perspective]?.color
+                  : undefined;
               return (
-                <li key={`${e.type}-${e.date}-${i}`} className="relative">
-                  <span
-                    className="absolute -left-[1.35rem] flex h-4 w-4 items-center justify-center rounded-full bg-card ring-1 ring-border"
-                    style={accent ? { color: accent } : undefined}
-                  >
-                    <Icon className="h-3 w-3" style={accent ? { color: accent } : undefined} />
-                  </span>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-sm">{e.label}</span>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{fmtTime(e.date)}</span>
+                <li key={`${e.type}-${e.date}-${i}`} className={ROW}>
+                  <TimelineNode icon={Icon} accent={accent} />
+                  <div className={GRID}>
+                    <Time iso={e.date} />
+                    {/* The opening beat is the only row given extra weight, and only because the
+                        data says it is a different KIND of event — not because it is first. */}
+                    <p className={cn(LABEL, e.type === "first_report" && "font-medium")}>{e.label}</p>
                   </div>
                 </li>
               );

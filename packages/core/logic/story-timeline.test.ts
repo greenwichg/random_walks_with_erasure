@@ -73,3 +73,40 @@ test("a join without a publisher name never joins a group, and order is preserve
 test("empty input yields no rows", () => {
   assert.deepEqual(condenseTimeline([]), []);
 });
+
+/**
+ * Day dividers are grouped by the LOCAL calendar day, because that is the clock they are rendered
+ * in. Before this, grouping keyed off the UTC ISO prefix while `formatDate` printed local time, so
+ * one local day west of UTC produced two dividers that both read "Aug 29" — the panel claimed the
+ * coverage spanned two days when it spanned one afternoon.
+ *
+ * Run under a fixed zone rather than the machine's: the whole point is behaviour away from UTC.
+ */
+test("one local day yields one divider, even across UTC midnight", () => {
+  const prev = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  try {
+    const rows = condenseTimeline([
+      // 11:00 and 19:00 on Aug 29 in Los Angeles — one local day, two UTC days.
+      ev({ type: "first_report", date: "2026-08-29T18:00:00Z", label: "first" }),
+      ev({ type: "milestone", date: "2026-08-30T02:00:00Z", label: "5 articles" }),
+    ]);
+    assert.deepEqual(rows.map((r) => r.kind), ["day", "event", "event"]);
+  } finally {
+    process.env.TZ = prev;
+  }
+});
+
+test("a genuine local-day change still divides", () => {
+  const prev = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  try {
+    const rows = condenseTimeline([
+      ev({ type: "first_report", date: "2026-08-29T18:00:00Z", label: "first" }),   // Aug 29 local
+      ev({ type: "milestone", date: "2026-08-30T18:00:00Z", label: "5 articles" }), // Aug 30 local
+    ]);
+    assert.deepEqual(rows.map((r) => r.kind), ["day", "event", "day", "event"]);
+  } finally {
+    process.env.TZ = prev;
+  }
+});

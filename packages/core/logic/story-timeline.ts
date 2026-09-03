@@ -6,15 +6,17 @@
  * arrives as 15 near-identical "X joined the coverage" rows, every one datelined with the same
  * day. Two derivations fix that without touching the data:
  *
- *  - DAY MARKERS — a `day` row is emitted whenever the calendar day changes, so the per-row
+ *  - DAY MARKERS — a `day` row is emitted whenever the LOCAL calendar day changes, so the per-row
  *    dateline can shrink to a time of day instead of repeating one identical date down the column.
+ *    Local because that is the clock the divider is rendered in; see `dayOf`.
  *  - JOIN RUNS — consecutive `publisher_join` events within one day collapse into a single `joins`
  *    row carrying every publisher name (rendered as chips). Any other event type (first report,
  *    milestone, perspective expansion, latest) breaks the run: those are the beats worth reading
  *    individually, and they keep their own rows.
  *
- * Pure and total: input order is preserved, nothing is dropped (a collapsed run still names every
- * publisher), and no time arithmetic is invented — grouping keys off the ISO day prefix only.
+ * Total: input order is preserved and nothing is dropped — a collapsed run still names every
+ * publisher. The one ambient input is the runtime's time zone, which `dayOf` needs so that a day
+ * divider is grouped by the same clock it is labelled in.
  */
 import type { StoryTimelineEvent } from "../domain/types.ts";
 
@@ -26,9 +28,25 @@ export type TimelineRow =
   /** A run of consecutive publisher joins on one day, collapsed to one row. */
   | { kind: "joins"; publishers: string[]; date: string };
 
-/** The ISO calendar-day prefix ("2026-07-25"), or "" for an unparseable/absent date. */
+/**
+ * The LOCAL calendar day of an event ("2026-07-25"), or "" when there is no date.
+ *
+ * Local, not the ISO prefix, because the divider this key produces is RENDERED in local time
+ * (`formatDate` → `toLocaleDateString`). Keying the grouping off the UTC prefix while labelling it
+ * locally splits one local day in two anywhere west of UTC: 18:00Z and the next day's 02:00Z are
+ * both Aug 29 in Los Angeles, but land under two separate dividers that BOTH read "Aug 29". That
+ * is not a cosmetic mismatch — it tells the reader the coverage spanned two days when it did not.
+ * Key and label now come from the same clock, so they cannot disagree.
+ *
+ * An unparseable string keeps the old prefix behaviour: it is still a stable grouping key, and
+ * inventing a date for junk would be worse than grouping it consistently.
+ */
 function dayOf(iso: string | undefined): string {
-  return typeof iso === "string" ? iso.slice(0, 10) : "";
+  if (typeof iso !== "string") return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
