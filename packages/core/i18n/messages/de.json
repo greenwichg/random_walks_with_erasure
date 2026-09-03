@@ -1015,5 +1015,8 @@
   "common.readMore": "Mehr lesen",
   "home.footer.news": "Nachrichten",
   "home.footer.you": "Du",
-  "home.footer.tools": "Werkzeuge"
+  "home.footer.tools": "Werkzeuge",
+  "storyCard.seeStory": "Zur Story",
+  "follow.follow": "Folgen",
+  "follow.following": "Folge ich"
 }

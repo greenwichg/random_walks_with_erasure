@@ -1,5 +1,7 @@
+import * as React from "react";
 import { redirect } from "next/navigation";
 import { Header } from "@/components/layout/header";
+import { MobileTabBar } from "@/components/layout/mobile-tab-bar";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { FooterSlot, UtilityBarSlot } from "@/components/layout/chrome-slots";
 import { PushReconciler } from "@/components/push/push-reconciler";
@@ -66,6 +68,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </div>
       <main className="min-h-[calc(100vh-4rem)]">{children}</main>
       <FooterSlot />
+      {/* Below lg only. The spacer reserves the bar's height (plus the home indicator) so a
+          page's last row is never trapped underneath it; the bar itself is fixed. */}
+      <div aria-hidden className="h-[calc(3.5rem+env(safe-area-inset-bottom))] lg:hidden" />
+      <React.Suspense fallback={null}>
+        <MobileTabBar />
+      </React.Suspense>
     </div>
   );
 }
