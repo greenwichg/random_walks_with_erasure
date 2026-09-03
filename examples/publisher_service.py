@@ -27,7 +27,6 @@ Read-only and additive: no ranking, no recommender, no protected module is touch
 from __future__ import annotations
 
 import math
-import os
 from datetime import datetime
 from typing import Optional
 
@@ -43,12 +42,11 @@ from pagination import OffsetPagination
 #: commercial product, we hold no licence to redistribute them, and "the data is in the registry"
 #: is not the same decision as "show it to the public". Curation, provenance and linting all keep
 #: working while this is off — only publication stops.
-_PUBLIC_FACTUALITY_ENV = "RWE_PUBLIC_FACTUALITY"
-_TRUE = {"1", "true", "yes", "on"}
-
-
-def _factuality_published() -> bool:
-    return (os.environ.get(_PUBLIC_FACTUALITY_ENV) or "").strip().lower() in _TRUE
+#:
+#: The switch itself is defined ONCE, in ``outlet_registry`` beside the data it governs, because
+#: there are now two serializers behind it (this profile and a story's coverage rows) and two env
+#: reads would eventually disagree. This alias keeps the gate legible where it is applied.
+_factuality_published = outlet_registry.factuality_published
 
 
 # A tone split over fewer rows than this is noise presented as a fact — the module is omitted

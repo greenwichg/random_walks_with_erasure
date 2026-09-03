@@ -137,6 +137,34 @@ export interface TopicGap {
   catalogShare: number;
 }
 
+/** The six levels a factuality rater publishes, in the rater's own descending order. Deliberately
+ *  NOT collapsed into three: "Mostly Factual" is a mild reservation and "Mixed" a serious one, and
+ *  a reader shown one word for both has been told something false. */
+export const FACTUALITY_LEVELS = [
+  "very_high", "high", "mostly_factual", "mixed", "low", "very_low",
+] as const;
+export type FactualityLevel = (typeof FACTUALITY_LEVELS)[number];
+
+/** A rater's factuality verdict WITH the provenance needed to attribute it — the one shape both
+ *  the publisher profile and a story's coverage rows carry, so no surface can render a verdict
+ *  without saying who issued it and when.
+ *
+ *  Every field is load-bearing: `value` is the rater's own label (never paraphrased into our
+ *  vocabulary), `source` is who said it, `asOf` is when it was READ — raters revise and this
+ *  registry has no refresh mechanism, so an undated verdict shown under a rater's name claims
+ *  they still say it — and `ratingUrl` is where a reader checks the current one.
+ *
+ *  Absent, never null and never a middle level, when the outlet is unrated. Also absent from EVERY
+ *  row when the deployment does not publish factuality at all (`RWE_PUBLIC_FACTUALITY` off, the
+ *  default): the verdicts are a licensed third party's product. `factualityPublished` on the
+ *  carrier — the story or the profile — is what tells those two absences apart. */
+export interface FactualityRating {
+  value: FactualityLevel;
+  source: string;
+  asOf: string;
+  ratingUrl: string;
+}
+
 /** Publisher Intelligence profile (GET /api/publishers/{name}) — curated registry facts +
  *  counted catalog facts. `rated: false` means the registry doesn't rate the outlet: lean is
  *  null/absent ("Not rated", never a fabricated Center — L2.2). Tone modules are omitted below
@@ -148,18 +176,9 @@ export interface PublisherProfile {
   leanBucket?: LeanBucket | null;
   /** Curated registry locality — absent when the outlet isn't in the registry. */
   registry?: { country?: string; region?: string; city?: string; scope?: string };
-  /** A rater's factuality verdict, with the provenance needed to attribute it. ABSENT — never
-   *  null, never a middle level — when no verdict exists, which is the normal case: the registry
-   *  rates a minority of catalog outlets, and absence is the same "unknown" the null lean speaks.
-   *  `value` is the rater's own label, never paraphrased into our vocabulary; `asOf` is when it
-   *  was read, because raters revise and an undated verdict shown under their name claims they
-   *  still say it. */
-  factuality?: {
-    value: "very_high" | "high" | "mostly_factual" | "mixed" | "low" | "very_low";
-    source: string;
-    asOf: string;
-    ratingUrl: string;
-  };
+  /** A rater's factuality verdict, with the provenance needed to attribute it — see
+   *  {@link FactualityRating}. ABSENT when no verdict exists, which is the normal case. */
+  factuality?: FactualityRating;
   /** Whether this deployment publishes factuality at all, as distinct from whether THIS outlet has
    *  a verdict. Absent when the operator has factuality publication switched off, in which case the
    *  badge is not rendered — showing "Not rated" would be a claim about the outlet rather than
@@ -715,6 +734,11 @@ export interface StoryCoverage {
   /** Controlling-owner type of the outlet (registry OWNERSHIPS vocabulary, sourced rows only).
    *  Absent when the registry doesn't classify the outlet — unknown, never "other" (L2.2). */
   ownership?: OwnershipCategory | null;
+  /** The RATER's factuality verdict for this outlet, attribution attached — see
+   *  {@link FactualityRating}. Resolved live from the registry per serve, like `ownership`, and
+   *  absent both when the outlet is unrated and when the deployment does not publish factuality
+   *  at all; `Story.factualityPublished` distinguishes those. */
+  factuality?: FactualityRating | null;
   /** The outlet's mark, resolved server-side (curated → Commons → verified site logo → guessed
    *  icons) on the story DETAIL payload. Absent when nothing is known; the client then walks
    *  its own host-derived guesses exactly as before. */
@@ -756,6 +780,11 @@ export interface Story {
   coverage: StoryCoverage[];
   /** M4 — how many of the coverage rows are attached Tier B addenda (present only when > 0). */
   attachedCoverage?: number;
+  /** Whether THIS DEPLOYMENT publishes factuality verdicts at all (`RWE_PUBLIC_FACTUALITY`), as
+   *  distinct from whether the outlets on this story carry them. Absent when the operator has
+   *  publication switched off — the Factuality breakdown then says so, rather than reporting
+   *  every outlet as unrated, which would be false of the ones we do hold verdicts for. */
+  factualityPublished?: boolean;
   timeline: { date: string; label: string }[];
   blindspotSide?: LeanBucket;
   /** Lightweight Story Intelligence badge attached by /api/stories (Commit 10) — no extra request. */

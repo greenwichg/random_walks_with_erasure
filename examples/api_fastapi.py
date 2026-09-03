@@ -1282,6 +1282,26 @@ class SearchResponseModel(BaseModel):
     sort: str
 
 
+class PublisherFactualityModel(BaseModel):
+    """A third party's factuality verdict, and everything needed to attribute it.
+
+    Every field is required because each one carries part of the honesty: `value` is the rater's
+    own label on the rater's own scale (never paraphrased into our vocabulary), `source` is who
+    said it, `asOf` is when it was read — raters revise and this registry has no refresh
+    mechanism, so an undated verdict shown under a rater's name claims they still say it — and
+    `ratingUrl` is where a reader can check the current one. A verdict that cannot supply all four
+    is not shown at all.
+
+    Declared HERE, above the story models, because both surfaces publish the same object: the
+    publisher profile's own verdict and a story's per-outlet coverage rows. One declaration means
+    the two can never drift into describing the same rating differently — and it is the reason
+    `factuality-badge.tsx` can render either one."""
+    value: str          # FACTUALITY: very_high | high | mostly_factual | mixed | low | very_low
+    source: str         # FACTUALITY_SOURCES
+    asOf: str           # ISO date the verdict was read
+    ratingUrl: str      # the rater's own page/search for this outlet
+
+
 class StoryCoverageModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)   # `register` alias, as ArticleModel
     publisher: str
@@ -1301,6 +1321,12 @@ class StoryCoverageModel(BaseModel):
     # Controlling-owner type of the outlet (registry OWNERSHIPS vocabulary). Absent when the
     # registry doesn't classify the outlet — unknown is unknown, never "other" (L2.2).
     ownership: Optional[str] = None
+    # The RATER's factuality verdict for this outlet, with its provenance attached — the same
+    # object the publisher profile carries, never a bare level. Absent when the outlet is unrated
+    # AND whenever `RWE_PUBLIC_FACTUALITY` is off, because these verdicts are a licensed third
+    # party's product: a disabled deployment transmits none of them. The story's
+    # `factualityPublished` is what tells those two absences apart.
+    factuality: Optional[PublisherFactualityModel] = None
     # The outlet's mark, resolved server-side (curated → Commons → verified site logo → guessed
     # icons; publisher_logo.attach_coverage_logos) so the story page's chips start from a URL known
     # to exist. Absent when nothing is known — the client then walks its own guesses as before.
@@ -1340,6 +1366,12 @@ class StoryModel(BaseModel):
     timeSpanHours: Optional[float] = None
     distribution: ViewpointModel   # L/C/R over distinct publishers (coverage, not opinion)
     coverage: list[StoryCoverageModel]
+    # Whether THIS DEPLOYMENT publishes factuality at all (`RWE_PUBLIC_FACTUALITY`), as distinct
+    # from whether the outlets on THIS STORY carry verdicts. The story breakdown needs both: with
+    # the flag it can say "none of these outlets is rated" and "this deployment does not publish
+    # ratings" as the different things they are; without it, one of those two sentences would be a
+    # lie about the other. Absent (exclude_none) when the gate is off.
+    factualityPublished: Optional[bool] = None
     timeline: list[TimelinePointModel]
     blindspotSide: Optional[str] = None
     # Outlets that covered this story whose LEAN was recorded but not counted, because the registry
@@ -1631,21 +1663,6 @@ class CoCoverageModel(BaseModel):
     least one other outlet, and the outlets it shares them with most."""
     sharedStories: int
     publishers: list[CoPublisherModel]
-
-
-class PublisherFactualityModel(BaseModel):
-    """A third party's factuality verdict, and everything needed to attribute it.
-
-    Every field is required because each one carries part of the honesty: `value` is the rater's
-    own label on the rater's own scale (never paraphrased into our vocabulary), `source` is who
-    said it, `asOf` is when it was read — raters revise and this registry has no refresh
-    mechanism, so an undated verdict shown under a rater's name claims they still say it — and
-    `ratingUrl` is where a reader can check the current one. A verdict that cannot supply all four
-    is not shown at all."""
-    value: str          # FACTUALITY: very_high | high | mostly_factual | mixed | low | very_low
-    source: str         # FACTUALITY_SOURCES
-    asOf: str           # ISO date the verdict was read
-    ratingUrl: str      # the rater's own page/search for this outlet
 
 
 class PublisherOwnershipModel(BaseModel):

@@ -50,6 +50,7 @@ FooterSlot      lg+: desktop-footer.tsx · <lg: site-footer.tsx (unchanged)
 | Page padding + max width + enter animation | `PageContainer` (`components/layout/page-container.tsx`) |
 | Page heading block | `PageHeader` (same file) |
 | Editorial 8/4 two-column | `PageGrid` with a `rail` (`components/layout/page-grid.tsx`) |
+| …with the rail directly under the hero on a phone | same, plus `lead` — the lead column's first block, split out so the collapsed order is hero → rail → the rest. Without it a rail of analysis lands below the whole article list, i.e. nowhere. Desktop placement is unchanged. |
 | Full width | `PageContainer` alone |
 | Section heading (title · eyebrow · View-all) | `SectionHeader` (`components/shared/section-header.tsx`) |
 | Filter row (pills left · result count right) | `FilterBar` (`components/shared/filter-bar.tsx`) — Stories, Discover, Search, Reading History |
@@ -66,6 +67,13 @@ FooterSlot      lg+: desktop-footer.tsx · <lg: site-footer.tsx (unchanged)
   `--right` red. The centre is never a hue.
 - Status colors (`--positive/--caution/--negative`, freshness badge palette) are semantic and never
   reused as accents.
+- **Two data palettes, two different jobs.** `--own-*` is CATEGORICAL: a fixed hue per owner type,
+  so a colour always means the same thing. `--fact-*` is ORDINAL — the rater's six levels, best to
+  worst — so it runs cool → amber → red and its steps are spaced by perceived lightness (CIE L*),
+  not by the HSL number; two HSL lightnesses 17 apart can be near-equiluminant, which is how a
+  "checked" ramp collapses under simulation. Both were measured pairwise in ring order against
+  their own theme's surface (deutan / protan / tritan): worst adjacent ΔE 13.1 light, 14.7 dark.
+  `unknown` / `unrated` reuse `--center` — neither is a category.
 - Radius: `--radius: 0.6rem` (editorial, not app-round). Shadows: `shadow-soft` (resting),
   `shadow-card` (hover/feature). Hover is a tone or shadow change, never a lift/translate — the
   grids stay flat, aligned sheets.
@@ -147,6 +155,25 @@ strip · kicker · headline). The strip is the same distribution the SpectrumBar
 rendering is denser. A plate never gets a strip under it — the plate carries the band.
 
 `showTopic={false}` inside any single-topic section (the header already names it).
+
+### 5a · The story breakdown (`components/stories/breakdown/`)
+
+One card, three tabs — **Bias · Factuality · Ownership** — rendered once per story page, so the
+desktop rail and the phone flow show the same instance rather than two copies. Bias and Ownership
+used to be two stacked cards asking two versions of the same question of the same outlets.
+
+| Piece | Job |
+|---|---|
+| `StoryBreakdown` | the card, the heading, the tab strip (arrow-key navigable), and the per-tab info tooltip |
+| `BiasBreakdown` / `FactualityBreakdown` / `OwnershipBreakdown` | the three bodies — bare, no chrome of their own |
+| `CategoryDistribution` (`components/shared/`) | THE chart: share bar + two-ring radial + legend, one hovered-key state across all three. Generic about meaning, strict about shape — Factuality and Ownership draw the identical picture over different vocabularies |
+| `EmptyBreakdown` | what a tab says when the data can't back it — the tab keeps its place and names the absence |
+
+Rules: every tab counts MEMBER rows only (`splitCoverage(...).panel`, M4); nothing is derived from
+another tab; percentages are over ALL outlets so the legend, bar and ring always agree; the
+unknown/unrated slice is counted and muted, never folded into a real category. Factuality adds a
+credit line and a "See full factuality breakdown" disclosure, because the verdicts are a rater's
+and must carry attribution — see `docs/SIGNAL_INTEGRITY.md`.
 
 ## 6 · Interactive primitives
 

@@ -26,23 +26,38 @@ outside the evaluation framework.
 
 ## Third-party factuality verdicts — publication is a separate decision from curation
 
-`outlet_registry.csv` carries `factuality` / `factuality_source` / `factuality_asof` for 123
+`outlet_registry.csv` carries `factuality` / `factuality_source` / `factuality_asof` for 130
 outlets, all MBFC. **Holding a verdict and publishing it are different decisions**, and the split
-is enforced in code: `publisher_service` gates the whole block on `RWE_PUBLIC_FACTUALITY`
-(**default OFF**). These ratings are a third party's commercial product and we hold no licence to
-redistribute them, so publication is an explicit operator act rather than a consequence of the
-data existing.
+is enforced in code: `RWE_PUBLIC_FACTUALITY` (**default OFF**) governs every surface that could
+put a verdict on the wire. These ratings are a third party's commercial product and we hold no
+licence to redistribute them, so publication is an explicit operator act rather than a consequence
+of the data existing.
 
-The gate is at the **serializer**, not in the UI. A client-side hide would still ship the rater's
-data to anyone reading the payload; gating where the profile is built means a disabled deployment
-transmits no verdict at all — not in a response, not in a cache, not in a log. There is a test that
-greps the whole serialized profile for the verdict string.
+The switch is defined ONCE — `outlet_registry.factuality_published()`, beside the data it governs
+— and applied at each **serializer**, never in the UI:
 
-The profile also carries `factualityPublished`, which says **this deployment publishes factuality**
-— not **this outlet is rated**. Without it the two absences are indistinguishable, and the badge
-would render "Not rated" over 123 outlets we hold verdicts for: a label that lies, which is the one
-thing this document exists to prevent. With it, absence keeps its single honest meaning, and a
-genuinely unrated outlet still gets its explicit "not rated".
+  * `publisher_service` — the publisher profile's own verdict block.
+  * `story_service._coverage` — the per-outlet verdict on a story's coverage rows, which is what
+    the story page's Factuality breakdown counts.
+
+A client-side hide would still ship the rater's data to anyone reading the payload; gating where
+the payload is built means a disabled deployment transmits no verdict at all — not in a response,
+not in a cache, not in a log. There is a test that greps the whole serialized profile for the
+verdict string, and one that asserts a story's rows carry nothing with the gate off.
+
+Both carriers also expose `factualityPublished`, which says **this deployment publishes
+factuality** — not **this outlet is rated**. Without it the two absences are indistinguishable, and
+the badge would render "Not rated" over 130 outlets we hold verdicts for: a label that lies, which
+is the one thing this document exists to prevent. With it, absence keeps its single honest meaning
+— the story breakdown can say "this deployment doesn't publish ratings" and "none of these outlets
+is rated" as the different facts they are, and a genuinely unrated outlet still gets its explicit
+"not rated".
+
+The verdict always travels as `{value, source, asOf, ratingUrl}`, never as a bare level, on both
+carriers — one shape, one client type (`FactualityRating`), so no surface can render a rating
+without saying who issued it and when. On the story breakdown that becomes a credit line under the
+chart, dated to the OLDEST verdict shown: understating freshness can only send a reader to the
+source, while overstating it would put words in the rater's mouth.
 
 Curation, provenance and linting keep working while publication is off, so re-enabling needs no
 re-curation. `credibility` is a different column on a different scale (the clustering vote-gate's

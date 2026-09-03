@@ -258,7 +258,18 @@ def _coverage(members: list) -> list:
     ``ownership`` is resolved HERE from the registry rather than stored at ingest, for the same
     reason the credibility gate resolves live: a curation change takes effect on the next serve
     instead of waiting for a backfill. ``None`` = uncurated/unknown (L2.2 — never ``other``);
-    the resolve memo makes the per-row call a dict hit after the first article of each outlet."""
+    the resolve memo makes the per-row call a dict hit after the first article of each outlet.
+
+    ``factuality`` rides along the same way, with two differences that both come from WHOSE fact
+    it is. It is the RATER's verdict, so it travels as ``{value, source, asOf, ratingUrl}`` — the
+    identical object the publisher profile publishes — and never as a bare level a surface could
+    render as ours. And the whole field is behind ``RWE_PUBLIC_FACTUALITY`` (default OFF): these
+    are MBFC's commercial product and we hold no licence to redistribute them, so a disabled
+    deployment puts no verdict on the wire at all, exactly as `publisher_service` already does for
+    the profile. ``None`` on an unrated outlet, dropped by ``response_model_exclude_none`` — so a
+    client cannot tell "unrated" from "gate off" out of the rows alone, which is why the story
+    carries ``factualityPublished`` beside them (same rule, same reason, as the profile's)."""
+    published = outlet_registry.factuality_published()
     out = []
     for m in sorted(members, key=lambda m: (m["publishedAt"] or "", m["id"]), reverse=True):
         out.append({
@@ -266,6 +277,7 @@ def _coverage(members: list) -> list:
             "leanBucket": m["leanBucket"], "register": m["register"], "emotion": m["emotion"],
             "url": m["url"], "publishedAt": m["publishedAt"],
             "ownership": outlet_registry.ownership(m["publisher"]),
+            "factuality": outlet_registry.factuality_record(m["publisher"]) if published else None,
         })
     return out
 
@@ -510,6 +522,12 @@ def _build_story(members: list, *, hero_ranked: bool = False,
         "timeSpanHours": span_hours,
         "distribution": dist,
         "coverage": _coverage(members),
+        # Says "this deployment publishes factuality", NOT "these outlets are rated" — the same
+        # distinction the publisher profile draws, for the same reason: without it a client cannot
+        # tell an unrated panel from a switched-off feature, and would label 130 outlets we hold
+        # verdicts for as unrated. Absent (exclude_none) when the gate is off, so the wire payload
+        # of a disabled deployment is byte-identical to before this field existed.
+        "factualityPublished": True if outlet_registry.factuality_published() else None,
         "timeline": timeline,
         "blindspotSide": raw_blindspot if trust == TRUST_OK else None,
         "blindspotWithheld": bool(raw_blindspot) and trust != TRUST_OK,

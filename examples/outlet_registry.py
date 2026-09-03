@@ -59,6 +59,11 @@ CREDIBILITY = ("high", "medium", "low")
 #: one from the other is a clustering change and belongs to its own commit with its own before/after.
 FACTUALITY = ("very_high", "high", "mostly_factual", "mixed", "low", "very_low")
 
+#: The operator switch that PUBLISHES the verdicts above — see :func:`factuality_published`. The
+#: name lives beside the vocabulary it governs so the two can never drift apart.
+_PUBLIC_FACTUALITY_ENV = "RWE_PUBLIC_FACTUALITY"
+_PUBLISH_TRUE = {"1", "true", "yes", "on"}
+
 #: Who published a factuality verdict. Required whenever ``factuality`` is set — an unattributed
 #: rating is indistinguishable from a guess, and this file's whole discipline (L2.2) is that a
 #: rating is either sourced or absent. Kept as a small closed set so a typo is a lint error rather
@@ -269,6 +274,9 @@ class OutletRegistry:
         # Per-instance memo for `resolve`. On the instance rather than a module global so that a
         # reloaded registry starts empty — a curation change can never be served from a stale memo.
         self._resolve_cache: Dict[str, Optional[Outlet]] = {}
+        # Per-instance memo for `factuality_record`, keyed by CANONICAL name (see that method):
+        # building one costs a walk of the whole domain index, and a story asks per article.
+        self._factuality_cache: Dict[str, dict] = {}
         for key, canonical in aliases.items():
             if _looks_like_host(key):
                 self._by_domain[_host_of(key)] = canonical
@@ -491,6 +499,40 @@ class OutletRegistry:
         Unknown and uncurated outlets are never low: absence of a verdict is not a verdict."""
         return self.credibility(text) == "low"
 
+    def factuality(self, text: "str | None") -> Optional[str]:
+        """The RATER'S factuality verdict for ``text`` — one of :data:`FACTUALITY`, or ``None``
+        when the outlet is unknown OR the column is uncurated.
+
+        The rater's own six-level scale, never collapsed: see :data:`FACTUALITY`. ``None`` means
+        *nobody we carry has rated this outlet*, which is the normal case (479 of 609 rows), and
+        never "middling" — the same L2.2 rule the lean follows."""
+        o = self.resolve(text)
+        return o.factuality if o else None
+
+    def factuality_record(self, text: "str | None") -> Optional[dict]:
+        """``text``'s factuality verdict WITH the provenance needed to attribute it, or ``None``.
+
+        ``{value, source, asOf, ratingUrl}`` — the same object the publisher profile publishes,
+        so one client type serves both surfaces and neither can render a verdict without saying
+        who issued it and when. Never a bare level: presented alone a third party's rating reads
+        as ours, and read a year later it asserts the rater still says so.
+
+        Callers are responsible for the publication decision (:func:`factuality_published`); this
+        method answers what the registry HOLDS, which is a different question."""
+        o = self.resolve(text)
+        if o is None or not o.factuality:
+            return None
+        # Memoized on the canonical, not the input string: `rating_url` walks the whole domain
+        # index and sorts it, and a story's coverage asks for the same handful of outlets over and
+        # over. The key space is the registry's own outlets (bounded by the file), not the
+        # feed-controlled publisher strings `_resolve_cache` guards against.
+        record = self._factuality_cache.get(o.canonical)
+        if record is None:
+            record = {"value": o.factuality, "source": o.factuality_source,
+                      "asOf": o.factuality_asof, "ratingUrl": self.rating_url(o)}
+            self._factuality_cache[o.canonical] = record
+        return record
+
     def outlets(self) -> List[Outlet]:
         """All distinct outlets: rated ones ordered by lean then name, locality-only (NaN lean)
         rows deterministically last by name (NaN sort keys would otherwise be order-unstable)."""
@@ -581,6 +623,32 @@ def ownership(text: "str | None") -> Optional[str]:
     when the outlet is unknown OR the column is uncurated (unknown, never ``other``)."""
     o = default_registry().resolve(text)
     return o.ownership if o else None
+
+
+def factuality(text: "str | None") -> Optional[str]:
+    """Convenience: :meth:`OutletRegistry.factuality` against the default registry."""
+    return default_registry().factuality(text)
+
+
+def factuality_record(text: "str | None") -> Optional[dict]:
+    """Convenience: :meth:`OutletRegistry.factuality_record` against the default registry."""
+    return default_registry().factuality_record(text)
+
+
+def factuality_published() -> bool:
+    """Whether THIS DEPLOYMENT publishes third-party factuality verdicts. **Default OFF.**
+
+    Holding a verdict and publishing it are different decisions (docs/SIGNAL_INTEGRITY.md). The
+    ratings are MBFC's commercial product and we hold no licence to redistribute them, so
+    publication is an explicit operator act — ``RWE_PUBLIC_FACTUALITY=1`` — rather than a
+    consequence of the data existing in the registry. Curation, provenance and linting all keep
+    working while it is off; only publication stops.
+
+    The SWITCH is defined here, beside the data it governs, so there is exactly one env read and
+    one spelling of it. The GATE stays at each serializer — `publisher_service` for the profile,
+    `story_service._coverage` for a story's rows — because a client-side hide would still ship
+    the rater's data to anyone reading the payload."""
+    return (os.environ.get(_PUBLIC_FACTUALITY_ENV) or "").strip().lower() in _PUBLISH_TRUE
 
 
 def is_low_credibility(text: "str | None") -> bool:

@@ -85,6 +85,23 @@
     --own-corporation: 215 28% 45%;
     --own-other: 330 55% 58%;
 
+    /* Factuality ORDINAL ramp (story Factuality breakdown). Unlike the ownership palette above
+       this is not categorical — the six values are a rater's own scale from best to worst, so the
+       ramp runs cool → amber → red and its steps are spaced by PERCEIVED lightness (CIE L*), not
+       by the HSL number: two HSL lightnesses 17 apart can be nearly equiluminant, which is exactly
+       how a "checked" ramp collapses under tritan simulation.
+
+       Measured, adjacent pairs in ramp order, against this theme's card surface: worst ΔE 13.1
+       (normal / deutan / protan / tritan all ≥ 13). Amber sits at 2.3:1 against a white card — it
+       is a large filled arc and never text, and every slice is also named in the legend, so colour
+       is never the only encoding. `unrated` reuses --center: it is not a level. */
+    --fact-very-high: 168 62% 23%;
+    --fact-high: 192 58% 38%;
+    --fact-mostly-factual: 208 60% 61%;
+    --fact-mixed: 38 90% 49%;
+    --fact-low: 16 82% 44%;
+    --fact-very-low: 352 72% 34%;
+
     --radius: 0.6rem;
   }
 
@@ -129,6 +146,15 @@
     --own-conglomerate: 345 50% 63%;
     --own-corporation: 215 24% 60%;
     --own-other: 330 50% 68%;
+
+    /* The same ordinal ramp re-derived against the dark card, not lightened from the light one:
+       worst adjacent ΔE 14.7 across normal / deutan / protan / tritan. */
+    --fact-very-high: 168 46% 35%;
+    --fact-high: 192 52% 48%;
+    --fact-mostly-factual: 212 60% 78%;
+    --fact-mixed: 40 86% 70%;
+    --fact-low: 14 76% 63%;
+    --fact-very-low: 352 72% 48%;
   }
 
   /*

@@ -4,25 +4,27 @@ import * as React from "react";
 import { EyeOff } from "lucide-react";
 import type { StoryCoverage, ViewpointDistribution } from "@ih/core/domain/types";
 import { BIAS_BUCKETS, groupOutletsByLean } from "@ih/core/logic/bias-distribution";
-import { SectionHeader } from "@/components/shared/section-header";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
 import { BiasDistribution } from "@/components/stories/bias-distribution";
+import { EmptyBreakdown } from "@/components/stories/breakdown/empty-breakdown";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { useTranslation } from "@/lib/i18n";
 
 /**
- * The story's bias-distribution panel, as the rail's insight module: the headline share and
- * L/C/R spectrum counted in OUTLETS, each side's outlets as logo marks, the untracked strip
- * (outlets the registry doesn't rate — shown, never counted), an explicit callout for every
- * side with ZERO outlets (the story-level blind spot, stated as a fact — "no left coverage
- * yet" — rather than only implied by an empty capsule), and the reporting-vs-opinion split
- * when the rows carry registers.
+ * The BIAS tab: the headline share and L/C/R spectrum counted in OUTLETS, each side's outlets as
+ * logo marks, the untracked strip (outlets the registry doesn't rate — shown, never counted), an
+ * explicit callout for every side with ZERO outlets (the story-level blind spot, stated as a fact
+ * — "no left coverage yet" — rather than only implied by an empty capsule), and the
+ * reporting-vs-opinion split when the rows carry registers.
  *
  * Everything is counted from the story's own MEMBER coverage rows; the engine's article-share
- * `distribution` remains only as the fallback bar for the drift case where rows carry no lean
- * at all. Callers pass `splitCoverage(...).panel` — attached Tier B rows never voted (M4).
+ * `distribution` remains only as the fallback bar for the drift case where rows carry no lean at
+ * all. Callers pass `splitCoverage(...).panel` — attached Tier B rows never voted (M4).
+ *
+ * The section chrome (heading, card, tab strip) belongs to `StoryBreakdown`, which is why this
+ * renders a bare body: the three tabs must sit in one box, not three stacked cards.
  */
-export function StoryCoveragePanel({
+export function BiasBreakdown({
   distribution,
   coverage,
 }: {
@@ -33,8 +35,8 @@ export function StoryCoveragePanel({
   const groups = React.useMemo(() => groupOutletsByLean(coverage), [coverage]);
   const total = distribution.left + distribution.center + distribution.right;
 
-  // Blind-spot callouts come from the same outlet counts the capsules draw, so the words and
-  // the picture can never disagree; the article-share fallback keeps the old rule.
+  // Blind-spot callouts come from the same outlet counts the capsules draw, so the words and the
+  // picture can never disagree; the article-share fallback keeps the old rule.
   const missing =
     groups.ratedCount > 0
       ? BIAS_BUCKETS.filter((b) => groups.buckets[b].length === 0)
@@ -47,12 +49,12 @@ export function StoryCoveragePanel({
     else if (row.register === "opinion" || row.register === "mixed") opinion += 1;
   }
 
-  if (total <= 0 && coverage.length === 0) return null;
+  if (total <= 0 && coverage.length === 0) {
+    return <EmptyBreakdown>{t("story.bias.none")}</EmptyBreakdown>;
+  }
 
   return (
-    <section aria-labelledby="story-breakdown-heading" className="rounded-lg border bg-card p-4">
-      <SectionHeader id="story-breakdown-heading" title={t("story.breakdown")} className="mb-3" />
-
+    <div>
       {groups.ratedCount === 0 && total > 0 && <SpectrumBar distribution={distribution} height={10} />}
       <BiasDistribution groups={groups} />
 
@@ -79,6 +81,6 @@ export function StoryCoveragePanel({
           })}
         </p>
       )}
-    </section>
+    </div>
   );
 }

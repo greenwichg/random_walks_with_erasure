@@ -18,8 +18,7 @@ import { CoveragePlate } from "@/components/stories/coverage-plate";
 import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-panel";
 import { CoverageList } from "@/components/stories/coverage-list";
 import { FramingComparison } from "@/components/stories/framing-comparison";
-import { StoryCoveragePanel } from "@/components/stories/story-coverage-panel";
-import { OwnershipPanel } from "@/components/stories/ownership-panel";
+import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
 import { StoryListItem } from "@/components/home/story-list-item";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { LEAN_META } from "@ih/core/logic/metrics";
@@ -182,15 +181,24 @@ export default function StoryDetailPage() {
              40-row article list, at a scroll depth almost nobody reached. */
           <>
             <StoryIntelligencePanel storyId={story.id} />
-            <StoryCoveragePanel distribution={story.distribution} coverage={panelCoverage} />
-            <OwnershipPanel coverage={panelCoverage} />
+            {/* ONE breakdown card, three tabs (Bias · Factuality · Ownership) — this instance IS
+                the mobile one: `lead` puts the whole rail directly under the hero when the grid
+                collapses, so the phone gets the same three tabs in the flow that the desktop rail
+                gets in its column. Bias and Ownership used to be two stacked cards asking two
+                versions of the same question of the same outlets; tabs put all three answers in
+                one place, and Factuality has somewhere to live. */}
+            <StoryBreakdown story={story} />
             {/* No per-publisher tally here: the coverage list below names every publisher with its
-                own headline and lean, and the panels above already carry the aggregate shape. A
-                ranked repeat of the same names said nothing the page had not said twice. */}
+                own headline and lean, and the breakdown above already carries the aggregate shape.
+                A ranked repeat of the same names said nothing the page had not said twice. */}
             {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
           </>
         }
-      >
+        lead={
+          /* The hero is the grid's `lead` rather than the first of `children`, which is what lets
+             the rail sit right under it on a phone instead of below the whole coverage list. The
+             desktop grid is unchanged — see PageGrid. */
+          <>
           {/* What happened — the hero, with the cluster's real summary as the standfirst.
 
               THE HEADLINE LEADS. With an image, the picture sits above it as on any front page.
@@ -277,7 +285,9 @@ export default function StoryDetailPage() {
             </div>
             {!showHero && <CoveragePlate story={story} masthead />}
           </article>
-
+          </>
+        }
+      >
           {/* Same event, side by side — the juxtaposition the filterable list below can never show.
               Renders nothing unless at least two rated sides actually wrote (lib/framing.ts). */}
           <FramingComparison coverage={panelCoverage} />

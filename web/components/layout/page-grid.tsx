@@ -15,17 +15,55 @@ import { cn } from "@/lib/utils";
  */
 export function PageGrid({
   children,
+  lead,
   rail,
   className,
 }: {
   children: React.ReactNode;
+  /**
+   * Optional: the lead column's FIRST block, split out so the rail can sit between it and the
+   * rest of the column when the grid collapses.
+   *
+   * Below `lg` a rail is simply appended after everything in the lead column, which is right for
+   * a rail of afterthoughts and wrong for one carrying the analysis of the thing above it — on a
+   * story that put the breakdown below the hero, the framing comparison, forty coverage rows and
+   * the related list, which is to say nowhere. Passing the hero as `lead` puts the rail directly
+   * under it on a phone; the desktop grid is unchanged (explicit row/column placement pins the
+   * rail to row 1 of column 9, exactly where auto-placement had it).
+   *
+   * Pages that don't pass it keep the two-child behaviour they had.
+   */
+  lead?: React.ReactNode;
   rail?: React.ReactNode;
   className?: string;
 }) {
+  if (rail == null) {
+    return (
+      <div className={cn("grid grid-cols-12 gap-x-8 gap-y-8", className)}>
+        <div className="col-span-12 space-y-8">
+          {lead}
+          {children}
+        </div>
+      </div>
+    );
+  }
+  if (lead == null) {
+    return (
+      <div className={cn("grid grid-cols-12 gap-x-8 gap-y-8", className)}>
+        <div className="col-span-12 space-y-8 lg:col-span-8">{children}</div>
+        <aside className="col-span-12 space-y-8 lg:col-span-4">{rail}</aside>
+      </div>
+    );
+  }
   return (
-    <div className={cn("grid grid-cols-12 gap-x-8 gap-y-8", className)}>
-      <div className={cn("col-span-12 space-y-8", rail != null && "lg:col-span-8")}>{children}</div>
-      {rail != null && <aside className="col-span-12 space-y-8 lg:col-span-4">{rail}</aside>}
+    <div className={cn("grid grid-cols-12 items-start gap-x-8 gap-y-8", className)}>
+      <div className="col-span-12 lg:col-span-8 lg:row-start-1">{lead}</div>
+      <aside className="col-span-12 space-y-8 lg:col-span-4 lg:col-start-9 lg:row-span-2 lg:row-start-1">
+        {rail}
+      </aside>
+      <div className="col-span-12 space-y-8 lg:col-span-8 lg:col-start-1 lg:row-start-2">
+        {children}
+      </div>
     </div>
   );
 }

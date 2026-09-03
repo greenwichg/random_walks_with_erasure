@@ -16,6 +16,7 @@ import store as store_mod        # noqa: E402
 import story_service as ss       # noqa: E402
 import discover                  # noqa: E402
 import location                  # noqa: E402
+import outlet_registry           # noqa: E402
 
 import pytest                     # noqa: E402
 
@@ -125,6 +126,39 @@ def test_coverage_rows_carry_the_outlets_ownership_and_unknown_stays_absent():
     story = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
     by_pub = {c["publisher"]: c["ownership"] for c in story["coverage"]}
     assert by_pub == {"NPR": "independent", "Fox News": "conglomerate", "Obscure Tribune": None}
+
+
+def test_factuality_rides_the_coverage_rows_only_when_the_deployment_publishes_it(monkeypatch):
+    """A story's rows carry the RATER's verdict with its provenance, resolved live like ownership
+    — and the whole field is behind ``RWE_PUBLIC_FACTUALITY`` (default OFF).
+
+    Two absences that must stay distinguishable: with the gate off NO row carries a verdict and
+    the story omits ``factualityPublished`` entirely (a disabled deployment transmits nothing);
+    with it on, the flag says "we publish" and an unrated outlet still carries None. Collapsing
+    those would label the 130 outlets we hold verdicts for as unrated.
+
+    Mutation check: publishing the bare level instead of the object drops source/asOf/ratingUrl,
+    and this asserts all four — a verdict shown without its attribution reads as ours."""
+    st = store_mod.Store("sqlite://")
+    _add(st, "https://npr.org/a1", "NPR", -1.0, "Senate passes the funding bill after debate", days=1)
+    _add(st, "https://fox.com/a2", "Fox News", 1.5, "Senate passes funding bill averting shutdown", days=1)
+    _add(st, "https://obscure.example/a3", "Obscure Tribune", None,
+         "Senate passes funding bill to avert shutdown")
+
+    monkeypatch.delenv("RWE_PUBLIC_FACTUALITY", raising=False)
+    story = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
+    assert story["factualityPublished"] is None
+    assert all(c["factuality"] is None for c in story["coverage"])
+
+    monkeypatch.setenv("RWE_PUBLIC_FACTUALITY", "1")
+    story = next(s for s in ss.cluster_from_store(st) if "Senate" in s["title"])
+    assert story["factualityPublished"] is True
+    by_pub = {c["publisher"]: c["factuality"] for c in story["coverage"]}
+    assert by_pub["Obscure Tribune"] is None          # unrated stays unrated, never a middle level
+    verdict = by_pub["Fox News"]
+    assert set(verdict) == {"value", "source", "asOf", "ratingUrl"}
+    assert verdict["value"] in outlet_registry.FACTUALITY
+    assert verdict["source"] == "mbfc" and verdict["asOf"] and verdict["ratingUrl"]
 
 
 def test_all_unrated_story_is_zero_distribution_no_blindspot():
