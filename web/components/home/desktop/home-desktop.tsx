@@ -36,6 +36,14 @@ import { cn } from "@/lib/utils";
  * Every number is counted from the one `/api/stories` page (home-model.ts); the reader modules
  * read the dashboard, the report and settings — queries the shell already holds. Nothing here is
  * fetched for the layout's sake. Below lg the page is home-mobile.tsx, untouched.
+ *
+ * That shape is the FULL day. It is also what the topic strip filters down to two events, or one,
+ * and the page has to hold together at every size in between. Three rules do that, each with its
+ * own note below: a row's columns size to their own content (`ROW`), row 1's three columns share a
+ * thin day in proportion rather than in code order (`plan`), and a run with nothing new to add does
+ * not render at all — the two reader modules pairing off into one row of halves when that leaves
+ * them without a list to sit beside (`railsPaired`). A day big enough to fill row 1 and the runs
+ * below reaches none of them and composes exactly as it always has.
  */
 
 const SECTION_TITLE = "text-[19px] font-semibold leading-tight tracking-tight";
@@ -43,13 +51,45 @@ const LABEL = "text-[13px] font-medium text-muted-foreground";
 const OUTLINE_BTN = "h-8 rounded-md px-3 text-[13px] font-medium";
 /** Every module is a tile on the page surface (globals.css, desktop surfaces): card, hairline, 16px. */
 const TILE = "rounded-md border bg-card p-4";
+/**
+ * A page row's columns each size to their OWN content.
+ *
+ * Grid's default is `stretch`, which sets every item in a row to the tallest one. Where the two
+ * items are bordered tiles that is not balance, it is a void: the shorter module keeps its content
+ * at the top and the card's border runs on past it. Measured on the demo catalog at 1440px, one
+ * card at a time — 680px of empty card under the lead on the unfiltered page, 370px under "Similar
+ * news topics", 270px under "Daily local news", 430px under the lead on Arts. A sparse category is
+ * where it shows worst, because that is where the two sides of a row differ most.
+ *
+ * Ragged column bottoms are what a front page is supposed to do; empty bordered rectangles are not.
+ * The one row that keeps stretching is the topic section's, whose `border-l` is a real divider and
+ * has to span both halves — see `TopicSection`.
+ */
+const ROW = "grid grid-cols-12 items-start gap-6";
+
+/* Row 1's ceilings, in the order the columns are served. A full day fills all three; see `plan`. */
+/** Picture cards in the blind-spot rail. */
+const SPOT_CARDS = 3;
+/** Thumbed rows under the lead, in the centre column. */
+const CENTRE_ROWS = 6;
+/** Headline rows in the left column's "News stories". */
+const SIDE_ROWS = 7;
 
 /**
- * Hands out stories in page order. Every module prefers events no module above has shown; the
- * lower runs (`reuse`) top themselves up from their own candidate order once the page's fresh
- * events run out, so a small day still composes as a full front page — the reference layout
- * repeats an event across its sections too, at different positions — while a large day never
- * repeats one. A list never contains the same event twice.
+ * Hands out stories in page order: every module gets events no module above it has shown, and a
+ * list never contains the same event twice.
+ *
+ * `n` is a CEILING, never a quota. A module that cannot be filled renders short, and a module that
+ * cannot be filled at all does not render — because the runs down the page exist to carry the
+ * reader PAST what they have already seen, and a run with nothing new is the same headlines under
+ * a new title. On a one-story category that came out as the story four times over: once as the
+ * lead, then again under the thumbed band, "Latest stories" and "Latest news stories". Longer, not
+ * fuller.
+ *
+ * `reuse` is the one exception, and it is left to the topic sections' gap cards. A topic module is
+ * a different lens on one topic rather than the next screenful of the page, so "{Topic} blind
+ * spots" showing an event the general list also carries is the module working, not a repeat — the
+ * reference does the same. Everywhere else the page would rather be short than say it twice.
  */
 function allocator() {
   const used = new Set<string>();
@@ -92,30 +132,37 @@ export function HomeDesktop({
   const { t } = useTranslation();
   const { rail, topic, setTopic, visible, facts, hero, topStories, blindspots, categories, latest } = model;
 
-  // Page order: lead → blind-spot cards → side column → centre column → second band → topic
-  // sections → closing lists. The blind-spot cards are allocated before the lists so the rail's
-  // own signal is never pre-empted by a row that happened to be listed first.
+  // Page order: lead → blind-spot cards → centre column → side column → second band → topic
+  // sections → closing lists.
   const plan = React.useMemo(() => {
     const a = allocator();
     if (hero) a.mark(hero);
-    // Row 1's three columns are stretched to the tallest of them, which is always the CENTRE
-    // (a 16/9 lead plus six thumbed rows). The outer two used to run out of content well short of
-    // that and leave the row's bottom third empty — measured at 1280/1440/1920/2560, identically
-    // at every width because the container caps the layout: 278px of dead space under News
-    // stories and 338px under My news bias.
+    // Row 1's three columns share ONE day's stories, and a thin category cannot fill all three.
+    // Who goes short used to be decided by code order: the two lists were served first and took
+    // everything they could hold, so a category with a handful of events left the CENTRE — the
+    // featured column, the one the page is built around — holding nothing but its lead. Measured
+    // on the demo catalog at 1440px: seven headline rows stacked in the left rail, three picture
+    // cards in the right, and 680px of empty card under the lead between them.
     //
-    // The fix is content, not geometry: hand the short columns enough of the page's own stories to
-    // reach the centre's height. One `sm` row measures 137px and one blind-spot card 230px (plus
-    // its 20px list gap), so 5 -> 7 rows fills 274 of the left column's 278, and 2 -> 3 cards fills
-    // ~250 of the right column's 338. Nothing else moves: same columns, same modules in the same
-    // order, same components — the two lists simply run to the bottom of the row they sit in.
+    // So the two SHAPED modules are budgeted against how much of a full row the day can actually
+    // supply, and the plain headline list absorbs whatever they leave. `share` is 1 on a full day,
+    // which reproduces the previous 3/6/7 exactly — this changes thin categories only. The centre
+    // keeps a floor of one row because a lead with a row under it still reads as a column, while a
+    // lead alone reads as a card someone forgot to finish.
     //
-    // These are ceilings, not quotas. `take` returns what exists, so a thin day still renders a
-    // shorter column exactly as it does today rather than a padded one.
-    const spots = a.take(blindspots, 3);
-    const side = a.take(topStories, 7);
-    const centre = a.take([...topStories, ...latest], 6);
-    const band = a.take([...latest, ...visible], 4, true);
+    // Order is editorial, not arithmetic: blind spots first (they draw from an already-filtered
+    // pool and the rail's own signal must never be pre-empted), then the featured column, then
+    // the list. These stay ceilings — `take` returns what exists, never padding to reach one.
+    const share = Math.min(1, Math.max(0, visible.length - 1) / (SPOT_CARDS + CENTRE_ROWS + SIDE_ROWS));
+    const spots = a.take(blindspots, Math.round(SPOT_CARDS * share));
+    const centre = a.take([...topStories, ...latest], Math.max(1, Math.round(CENTRE_ROWS * share)));
+    // Same candidates as the centre, not `topStories` alone. `topStories` is eight events wide, so
+    // once the centre is served first it can leave fewer than eight behind — measured on a
+    // 18-event day, the left column came up empty and "News stories" stopped rendering. Reaching
+    // into the recency run behind it is what the module already shows further down the page, and
+    // it means the column is short only when the DAY is short, not when the row above it was.
+    const side = a.take([...topStories, ...latest], SIDE_ROWS);
+    const band = a.take([...latest, ...visible], 4);
     const sections: { group: TopicGroup; lead: Story; gaps: Story[] }[] = [];
     for (const group of categories.slice(0, 2)) {
       const lead = a.take(group.stories, 1)[0] ?? group.stories[0];
@@ -124,10 +171,17 @@ export function HomeDesktop({
       const gaps = a.take([...rest.filter((s) => s.blindspotSide), ...rest], 2, true);
       sections.push({ group, lead, gaps });
     }
-    const latestList = a.take([...latest, ...visible], 6, true);
-    const closing = a.take(visible, 5, true);
+    const latestList = a.take([...latest, ...visible], 6);
+    const closing = a.take(visible, 5);
     return { side, centre, band, spots, sections, latestList, closing };
   }, [visible, hero, topStories, latest, blindspots, categories]);
+
+  // Each run below row 1 renders only if the day still had events for it. Losing one would strand
+  // the reader module beside it, so when either row loses its list the two modules pair off into
+  // one row of halves instead — the page keeps them both, at a width they read better at than the
+  // 3-column rail. A day with more events than row 1 can hold never reaches this: the unfiltered
+  // page places 17 of its 60 in row 1 and fills every run below from the rest.
+  const railsPaired = plan.band.length === 0 || plan.latestList.length === 0;
 
   return (
     <>
@@ -142,7 +196,7 @@ export function HomeDesktop({
         {visible.length > 0 && (
           <>
             {/* Row 1 — three columns */}
-            <div className="grid grid-cols-12 gap-6">
+            <div className={ROW}>
               <div className="col-span-3 min-w-0">
                 <Briefing facts={facts} />
                 {plan.side.length > 0 && (
@@ -177,52 +231,79 @@ export function HomeDesktop({
             </div>
 
             {/* Row 2 — stories with thumbnails beside the local module */}
-            <div className="mt-4 grid grid-cols-12 gap-6">
-              <div className={cn("col-span-9 min-w-0", TILE)}>
-                <ul className="-mt-3">
-                  {plan.band.map((s) => (
-                    <StoryRow key={s.id} story={s} size="md" thumb />
-                  ))}
-                </ul>
+            {plan.band.length > 0 && (
+              <div className={cn(ROW, "mt-4")}>
+                {/* No measure cap here, unlike the runs below: these rows carry a thumbnail on the
+                    right, and a capped list would leave the pictures floating short of the card's
+                    own edge. The row runs the full width it was given. */}
+                <div className={cn(railsPaired ? "col-span-12" : "col-span-9", "min-w-0", TILE)}>
+                  <ul className="-mt-3">
+                    {plan.band.map((s) => (
+                      <StoryRow key={s.id} story={s} size="md" thumb />
+                    ))}
+                  </ul>
+                </div>
+                {!railsPaired && (
+                  <div className={cn("col-span-3 min-w-0", TILE)}>
+                    <LocalNews />
+                  </div>
+                )}
               </div>
-              <div className={cn("col-span-3 min-w-0", TILE)}>
-                <LocalNews />
-              </div>
-            </div>
+            )}
 
             {plan.sections[0] && <TopicSection {...plan.sections[0]} />}
 
             {/* Latest stories beside the topic index */}
-            <div className="mt-4 grid grid-cols-12 gap-6">
-              <div className={cn("col-span-9 min-w-0", TILE)}>
-                <h2 className={cn(SECTION_TITLE, "mb-1")}>{t("home.latest.title")}</h2>
-                <ul>
-                  {plan.latestList.map((s) => (
-                    <StoryRow key={s.id} story={s} size="sm" />
-                  ))}
-                </ul>
+            {plan.latestList.length > 0 && (
+              <div className={cn(ROW, "mt-4")}>
+                <div className={cn(railsPaired ? "col-span-12" : "col-span-9", "min-w-0", TILE)}>
+                  <h2 className={cn(SECTION_TITLE, "mb-1")}>{t("home.latest.title")}</h2>
+                  <ul className={cn(railsPaired && "max-w-4xl")}>
+                    {plan.latestList.map((s) => (
+                      <StoryRow key={s.id} story={s} size="sm" />
+                    ))}
+                  </ul>
+                </div>
+                {!railsPaired && (
+                  <div className={cn("col-span-3 min-w-0", TILE)}>
+                    <SimilarTopics topics={rail} active={topic} onSelect={setTopic} />
+                  </div>
+                )}
               </div>
-              <div className={cn("col-span-3 min-w-0", TILE)}>
-                <SimilarTopics topics={rail} active={topic} onSelect={setTopic} />
-              </div>
-            </div>
+            )}
 
             {plan.sections[1] && <TopicSection {...plan.sections[1]} />}
 
             {/* Closing run */}
-            <section aria-labelledby="latest-news-heading" className={cn(TILE, "mt-4")}>
-              <h2 id="latest-news-heading" className={cn(SECTION_TITLE, "mb-1")}>
-                {t("home.latestNewsStories")}
-              </h2>
-              <ul className="max-w-3xl">
-                {plan.closing.map((s) => (
-                  <StoryRow key={s.id} story={s} size="sm" />
-                ))}
-              </ul>
-              <Button asChild variant="outline" size="sm" className={cn(OUTLINE_BTN, "mt-5")}>
-                <Link href="/stories?sort=latest">{t("home.moreStories")}</Link>
-              </Button>
-            </section>
+            {plan.closing.length > 0 && (
+              <section aria-labelledby="latest-news-heading" className={cn(TILE, "mt-4")}>
+                <h2 id="latest-news-heading" className={cn(SECTION_TITLE, "mb-1")}>
+                  {t("home.latestNewsStories")}
+                </h2>
+                <ul className="max-w-3xl">
+                  {plan.closing.map((s) => (
+                    <StoryRow key={s.id} story={s} size="sm" />
+                  ))}
+                </ul>
+                <Button asChild variant="outline" size="sm" className={cn(OUTLINE_BTN, "mt-5")}>
+                  <Link href="/stories?sort=latest">{t("home.moreStories")}</Link>
+                </Button>
+              </section>
+            )}
+
+            {/* The two reader modules, paired across the width when neither run kept its rail. */}
+            {railsPaired && (
+              <div className={cn(ROW, "mt-4")}>
+                <div className={cn(rail.length > 0 ? "col-span-6" : "col-span-12", "min-w-0", TILE)}>
+                  <LocalNews />
+                </div>
+                {rail.length > 0 && (
+                  <div className={cn("col-span-6 min-w-0", TILE)}>
+                    <SimilarTopics topics={rail} active={topic} onSelect={setTopic} />
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </PageContainer>
@@ -487,7 +568,17 @@ function LocalNews() {
   );
 }
 
-/** A topic section: "{Topic} news" — the latest event as a big card, its coverage gaps beside it. */
+/**
+ * A topic section: "{Topic} news" — the latest event as a big card, its coverage gaps beside it.
+ *
+ * The gap grid is two-up when the topic has two cards to show and one-up when it has one, so the
+ * single-card topic fills the column it was given instead of sitting in the left half of a
+ * two-column row with a hole beside it. A topic never has zero: `groupByTopic(minStories: 2)` only
+ * files a topic with at least two events, and the lead is one of them.
+ *
+ * This row keeps grid's default stretch, unlike the page rows above: `border-l` is a real divider
+ * between two halves of one module, and a divider that stops short of the taller half is a bug.
+ */
 function TopicSection({ group, lead, gaps }: { group: TopicGroup; lead: Story; gaps: Story[] }) {
   const { t } = useTranslation();
   const href = `/stories?topic=${encodeURIComponent(group.topic)}`;
@@ -519,7 +610,7 @@ function TopicSection({ group, lead, gaps }: { group: TopicGroup; lead: Story; g
         </div>
         <div className="col-span-5 min-w-0 border-l pl-6">
           <p className={cn(LABEL, "mb-3")}>{t("home.topic.blindspots", { topic: group.topic })}</p>
-          <ul className="grid grid-cols-2 gap-4">
+          <ul className={cn("grid gap-4", gaps.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
             {gaps.map((s) => (
               <SpotCard key={s.id} story={s} showTopic={false} />
             ))}
