@@ -2,18 +2,16 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
-import { Menu, Puzzle, ScanSearch, Search } from "lucide-react";
+import { Puzzle, ScanSearch, Search } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
-import { NavLinks } from "@/components/layout/nav-links";
 import { DesktopNav } from "@/components/layout/desktop-nav";
+import { MobileMenu } from "@/components/layout/mobile-menu";
 import { DesktopMenu } from "@/components/layout/desktop-menu";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { SearchCommand } from "@/components/layout/search-command";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -23,7 +21,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { NAV_FLAT } from "@ih/core/logic/nav";
 import { useTranslation } from "@/lib/i18n";
 
 /** Today's date in the reader's locale, resolved after mount (SSR has no timezone to trust). */
@@ -43,12 +40,11 @@ function useToday(): string {
  * Local / Blind spots · search field · notifications · theme · "My account". The inner rows share
  * the page's centred column, so the bar's edges are the content's edges.
  *
- * Below lg the bar is exactly what it was: drawer trigger · page label · search icon ·
- * notifications · theme · account menu. The page label shows only below lg: on desktop the nav's
- * rule names the section and the page's own <h1> names the page.
+ * Below lg it is the mobile reference's bar: menu button · wordmark · search · notifications ·
+ * theme · account. The five destinations a reader moves between live in the bottom tab bar
+ * (mobile-tab-bar.tsx) and the full directory in the menu, so the bar itself stays this short.
  */
 export function Header() {
-  const pathname = usePathname();
   const { data: session } = useSession();
   const name = session?.user?.name ?? "Guest";
   const email = session?.user?.email ?? "";
@@ -61,18 +57,10 @@ export function Header() {
       .slice(0, 2)
       .join("")
       .toUpperCase() || "U";
-  const [mobileNav, setMobileNav] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const today = useToday();
 
   const { t } = useTranslation();
-  const current = NAV_FLAT.find((n) => (n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)));
-  // The two report notifications land on period pages that live UNDER /report, so the nav lookup
-  // above matches the "Health Report" item by prefix and labels them with it — a reader who clicked
-  // "Weekly report ready" would land on a page headed "Weekly report" under a bar reading "Health
-  // Report". Same situation as a publisher profile: a real destination that is not a nav item.
-  const reportPeriod = /^\/report\/(weekly|monthly)$/.exec(pathname)?.[1];
-
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -107,51 +95,24 @@ export function Header() {
       </div>
 
       <div className="mx-auto flex min-h-[4rem] w-full max-w-6xl items-center gap-3 px-4 lg:px-8">
-        {/* Mobile nav */}
-        <Sheet open={mobileNav} onOpenChange={setMobileNav}>
-          <SheetTrigger asChild>
-            {/* No size class on the icon: Button's base sets `[&_svg]:size-4`, a DESCENDANT selector
-                (0,1,1) that outranks a utility class on the svg itself (0,1,0). Every `h-5 w-5` and
-                `h-[1.15rem]` written on a header icon was silently rendering at 16px — verified in a
-                browser. Removing them makes the code say what actually happens, so the next person to
-                change an icon size edits the one place that governs it. Zero visual change. */}
-            <Button variant="ghost" size="icon" className="lg:hidden" aria-label={t("header.openMenu")}>
-              <Menu />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="left" className="safe-top w-72 p-0">
-            <div className="flex h-16 items-center px-6">
-              <Logo />
-            </div>
-            <NavLinks onNavigate={() => setMobileNav(false)} />
-          </SheetContent>
-        </Sheet>
-
-        {/* Desktop masthead: the slide-out menu's button, the wordmark, then the four section
-            links (all lg+ only). */}
+        {/* The menu button: the full-screen directory below lg, the slide-out panel above it.
+            Both render the same MenuPanel — one directory, two hosts. */}
+        <MobileMenu />
         <DesktopMenu />
+
+        {/* The wordmark, at every width. Below lg it replaces the old page-name label: the
+            reference puts the masthead's name here, and the page's own <h1> already names the
+            page — the label was the third place the same word appeared. */}
         <Link
           href="/"
           aria-label={t("sidebar.homeAria")}
-          className="hidden shrink-0 rounded lg:block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          className="shrink-0 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
           <Logo />
         </Link>
         <React.Suspense fallback={null}>
           <DesktopNav />
         </React.Suspense>
-
-        {/* Current-page label (below lg only) — NOT an <h1>: each page renders its own primary
-            heading, so this stays a plain label to keep a single <h1> landmark per page
-            (accessibility). Publisher profiles are contextual destinations outside the nav, so they
-            carry their own label instead of falling back to "Home". */}
-        <span className="hidden text-lg font-semibold tracking-tight sm:block lg:hidden">
-          {pathname.startsWith("/publishers")
-            ? t("publishers.header")
-            : reportPeriod
-              ? t(`report.period.${reportPeriod}.title`)
-              : t(current?.labelKey ?? "nav.dashboard")}
-        </span>
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {/* Not a <Button>: it is a pill with a label and a ⌘K hint, so it composes its own box.
@@ -172,9 +133,9 @@ export function Header() {
             <span className="hidden min-w-0 flex-1 truncate text-left lg:inline">{t("header.search")}</span>
             <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[0.65rem]">⌘K</kbd>
           </button>
-          <Button variant="ghost" size="icon" className="text-muted-foreground sm:hidden" onClick={() => setSearchOpen(true)} aria-label={t("header.search")}>
-            <Search />
-          </Button>
+          {/* No search control below `sm`: the row measured 406px into a 390px viewport, and
+              Search is a destination in the bottom tab bar on exactly those widths. From `sm` up
+              the pill above returns, and ⌘K works everywhere. */}
 
           <NotificationsMenu />
 

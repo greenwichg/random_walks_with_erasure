@@ -4,6 +4,8 @@ import { usePathname } from "next/navigation";
 import { UtilityBar } from "@/components/home/utility-bar";
 import { SiteFooter } from "@/components/home/site-footer";
 import { DesktopFooter } from "@/components/layout/desktop-footer";
+import { TopicStrip } from "@/components/shared/topic-strip";
+import { useDiscover } from "@/hooks/use-data";
 
 /**
  * Global chrome slots (Template-4): the utility strip and the site footer, rendered ONCE in the
@@ -35,6 +37,24 @@ export function UtilityBarSlot() {
       <UtilityBar />
     </div>
   );
+}
+
+/**
+ * The mobile topic strip — chrome, not page content: the reference carries it under the bar on
+ * every screen, so it lives in the shell rather than in each page. Chips LINK here (a page-level
+ * filter belongs to the page that owns a payload); the desktop home renders its own filtering
+ * strip instead, which is why this one is `lg:hidden`.
+ *
+ * Topics come from the catalog facets the filters and the menu already fetch — a cached query,
+ * not a new one for the layout's sake.
+ */
+export function TopicStripSlot() {
+  const pathname = usePathname();
+  const facets = useDiscover({});
+  if (immersive(pathname)) return null;
+  const topics = (facets.data?.topics ?? []).slice(0, 12).map((topic) => ({ topic, count: 0 }));
+  if (topics.length === 0) return null;
+  return <TopicStrip topics={topics} className="lg:hidden" />;
 }
 
 /** The mobile footer below lg, the reference-layout footer from lg — two components, one slot,

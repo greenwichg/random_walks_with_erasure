@@ -48,7 +48,10 @@ export function MobileTabBar() {
   return (
     <nav
       aria-label={t("header.primaryNav")}
-      className="glass safe-bottom fixed inset-x-0 bottom-0 z-30 border-t lg:hidden"
+      // Opaque, not `glass`: a translucent bar let the page's own rows read THROUGH the labels as
+      // the reader scrolled, which looked like a rendering fault. The header can be glass because
+      // content passes under it briefly; the tab bar has content beneath it permanently.
+      className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t bg-card lg:hidden"
     >
       <ul className="flex items-stretch">
         {items.map((item) => {

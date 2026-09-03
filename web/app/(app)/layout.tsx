@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { Header } from "@/components/layout/header";
 import { MobileTabBar } from "@/components/layout/mobile-tab-bar";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
-import { FooterSlot, UtilityBarSlot } from "@/components/layout/chrome-slots";
+import { FooterSlot, TopicStripSlot, UtilityBarSlot } from "@/components/layout/chrome-slots";
 import { PushReconciler } from "@/components/push/push-reconciler";
 import { backendGet } from "@/lib/backend";
 import { engineAuthHeaders } from "@/lib/engine-auth";
@@ -59,6 +59,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           through. It persists across route changes, so it runs once per app load, not per navigation. */}
       <PushReconciler />
       <Header />
+      {/* Mobile only — the reference carries the topic strip under the bar on every screen. */}
+      <TopicStripSlot />
       <UtilityBarSlot />
       {/* Below the header and above the page, on the same centred column as the page content.
           Renders nothing at all unless the browser has offered an install path and the reader
