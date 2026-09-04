@@ -53,7 +53,11 @@ export function StoryTopics({ story }: { story: Story }) {
         items={shown.map((tag) => ({
           value: tag.name,
           label: tag.label,
-          href: `/stories?tag=${encodeURIComponent(tag.name)}`,
+          // `from` carries the story being read, so the topic page can refuse to answer with
+          // nothing but the story the reader just left. It should never need to: a tag is only
+          // served when it reaches two stories. It is here for the link that gets shared or
+          // bookmarked and followed a week later, when the catalog has moved on.
+          href: `/stories?tag=${encodeURIComponent(tag.name)}&from=${encodeURIComponent(story.id)}`,
         }))}
       />
       {tags.length > shown.length && (

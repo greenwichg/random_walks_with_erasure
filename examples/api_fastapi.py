@@ -1354,6 +1354,9 @@ class StoryTagModel(BaseModel):
     #: Corroboration x specificity in 0..1. The list is already sorted by it; it is exposed so a
     #: client can set its own bar (a card showing three tags wants a higher one than a tag page).
     score: float
+    #: How many stories in the window carry this tag — the topic's REACH. Only tags reaching at
+    #: least two are served, so a client can follow any of them and land somewhere new.
+    stories: Optional[int] = None
 
 
 class StoryModel(BaseModel):
@@ -3004,6 +3007,10 @@ def stories(
     tag: Optional[str] = Query(None, description="stories carrying this topic/entity — the "
                                                 "NORMALISED tag name from a story's `tags[].name` "
                                                 "or from `tagFacets`, not the display label"),
+    fromStory: Optional[str] = Query(
+        None, description="the story a `tag` link was followed from. Dropped from the results only "
+                          "when it would be the ONLY match, so a topic page never answers with "
+                          "nothing but the story the reader just left"),
     type: Optional[str] = Query(None, description="news | research | community — stories with "
                                                   "coverage from a source CURATED as that type "
                                                   "(outlet registry `kind`); a publisher the "
@@ -3022,7 +3029,8 @@ def stories(
     debug = debug or os.environ.get("RWE_STORIES_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
     result = story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
                                         country=country, blindspot=blindspot, story_type=type,
-                                        tag=tag, date_from=dateFrom, date_to=dateTo, sort=sort,
+                                        tag=tag, exclude_story=fromStory,
+                                        date_from=dateFrom, date_to=dateTo, sort=sort,
                                         limit=limit, offset=offset, debug=debug)
     # Additive Story Intelligence summary (freshness + lifecycle) per story — computed HERE (the API
     # layer consumes Story Intelligence; story_service never does), so cards badge without extra calls.

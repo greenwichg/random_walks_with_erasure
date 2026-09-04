@@ -80,6 +80,18 @@ def _catalog(st):
     _add(st, "https://c2.example/m", "Fox News", 1.2,
          "Federal Reserve holds rates steady, Wall Street rallies", _MARKETS,
          category="Business", hours=4)
+    # A second markets event. Not scenery: a tag is only SERVED when it reaches two stories, so a
+    # subject that appears once in a fixture is a subject the product will refuse to offer — and a
+    # fixture built without a second story would be testing the dead end rather than the feature.
+    # Shares the SUBJECT with the story above and not its wording, so the two stay two stories —
+    # a second event that merely rephrases the first would cluster into it and prove nothing.
+    for cu, pub, lean, title in [
+        ("https://d1.example/m", "Financial Times", 0.2,
+         "Federal Reserve chair testifies before the Senate banking committee"),
+        ("https://d2.example/m", "Sky News", 0.0,
+         "Federal Reserve chair appears before the Senate banking committee"),
+    ]:
+        _add(st, cu, pub, lean, title, _MARKETS, category="Business", hours=5)
 
 
 def _stories(st):
@@ -118,9 +130,12 @@ def test_a_story_s_tags_are_its_own():
     stories = None
     st = store_mod.Store("sqlite://"); _catalog(st)
     stories = _stories(st)
-    markets = _tags(_find(stories, "Federal Reserve"))
-    assert {"federal reserve", "wall street"} <= set(markets)
+    markets = _tags(_find(stories, "Federal Reserve holds rates"))
+    assert "federal reserve" in markets
     assert not ({"ebola", "world health organization", "democratic republic of the congo"} & set(markets))
+    # "Wall Street" is real on this story and reaches only it, so it is recorded and not offered —
+    # see `test_a_tag_that_leads_nowhere_is_not_offered`.
+    assert "wall street" not in markets
 
 
 def test_noise_names_never_become_tags():
@@ -143,11 +158,17 @@ def test_a_name_one_member_carries_is_not_a_tag():
     _add(st, "https://s2.example/q", "BBC News", 0.0,
          "Ferry service resumes between Portsmouth and Caen following the storm",
          "Sailings restarted on Tuesday morning.")
-    # Only the second article mentions the operator, so it is uncorroborated.
+    # Only this article mentions the operator, so it is uncorroborated within the story.
     _add(st, "https://s3.example/q", "Sky News", 0.0,
          "Ferry service resumes between Portsmouth and Caen after Brittany Ferries checks",
          "Sailings restarted on Tuesday morning.")
-    tags = _tags(_stories(st)[0])
+    # A second crossing story, so the corroborated names clear the two-story eligibility bar and
+    # this test measures corroboration rather than reach.
+    for cu, pub in [("https://s4.example/q", "AP"), ("https://s5.example/q", "Reuters")]:
+        _add(st, cu, pub, 0.0,
+             "Delays ease on the Portsmouth and Caen crossing after engineering work",
+             "Engineers finished overnight.", hours=6)
+    tags = _tags(_find(_stories(st), "Ferry service resumes"))
     assert "portsmouth and caen" in tags or "portsmouth" in tags   # carried by all three
     assert "brittany ferries" not in tags                          # carried by one
 
@@ -349,7 +370,7 @@ def test_a_tag_retrieves_the_stories_carrying_it():
     got = ss.list_stories(st, tag="ebola", limit=50)
     assert got["total"] == 2
     assert not any("Federal Reserve" in s["title"] for s in got["stories"])
-    assert ss.list_stories(st, tag="wall street", limit=50)["total"] == 1
+    assert ss.list_stories(st, tag="federal reserve", limit=50)["total"] == 2
     assert ss.list_stories(st, tag="no such subject", limit=50)["total"] == 0
 
 
@@ -357,8 +378,8 @@ def test_retrieval_normalises_what_the_caller_sends():
     """A link carries the normalised name, but a caller may paste the label. Both resolve, so a
     tag page cannot 404 on capitalisation."""
     st = store_mod.Store("sqlite://"); _catalog(st)
-    assert ss.list_stories(st, tag="Wall Street", limit=50)["total"] == 1
-    assert ss.list_stories(st, tag="  WALL   street ", limit=50)["total"] == 1
+    assert ss.list_stories(st, tag="Federal Reserve", limit=50)["total"] == 2
+    assert ss.list_stories(st, tag="  FEDERAL   reserve ", limit=50)["total"] == 2
 
 
 def test_tag_facets_count_what_selecting_would_return():
@@ -378,7 +399,7 @@ def test_facets_describe_the_page_before_the_tag_filter_narrows_it():
     st = store_mod.Store("sqlite://"); _catalog(st)
     filtered = ss.list_stories(st, tag="ebola", limit=50)
     tags = {r["tag"] for r in filtered["tagFacets"]}
-    assert "wall street" in tags        # still offered, though this view excludes it
+    assert "federal reserve" in tags    # still offered, though this view excludes it
 
 
 # --------------------------------------------------------------------------- #
@@ -389,8 +410,15 @@ def test_the_story_tag_map_is_written_and_pruned_wholesale():
     stories = _stories(st)
     stored = st.story_tags()
     assert stored and set(stored) == {s["id"] for s in stories}
+    counts = st.tag_story_counts()
     for s in stories:
-        assert [t["name"] for t in stored[s["id"]]] == [t["name"] for t in s["tags"]]
+        recorded = {t["name"] for t in stored[s["id"]]}
+        served = {t["name"] for t in s["tags"]}
+        # The table is the durable record: everything the story is about, including subjects
+        # nothing else covers. What is SERVED is the subset that leads somewhere.
+        assert served <= recorded
+        assert served == {n for n in recorded
+                          if counts[n] >= stg.TAG_MIN_STORIES or n == (s.get("topic") or "").lower()}
     # StoryMember's contract: a rewrite replaces, never accumulates.
     st.replace_story_tags({"st_only": [{"name": "x", "label": "X", "source": "direct", "score": 0.5}]})
     assert set(st.story_tags()) == {"st_only"}
@@ -645,3 +673,116 @@ def test_the_canonical_name_is_what_stories_are_indexed_under():
     assert all("dolly parton" in v for v in names.values()), names
     # …and the index gathers both stories under it.
     assert ss.list_stories(st, tag="dolly parton", limit=50)["total"] == len(stories)
+
+
+# --------------------------------------------------------------------------- #
+# Eligibility — a topic in the rail is a promise that there is more to read.
+# --------------------------------------------------------------------------- #
+def test_a_tag_that_leads_nowhere_is_not_offered():
+    """The reported failure: clicking "Granny", "Guitarist" or "Wolves" reached a topic page
+    holding only the story the reader had just left. A tag on one story is a dead end dressed as
+    navigation, whatever produced the name."""
+    st = store_mod.Store("sqlite://"); _catalog(st)
+    stories = _stories(st)
+    for s in stories:
+        for tag in s["tags"]:
+            assert tag["stories"] >= stg.TAG_MIN_STORIES or tag["source"] == stg.SOURCE_TOPIC
+            # …and the promise holds when followed.
+            assert ss.list_stories(st, tag=tag["name"], limit=50)["total"] >= 2
+
+
+def test_a_tag_that_leads_nowhere_is_still_recorded():
+    """Not offered is not the same as not true. The story↔tag table keeps every subject, so a deep
+    link, an audit or a later surface still has the association."""
+    st = store_mod.Store("sqlite://"); _catalog(st)
+    _stories(st)
+    recorded = {t["name"] for rows in st.story_tags().values() for t in rows}
+    assert "wall street" in recorded                        # one story only — kept, not served
+    assert st.tag_story_counts()["wall street"] == 1
+
+
+def test_the_category_is_exempt_from_the_reach_rule():
+    """A category page is never empty, and its reach is a property of the taxonomy rather than of
+    extraction — so it is offered even on a story whose category nothing else shares today."""
+    st = store_mod.Store("sqlite://")
+    for cu, pub, lean, title in [
+        ("https://z1.example/s", "NPR", -1.0, "Harbour authority publishes its dredging schedule"),
+        ("https://z2.example/s", "BBC News", 0.0, "Harbour authority publishes the dredging schedule"),
+    ]:
+        _add(st, cu, pub, lean, title, "The schedule runs to March.", category="Climate")
+    tags = _tags(_stories(st)[0])
+    assert tags and set(tags) == {"climate"}
+    assert tags["climate"]["source"] == stg.SOURCE_TOPIC
+
+
+def test_reach_is_counted_over_the_window_not_the_page():
+    """A filtered view holds a subset. Counting inside it would call every tag a dead end that
+    merely lacks a second story on that page — the Technology page hiding what the front page
+    shows."""
+    st = store_mod.Store("sqlite://"); _catalog(st)
+    _stories(st)                                            # unfiltered build writes the table
+    health = ss.list_stories(st, topic="Health", limit=50)["stories"]
+    assert health
+    served = {t["name"] for s in health for t in (s.get("tags") or [])}
+    assert "ebola" in served                                # two stories in the window carry it
+
+
+def test_prune_annotates_reach_and_leaves_the_ranking_alone():
+    tags = {"a": [{"name": "x", "label": "X", "source": stg.SOURCE_DIRECT, "score": 0.9},
+                  {"name": "y", "label": "Y", "source": stg.SOURCE_DIRECT, "score": 0.5}],
+            "b": [{"name": "x", "label": "X", "source": stg.SOURCE_DIRECT, "score": 0.4}]}
+    out = stg.prune_for_discovery(tags)
+    assert [t["name"] for t in out["a"]] == ["x"]           # y reaches one story
+    assert out["a"][0]["stories"] == 2
+    assert out["b"] == [dict(tags["b"][0], stories=2)]
+
+
+# --------------------------------------------------------------------------- #
+# The originating story
+# --------------------------------------------------------------------------- #
+def test_a_topic_page_never_answers_with_only_the_story_you_came_from():
+    """A saved or shared tag link, followed once the catalog has moved on. Telling the reader there
+    is nothing else is more honest than showing them what they just read as a result."""
+    st = store_mod.Store("sqlite://"); _catalog(st)
+    stories = _stories(st)
+    lonely = next(s for s in stories if "Federal Reserve holds rates" in s["title"])
+    # "Wall Street" is on that story alone.
+    assert ss.list_stories(st, tag="wall street", exclude_story=lonely["id"], limit=50)["total"] == 0
+
+
+def test_the_originating_story_is_kept_when_the_page_has_other_results():
+    """It is dropped only when it would be the ONLY match; on a real page it belongs there like
+    any other story."""
+    st = store_mod.Store("sqlite://"); _catalog(st)
+    stories = _stories(st)
+    ebola = next(s for s in stories if "Ebola" in s["title"])
+    got = ss.list_stories(st, tag="ebola", exclude_story=ebola["id"], limit=50)
+    assert got["total"] == 2
+    assert ebola["id"] in {s["id"] for s in got["stories"]}
+
+
+# --------------------------------------------------------------------------- #
+# Title Case, the other half of the reported defect
+# --------------------------------------------------------------------------- #
+def test_a_title_case_headline_contributes_no_singleton_names():
+    """"Guitarist", "Band", "Quits", "Tribute" and "Wolves" came from ONE headline — "Bad Wolves
+    Guitarist Quits Band Over Dolly Parton Tribute" — where house style capitalises every content
+    word. The phrase reader refused it; the singleton reader beside it did not, and neither did the
+    evidence that decides which words this window writes as names."""
+    head = "Bad Wolves Guitarist Quits Band Over Dolly Parton Tribute"
+    stories = [{"id": "s", "title": head, "summary": "", "coverage": [{"headline": head}]}]
+    assert stg._case_profile(stories) == set()
+    assert stg.singleton_votes([{"headline": head}, {"headline": head}],
+                               {"wolves", "guitarist", "band"}, noise=lambda n: False) == {}
+
+
+def test_lower_case_evidence_still_counts_from_a_title_case_headline():
+    """The guard removes a word from the NAMES evidence, never adds one: a lower-case occurrence
+    anywhere is still evidence against, and evidence against should be easy to find."""
+    stories = [{"id": "s1", "title": "Bad Wolves Guitarist Quits Band Over Dolly Parton Tribute",
+                "summary": "The guitarist left the band on Tuesday.", "coverage": []},
+               {"id": "s2", "title": "Ebola spreads through the province",
+                "summary": "Teams reached the clinics.", "coverage": []}]
+    names = stg._case_profile(stories)
+    assert "guitarist" not in names and "band" not in names
+    assert "ebola" in names                                 # sentence-cased, never written lower

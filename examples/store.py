@@ -2937,6 +2937,17 @@ class Store:
             rows.sort(key=lambda r: (-r["score"], r["name"]))
         return out
 
+    def tag_story_counts(self) -> dict:
+        """``tag -> how many stories carry it``, over the whole window.
+
+        The reach of each topic, which is what decides whether it is worth OFFERING: a tag on one
+        story leads back to that story. Counted in SQL rather than by loading every row, and over
+        the whole table rather than a caller's subset — a filtered view that counted inside itself
+        would call every tag a dead end that merely lacks a second story on that page."""
+        with self.session() as s:
+            return {tag: int(n) for tag, n in s.execute(
+                select(StoryTag.tag, func.count()).group_by(StoryTag.tag)).all()}
+
     def stories_for_tag(self, tag: str, *, limit: int = 200) -> list:
         """Story ids carrying ``tag``, strongest association first — the retrieval half of the
         projection, so "other stories about this" is an indexed lookup rather than a scan over

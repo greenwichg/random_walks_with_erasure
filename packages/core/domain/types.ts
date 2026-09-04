@@ -764,6 +764,9 @@ export interface StoryTag {
   source: "direct" | "inherited" | "topic";
   /** Corroboration x specificity in 0..1. The array is already sorted by it. */
   score: number;
+  /** How many stories in the window carry this tag — the topic's reach. A tag is only served
+   *  when it reaches at least two, so following it always leads somewhere new. */
+  stories?: number;
 }
 
 export interface Story {
@@ -918,6 +921,9 @@ export interface StoryQuery {
   /** Retrieval by topic/entity: the NORMALISED tag name (`Story.tags[].name`, or `tagFacets[].tag`)
    *  — never the display label, so a link cannot break on capitalisation. Absent = "All". */
   tag?: string;
+  /** The story a `tag` link was followed from. Dropped from the results only when it would be the
+   *  only match, so a topic page never answers with nothing but the story the reader just left. */
+  fromStory?: string;
   dateFrom?: string;
   dateTo?: string;
   sort?: "top" | "latest" | "oldest" | "publishers";

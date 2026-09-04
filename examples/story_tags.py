@@ -327,14 +327,26 @@ def _case_profile(stories: list) -> set:
     upper: dict = {}
     lower: dict = {}
     for story in stories:
-        for raw in _CAP_TOKEN_RE.findall(_story_text(story)):
-            token = raw.lower().strip("'’-")
-            if len(token) < SINGLETON_MIN_LEN:
-                continue
-            if raw[:1].isupper():
-                upper[token] = upper.get(token, 0) + 1
-            else:
-                lower[token] = lower.get(token, 0) + 1
+        for segment in entity_spans._SEGMENT_RE.split(_story_text(story)):
+            words = _CAP_TOKEN_RE.findall(segment)
+            # A TITLE CASE segment is not evidence that anything in it is a name — it capitalises
+            # every content word by house style. Counting it as evidence is what put "Guitarist",
+            # "Band", "Quits", "Tribute" and "Wolves" in the live rail: the only place those words
+            # appeared was "Bad Wolves Guitarist Quits Band Over Dolly Parton Tribute", so each one
+            # looked like a word this window never writes in lower case.
+            #
+            # LOWER-case occurrences still count from everywhere, deliberately: they are evidence
+            # AGAINST a word being a name, and evidence against should be as easy to find as
+            # possible.
+            titled = entity_spans._title_cased(words)
+            for raw in words:
+                token = raw.lower().strip("'’-")
+                if len(token) < SINGLETON_MIN_LEN:
+                    continue
+                if not raw[:1].isupper():
+                    lower[token] = lower.get(token, 0) + 1
+                elif not titled:
+                    upper[token] = upper.get(token, 0) + 1
     out = set()
     for token, ups in upper.items():
         total = ups + lower.get(token, 0)
@@ -355,7 +367,14 @@ def singleton_votes(members: list, names: set, *, noise) -> dict:
     votes: dict = {}
     for m in members:
         seen = set()
-        for raw in _CAP_TOKEN_RE.findall(m.get("headline") or ""):
+        head = m.get("headline") or ""
+        # The same Title Case guard `phrases` applies, and it belongs here just as much: this
+        # reader took EVERY capitalised word, so a title-cased headline handed over its verbs.
+        # One guard written in two places is how "Guitarist" reached readers while the phrase
+        # reader beside it correctly refused the headline it came from.
+        if entity_spans._title_cased(_CAP_TOKEN_RE.findall(head)):
+            continue
+        for raw in _CAP_TOKEN_RE.findall(head):
             # Possessive stripped HERE and not only in the phrase reader's normaliser, which is
             # the whole of the "Parton's" defect: that rail entry came down this path, where a
             # trailing `strip("'’-")` cannot reach an apostrophe that has an "s" after it.
@@ -668,6 +687,46 @@ def inherit_tags(stories: list, direct: dict, related: dict, *, cap: int = TAG_C
             inherited.append({"name": name, "label": tag["label"], "source": SOURCE_INHERITED,
                               "score": score, "members": tag.get("members", 0)})
         out[sid] = _sorted(own + inherited)[:cap]
+    return out
+
+
+#: Stories a tag must appear on before it is worth SHOWING. Two: the story being read, and at
+#: least one other to go to.
+#:
+#: A topic in the rail is a promise that there is more of this to read. A tag carried by one story
+#: cannot keep it — following it lands the reader on a page holding the story they just left, which
+#: is a dead end dressed as navigation. Production served "Granny", "Guitarist" and "Wolves" that
+#: way; those particular names came from a Title Case headline and are fixed at the extractor, but
+#: the dead end is structural and would come back with the next extraction defect. This is the
+#: guard that makes the promise true regardless of where a name came from.
+TAG_MIN_STORIES = 2
+
+
+def prune_for_discovery(tags_by_story: dict, counts: "dict | None" = None,
+                        *, minimum: int = TAG_MIN_STORIES) -> dict:
+    """Drop tags that lead nowhere, and annotate the rest with how many stories they gather.
+
+    ``counts`` lets a caller supply the window-wide totals when it has them from somewhere other
+    than ``tags_by_story`` — a filtered view reads them from the table rather than recounting a
+    subset, because a subset would call every tag a dead end that merely has no second story ON
+    THIS PAGE.
+
+    The story's own CATEGORY is exempt: a category page is never empty, and it is the one tag whose
+    reach is a property of the taxonomy rather than of extraction."""
+    totals = counts if counts is not None else {}
+    if counts is None:
+        for tags in tags_by_story.values():
+            for tag in tags:
+                totals[tag["name"]] = totals.get(tag["name"], 0) + 1
+    out: dict = {}
+    for sid, tags in tags_by_story.items():
+        kept = []
+        for tag in tags:
+            n = totals.get(tag["name"], 0)
+            if tag["source"] != SOURCE_TOPIC and n < minimum:
+                continue
+            kept.append(dict(tag, stories=n))
+        out[sid] = kept
     return out
 
 

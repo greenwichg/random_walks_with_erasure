@@ -2625,6 +2625,14 @@ def test_story_tags_over_the_wire(client):
             ("https://tag-rtr.example/1", "TagReuters", 0.0,
              "World Health Organization reports Ebola outbreak in the Democratic Republic of the Congo",
              "Health", outbreak),
+            # A second story on the same subject. Required, not decorative: a tag is only served
+            # when it reaches two stories, so a one-story fixture would be asserting the dead end.
+            ("https://tag-ap.example/1", "TagAP", 0.0,
+             "Ebola vaccination teams reach remote clinics across the Democratic Republic of the Congo",
+             "Health", outbreak),
+            ("https://tag-sky.example/1", "TagSky", 0.0,
+             "Ebola vaccination teams enter remote clinics across the Democratic Republic of the Congo",
+             "Health", outbreak),
             ("https://tag-wsj.example/1", "TagWSJ", 0.9,
              "Federal Reserve holds rates as Wall Street rallies", "Business", markets),
             ("https://tag-fox.example/1", "TagFox", 1.2,
@@ -2642,6 +2650,8 @@ def test_story_tags_over_the_wire(client):
         assert {"ebola", "world health organization", "democratic republic of the congo"} <= set(tags)
         assert tags["democratic republic of the congo"]["label"] == "Democratic Republic of the Congo"
         assert tags["ebola"]["source"] == "direct"
+        # Every served tag reaches at least two stories — following one always leads somewhere.
+        assert all(t["stories"] >= 2 for t in outbreak_story["tags"])
         # Best first, so a client that shows three tags shows the three that matter.
         scores = [t["score"] for t in outbreak_story["tags"]]
         assert scores == sorted(scores, reverse=True)
@@ -2656,12 +2666,18 @@ def test_story_tags_over_the_wire(client):
         # …which is exactly what it does return.
         got = client.get("/api/stories", params={"tag": "ebola", "limit": 100}).json()
         assert got["total"] == facets["ebola"]["count"]
+        assert got["total"] >= 2
         assert all("Ebola" in s["title"] for s in got["stories"])
         assert not any("Federal Reserve" in s["title"] for s in got["stories"])
+        # A topic page never answers with nothing but the story the reader came from.
+        assert client.get("/api/stories", params={"tag": "wall street",
+                                                  "fromStory": next(s["id"] for s in body["stories"]
+                                                                    if "Federal Reserve" in s["title"]),
+                                                  "limit": 100}).json()["total"] == 0
 
         # A caller who pastes the display label gets the same page — a tag link cannot 404 on case.
-        assert client.get("/api/stories", params={"tag": "Wall Street"}).json()["total"] == \
-            client.get("/api/stories", params={"tag": "wall street"}).json()["total"] == 1
+        assert client.get("/api/stories", params={"tag": "Ebola"}).json()["total"] == \
+            client.get("/api/stories", params={"tag": "ebola"}).json()["total"] >= 2
         assert client.get("/api/stories", params={"tag": "no such subject"}).json()["total"] == 0
 
         # The single-story route carries them too, so a story page needs no extra request.

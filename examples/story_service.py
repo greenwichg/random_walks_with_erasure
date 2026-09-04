@@ -2256,11 +2256,16 @@ def attach_tags(store_, stories: list) -> list:
         entities = {}
     direct = story_tags.extract_tags(stories, entities, noise=tag_noise)
     tags = story_tags.inherit_tags(stories, direct, _tag_relations(stories, direct))
+    # PERSIST EVERYTHING, SERVE WHAT LEADS SOMEWHERE. The table is the durable record of what each
+    # story is about, and a tag carried by one story is still a true fact about it — worth keeping
+    # for a deep link, an audit, or a future surface. What it is not worth is a row in the rail,
+    # because following it lands the reader back on the story they were already reading.
     try:
         store_.replace_story_tags(tags)
     except Exception:
         pass
-    return [dict(s, tags=tags.get(s["id"], [])) for s in stories]
+    shown = story_tags.prune_for_discovery(tags)
+    return [dict(s, tags=shown.get(s["id"], [])) for s in stories]
 
 
 def attach_tags_readonly(store_, stories: list) -> list:
@@ -2275,9 +2280,14 @@ def attach_tags_readonly(store_, stories: list) -> list:
         return stories
     try:
         stored = store_.story_tags([s["id"] for s in stories])
+        # Counts come from the WHOLE table, never from this page. A filtered view holds a subset of
+        # the window, and counting inside it would call every tag a dead end that merely has no
+        # second story on this page — the Technology page would hide the tags the front page shows.
+        counts = store_.tag_story_counts()
     except Exception:
         return stories
-    return [dict(s, tags=stored.get(s["id"], [])) for s in stories]
+    shown = story_tags.prune_for_discovery(stored, counts)
+    return [dict(s, tags=shown.get(s["id"], [])) for s in stories]
 
 
 def _profile(members: list) -> frozenset:
@@ -4019,7 +4029,7 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
 
 
 def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,
-                 story_type=None, tag=None, date_from=None, date_to=None,
+                 story_type=None, tag=None, exclude_story=None, date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
                  min_publishers: int = 2, max_scan: int = None, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
@@ -4134,6 +4144,16 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         want = " ".join(tag.strip().lower().split())
         stories = [s for s in stories
                    if any(t.get("name") == want for t in (s.get("tags") or []))]
+        # A TOPIC PAGE HOLDING ONLY THE STORY YOU CAME FROM IS A DEAD END, and telling the reader
+        # there is nothing else is more honest than showing them what they just read as though it
+        # were a result. `exclude_story` is the story they arrived from; it is dropped only when it
+        # is the ONLY match, because on a page with real results it belongs there like any other.
+        #
+        # The eligibility rule in `story_tags.prune_for_discovery` should mean this never fires
+        # from the rail — a tag offered there already reaches two stories. It fires for a link
+        # someone saved, shared or typed, where the catalog has since moved on.
+        if exclude_story and len(stories) == 1 and stories[0]["id"] == exclude_story:
+            stories = []
 
     stories = _sort_stories(stories, sort)
     total = len(stories)

@@ -14,6 +14,7 @@ export const STORY_WIRE_KEYS = [
   "blindspot",
   "type",
   "tag",
+  "fromStory",
   "dateFrom",
   "dateTo",
   "sort",

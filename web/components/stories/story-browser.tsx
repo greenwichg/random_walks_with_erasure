@@ -105,6 +105,9 @@ export function StoryBrowser({
   // a dropdown would be a search box pretending to be a filter. It still clears like every other
   // filter (the chip below), and it still narrows the same one build.
   const tag = params.get("tag") ?? "all";
+  // Where a tag link came from. Not a filter the reader sets or clears — it only tells the engine
+  // which story not to serve back to them alone.
+  const fromStory = params.get("from") ?? "";
   const sort = params.get("sort") ?? defaultSort;
 
   const setParam = React.useCallback(
@@ -158,6 +161,7 @@ export function StoryBrowser({
     blindspot: asFilter(blindspot),
     type: asFilter(type),
     tag: asFilter(tag),
+    fromStory: fromStory || undefined,
     sort: sort as StoryQuery["sort"],
     limit: PAGE,
     offset,
@@ -272,7 +276,13 @@ export function StoryBrowser({
         <div className="-mt-3 mb-6">
           <button
             type="button"
-            onClick={() => setTag("all")}
+            onClick={() => {
+              const next = new URLSearchParams(params.toString());
+              next.delete("tag");
+              next.delete("from");        // the origin is meaningless without the tag it qualified
+              const qs = next.toString();
+              router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+            }}
             className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {t("filter.tag", { tag: tagLabel })}
