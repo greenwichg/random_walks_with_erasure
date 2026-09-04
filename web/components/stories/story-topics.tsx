@@ -34,7 +34,7 @@ export function StoryTopics({ story }: { story: Story }) {
   const [expanded, setExpanded] = React.useState(false);
   const tags = story.tags ?? [];
   // Absent, not empty: a story with no corroborated names has nothing to say here, and an empty
-  // bordered panel headed "Similar news topics" says something false about the catalog. This is
+  // bordered panel headed "Related Topics" says something false about the catalog. This is
   // the opposite call from the Similar Stories rail deliberately — that rail's emptiness was
   // ambiguous BECAUSE a threshold could silently empty it everywhere, and a reader who saw a gap
   // could not tell a decision from a fault. Tags have no such threshold: a story either carries
