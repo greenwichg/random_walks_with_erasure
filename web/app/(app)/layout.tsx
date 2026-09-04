@@ -52,7 +52,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (me !== null && needsOnboarding(me)) redirect("/onboarding");
 
   return (
-    <div className="min-h-screen">
+    // A flex column with a growing `main`, which is the sticky-footer pattern this shell wanted.
+    // `main` used to carry `min-h-[calc(100vh-4rem)]` instead, and that is not the same thing: it
+    // is a FIXED reservation, so a page shorter than the window got a band of empty background
+    // between its last row and the footer, sized by the window rather than by the page. Measured
+    // at 1440px on a one-event category — 172px of nothing in a 950px-tall window, 422px in a
+    // 1200px one, growing with every extra pixel of screen. `flex-1` reserves the same space only
+    // when there is space to reserve, so the footer lands at the bottom of the viewport on a short
+    // page and immediately after the content on a long one.
+    <div className="flex min-h-screen flex-col">
       {/* Renders nothing. Here rather than in the settings page because the two desynchronisations
           it repairs — a VAPID rotation, a `410` prune — happen while the reader is anywhere but
           Settings, and this layout is the one client boundary every authenticated page passes
@@ -68,7 +76,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="mx-auto w-full max-w-6xl px-4 pt-4 sm:px-6 lg:px-8">
         <InstallPrompt />
       </div>
-      <main className="min-h-[calc(100vh-4rem)]">{children}</main>
+      <main className="flex-1">{children}</main>
       <FooterSlot />
       {/* Below lg only. The spacer reserves the bar's height (plus the home indicator) so a
           page's last row is never trapped underneath it; the bar itself is fixed. */}

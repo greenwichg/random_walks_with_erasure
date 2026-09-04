@@ -141,7 +141,7 @@ export function HomeDesktop({
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
-  const { rail, topic, setTopic, visible, facts, publishers, hero, topStories, blindspots, categories, latest } = model;
+  const { rail, topic, setTopic, visible, facts, publishers, mix, hero, topStories, blindspots, categories, latest } = model;
 
   // Page order: lead → blind-spot cards → centre column → side column → second band → topic
   // sections → closing lists.
@@ -260,8 +260,11 @@ export function HomeDesktop({
                   </ul>
                 </div>
                 {!railsPaired && (
-                  <div className={cn("col-span-3 min-w-0", TILE)}>
-                    <LocalNews />
+                  <div className="col-span-3 min-w-0">
+                    <div className={TILE}>
+                      <LocalNews />
+                    </div>
+                    <CoverageMix mix={mix} events={visible.length} />
                   </div>
                 )}
               </div>
@@ -310,8 +313,11 @@ export function HomeDesktop({
             {/* The two reader modules, paired across the width when neither run kept its rail. */}
             {railsPaired && (
               <div className={cn(ROW, "mt-4")}>
-                <div className={cn(rail.length > 0 ? "col-span-6" : "col-span-12", "min-w-0", TILE)}>
-                  <LocalNews />
+                <div className={cn(rail.length > 0 ? "col-span-6" : "col-span-12", "min-w-0")}>
+                  <div className={TILE}>
+                    <LocalNews />
+                  </div>
+                  <CoverageMix mix={mix} events={visible.length} />
                 </div>
                 {rail.length > 0 && (
                   <div className={cn("col-span-6 min-w-0", TILE)}>
@@ -628,6 +634,36 @@ function LocalNews() {
       <Button asChild variant="outline" size="sm" className={cn(OUTLINE_BTN, "mt-4 w-full")}>
         <Link href={place ? `/stories?country=${encodeURIComponent(place)}` : "/settings"}>{t("common.readMore")}</Link>
       </Button>
+    </section>
+  );
+}
+
+/**
+ * "Today's coverage" — the aggregate left/centre/right split across the events on the page, which
+ * under a topic filter is that topic's own balance. The reference carries the same module on its
+ * category pages; the product has always derived the number (`coverageMix`, home-model.ts) and
+ * never shown it here.
+ *
+ * ONE question, answered once: "how balanced is this coverage?". The per-story strips answer "how
+ * is THIS event covered", and the Briefing already leads with the one-sided count — so neither of
+ * those figures is repeated here.
+ *
+ * It rides under Daily local news rather than standing alone, because that module is the shorter
+ * side of its row at both densities: beside a four-row band on a full day, and beside the topic
+ * index on a thin one, where the column used to stop 194px above its neighbour.
+ */
+function CoverageMix({ mix, events }: { mix: HomeModel["mix"]; events: number }) {
+  const { t } = useTranslation();
+  if (mix.left + mix.center + mix.right <= 0) return null;
+  return (
+    <section aria-labelledby="coverage-heading" className={cn(TILE, "mt-4")}>
+      <h2 id="coverage-heading" className={cn(SECTION_TITLE, "mb-3")}>
+        {t("home.coverage.title")}
+      </h2>
+      <BiasStrip distribution={mix} labels />
+      <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground">
+        {t("home.coverage.body", { n: events })}
+      </p>
     </section>
   );
 }
