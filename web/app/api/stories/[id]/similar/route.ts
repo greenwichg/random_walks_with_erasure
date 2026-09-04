@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 // sweeps of `?minScore=…` all returned the same empty result, which read as evidence about the
 // DATA and was evidence about this line. Anything the engine accepts and a caller may set has to
 // be listed here or it does not exist.
-const FORWARDED = ["limit", "minScore", "debug"] as const;
+const FORWARDED = ["limit", "minScore", "ratio", "debug"] as const;
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   const incoming = new URL(request.url).searchParams;

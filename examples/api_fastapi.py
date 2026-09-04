@@ -3038,8 +3038,13 @@ def story_similar(
     limit: int = Query(10, ge=1, le=25, description="maximum cards to return"),
     minScore: Optional[float] = Query(
         None, ge=0.0, le=1.0,
-        description="override the similarity floor for THIS request — a probe for choosing the "
+        description="override the absolute noise floor for THIS request — a probe for choosing the "
                     "deployment's RWE_STORY_SIMILAR_MIN against real titles",
+    ),
+    ratio: Optional[float] = Query(
+        None, ge=0.0, le=1.0,
+        description="override the relative cut for THIS request: the share of the best candidate's "
+                    "score another must reach. 0 disables it and leaves only the floor",
     ),
     debug: bool = Query(
         False,
@@ -3048,26 +3053,31 @@ def story_similar(
     ),
 ) -> dict:
     """Similarity, not adjacency. Scored with the clusterer's own measure — IDF-weighted Jaccard
-    over each story's whole profile (title, summary and every coverage headline) — and floored at
-    the threshold the clusterer uses to call two clusters the same event, so a pair sharing only a
-    household name or a topic does not qualify.
+    over each story's whole profile (title, summary and every coverage headline) — so a pair
+    sharing only a household name or a topic does not qualify.
+
+    SELECTION IS RELATIVE: everything within ``ratio`` of the best candidate is kept, with
+    ``minScore`` as the absolute backstop underneath it. Two absolute defaults shipped before this
+    and both emptied the rail, because the top score varies nearly 4x between stories on the live
+    catalog — a fixed cut keeps one story's genuine matches only by admitting another's noise.
 
     Returns FEWER than ``limit`` — including none — whenever the catalog holds nothing that close.
     That is the correct answer and callers must render it as one; padding the rail with the day's
     top stories is the defect this replaced. 404 when the event is no longer in the live catalog.
 
-    ``minScore`` overrides the floor for one request. It exists because the shipped default was
-    calibrated on a 9-story demo catalog and the first value chosen that way was wrong enough to
-    empty the rail everywhere: an operator can now sweep a real catalog, read the titles each floor
-    admits, and set ``RWE_STORY_SIMILAR_MIN`` from evidence. Read-only and per-request — it changes
-    nothing for anyone else."""
+    ``minScore`` and ``ratio`` override the two cuts for one request. They exist because the
+    shipped default was calibrated on a 9-story demo catalog and was wrong enough to empty the rail
+    everywhere: an operator can sweep a real catalog, read the titles each setting admits, and set
+    ``RWE_STORY_SIMILAR_MIN`` / ``RWE_STORY_SIMILAR_RATIO`` from evidence. Read-only and
+    per-request — they change nothing for anyone else."""
     st = _require_store()
     if debug:
         diag = story_service.similar_diagnostics(st, story_id)
         if diag is None:
             raise HTTPException(status_code=404, detail="Story not found.")
         return {"stories": [], "total": 0, "debug": diag}
-    found = story_service.similar_stories(st, story_id, limit=limit, min_score=minScore)
+    found = story_service.similar_stories(st, story_id, limit=limit, min_score=minScore,
+                                          rel_ratio=ratio)
     if found is None:
         raise HTTPException(status_code=404, detail="Story not found.")
     return {"stories": found, "total": len(found)}

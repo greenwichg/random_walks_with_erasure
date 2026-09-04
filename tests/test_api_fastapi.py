@@ -2533,3 +2533,71 @@ def test_publisher_profile_wire_carries_ownership_and_the_about_block(client):
         assert toi.status_code == 200 and "ownership" not in toi.json()
     finally:
         st.delete_feed_articles([u])                         # leave the shared store as we found it
+
+
+def test_similar_stories_endpoint(client):
+    """GET /api/stories/{id}/similar — event similarity, the two per-request overrides, and the
+    diagnostics view.
+
+    The overrides are tested because they are the operator's only instrument for choosing this
+    deployment's thresholds, and because a release shipped in which the WEB proxy silently dropped
+    them: seven sweeps of ?minScore= came back identical, which read as evidence about the catalog
+    and was evidence about the forwarding. A parameter the engine accepts is worth an assertion at
+    every layer that carries it."""
+    st = api_fastapi.state.store
+    urls = []
+    kyiv = "Ukrainian air defence units engaged dozens of Shahed drones over Kyiv oblast overnight."
+    try:
+        for cu, pub, lean, title, cat, desc in [
+            # A drone strike, and the air-defence response: one event family, two clusters.
+            ("https://sim-npr.example/1", "SimNPR", -1.1, "Russian drone barrage kills 27 near Kyiv", "Politics", kyiv),
+            ("https://sim-bbc.example/1", "SimBBC", 0.0, "Drone barrage kills 27 Ukrainians near Kyiv", "Politics", kyiv),
+            ("https://sim-rtr.example/1", "SimReuters", 0.0,
+             "Air defence units intercept Shahed drones over Kyiv oblast", "Politics", kyiv),
+            ("https://sim-ap.example/1", "SimAP", 0.0,
+             "Ukrainian gunners down Shahed drones above Kyiv oblast", "Politics", kyiv),
+            # Shares the names, the place and the topic; a different event.
+            ("https://sim-wsj.example/1", "SimWSJ", 0.9, "Senate committee debates the Ukraine aid package",
+             "Politics", "Ukrainian officials in Kyiv welcomed the drone defence funding."),
+            ("https://sim-cnn.example/1", "SimCNN", -1.2, "Senators clash over Ukraine aid package size",
+             "Politics", "Ukrainian officials in Kyiv welcomed the drone defence funding."),
+        ]:
+            urls.append(cu)
+            st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub, title=title,
+                                   description=desc, body=None, published_at="2026-07-06T12:00:00+00:00",
+                                   source_feed="f", scored={"article_id": cu, "outlet": pub, "lean": lean,
+                                                            "category": cat})
+        stories = client.get("/api/stories", params={"limit": 100}).json()["stories"]
+        strike = next(s for s in stories if "Drone barrage kills 27" in s["title"])["id"]
+
+        r = client.get(f"/api/stories/{strike}/similar")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == len(body["stories"])
+        titles = [s["title"] for s in body["stories"]]
+        assert titles and "Shahed drones above Kyiv oblast" in titles[0]      # the same event, first
+        assert not any("Senat" in t for t in titles)                          # the shared name is not similarity
+
+        # ratio=0 turns the relative cut off, so the floor alone decides — and admits more. This is
+        # the assertion that fails if the parameter is not wired through.
+        loose = client.get(f"/api/stories/{strike}/similar",
+                           params={"ratio": 0, "minScore": 0.0}).json()
+        assert loose["total"] > body["total"]
+        assert any("Senat" in s["title"] for s in loose["stories"])
+
+        # minScore, the other override, and limit alongside it.
+        assert client.get(f"/api/stories/{strike}/similar", params={"minScore": 0.99}).json()["total"] == 0
+        assert len(client.get(f"/api/stories/{strike}/similar",
+                              params={"limit": 1, "ratio": 0, "minScore": 0.0}).json()["stories"]) == 1
+
+        # The diagnostics view: scores with NO cut applied, plus the cut that would have been used.
+        dbg = client.get(f"/api/stories/{strike}/similar", params={"debug": True}).json()
+        assert dbg["stories"] == [] and dbg["total"] == 0
+        d = dbg["debug"]
+        assert d["candidates"] >= 2 and d["top"] and d["scoreQuantiles"]["max"] > 0
+        assert d["cutInEffect"] >= d["floorInEffect"] and 0.0 <= d["ratioInEffect"] <= 1.0
+
+        assert client.get("/api/stories/st_bogus/similar").status_code == 404
+        assert client.get(f"/api/stories/{strike}/similar", params={"ratio": 2}).status_code == 422
+    finally:
+        st.delete_feed_articles(urls)

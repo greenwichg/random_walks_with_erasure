@@ -3375,3 +3375,192 @@ def test_template_closure_requires_a_distinctive_shared_token():
     assert ok(0, 1) is False                                  # sole-template -> vetoed
     assert ok(2, 3) is True                                   # shares {men, d23} -> passes
     assert stats == {"templateEdgeVetoed": 1}
+
+
+# --------------------------------------------------------------------------- #
+# Similar Stories — the rail on the story page.
+#
+# WHAT THESE TESTS DELIBERATELY DO NOT DO: assert that the shipped default constants produce a
+# particular number of cards on this catalog. That is the mistake that shipped twice. The measure
+# is IDF-weighted Jaccard `w / (Ta + Tb - w)`, and BOTH halves of it move with catalog size — the
+# weights are `log(1 + N/df)` and the totals grow with how many coverage headlines a story carries.
+# A twelve-article fixture and a 2,852-story production catalog therefore live on different scales:
+# the first default was calibrated against a nine-story demo and emptied the rail everywhere.
+#
+# So the assertions here are about the RULE, with the thresholds passed in explicitly, and about
+# the shape of the distribution the rule has to survive. The constants themselves are calibrated
+# against production and the evidence for them is recorded at `SIMILAR_REL_RATIO`.
+# --------------------------------------------------------------------------- #
+_KYIV_DESC = "Ukrainian air defence units engaged dozens of Shahed drones over Kyiv oblast overnight."
+_ORINOCO_DESC = "Officials described terms covering Orinoco belt crude output."
+
+
+def _kyiv_and_caracas(st):
+    """Four events with the two distributions production actually produces.
+
+    The Kyiv pair is a strong match (0.43); the Caracas pair is a weak but genuine one (0.21); the
+    Senate story shares Kyiv's names and place but is a different event (0.10); the wildfire shares
+    nothing. The load-bearing property is that Caracas's TRUE match scores below the Kyiv story's
+    cut — so one fixed number cannot serve both rails.
+    """
+    # A drone strike, and the air-defence response to it: one event family, two clusters.
+    _add(st, "https://npr.org/t1", "NPR", -1.0, "Russian drone barrage kills 27 near Kyiv", desc=_KYIV_DESC)
+    _add(st, "https://bbc.com/t2", "BBC News", 0.0, "Drone barrage kills 27 Ukrainians near Kyiv", desc=_KYIV_DESC)
+    _add(st, "https://reuters.com/r1", "Reuters", 0.0,
+         "Air defence units intercept Shahed drones over Kyiv oblast", desc=_KYIV_DESC)
+    _add(st, "https://apnews.com/r2", "AP", 0.0,
+         "Ukrainian gunners down Shahed drones above Kyiv oblast", desc=_KYIV_DESC)
+    # The reported defect, in fixture form: shares "Ukrainian", "Kyiv", "drone" and "defence" with
+    # the strike, and is a budget argument in Washington.
+    _add(st, "https://wsj.com/w1", "WSJ", 0.8, "Senate committee debates the Ukraine aid package",
+         desc="Ukrainian officials in Kyiv welcomed the drone defence funding.")
+    _add(st, "https://cnn.com/w2", "CNN", -1.2, "Senators clash over Ukraine aid package size",
+         desc="Ukrainian officials in Kyiv welcomed the drone defence funding.")
+    # A flat distribution: one real relative, scoring far below what the Kyiv story's best reaches.
+    _add(st, "https://foxnews.com/v1", "Fox News", 1.5,
+         "Washington and Caracas reach an oil reserves accord", desc=_ORINOCO_DESC)
+    _add(st, "https://ft.com/v2", "Financial Times", 0.2,
+         "Caracas and Washington reach accord on oil reserves", desc=_ORINOCO_DESC)
+    _add(st, "https://news.sky.com/v3", "Sky News", 0.0, "Orinoco crude output climbs after the accord",
+         desc="Analysts tracked shipments from the belt.")
+    _add(st, "https://aljazeera.com/v4", "Al Jazeera", -0.3,
+         "Crude output from Orinoco climbs following the accord",
+         desc="Analysts tracked shipments from the belt.")
+    # Nothing in common with anything.
+    _add(st, "https://guardian.com/n1", "The Guardian", -1.5,
+         "Wildfires spread along the western coast", category="Climate")
+    _add(st, "https://msnbc.com/n2", "MSNBC", -1.4,
+         "Wildfires spread fast along the western coast", category="Climate")
+
+
+def _find(st, needle):
+    for s in ss.cluster_from_store(st):
+        if needle.lower() in s["title"].lower():
+            return s
+    raise AssertionError(f"no story matching {needle!r}")
+
+
+def test_similar_keeps_the_same_event_and_cuts_a_shared_name():
+    """The reported defect. A story sharing the target's names, place and topic — four profile
+    tokens, a real overlap — is not a similar story, and the rail must not carry it."""
+    st = store_mod.Store("sqlite://"); _kyiv_and_caracas(st)
+    strike = _find(st, "Drone barrage kills 27")
+    got = [s["title"] for s in ss.similar_stories(st, strike["id"], min_score=0.01, rel_ratio=0.5)]
+    assert got == ["Ukrainian gunners down Shahed drones above Kyiv oblast"]
+    # Not because it was unscored — it scores, and is cut.
+    diag = ss.similar_diagnostics(st, strike["id"])
+    senate = next(r for r in diag["top"] if "Senate" in r["title"] or "Senators" in r["title"])
+    assert senate["shared"] >= 3 and senate["score"] > 0
+    assert senate["score"] < diag["cutInEffect"]
+
+
+def test_similar_selection_is_relative_not_absolute():
+    """WHY THE CUT IS A RATIO. Production's per-story best varies nearly 4x (0.246 for a Kyiv
+    strike, 0.068 for the Venezuela oil deal) while the median pair scores 0, and this fixture
+    reproduces that shape. A fixed floor tuned to the strong story empties the weak one's rail —
+    which is what shipped, twice — and a floor tuned to the weak one fills the strong one's rail
+    with noise. Judging each story against its OWN best is the only rule that serves both."""
+    st = store_mod.Store("sqlite://"); _kyiv_and_caracas(st)
+    strike = _find(st, "Drone barrage kills 27")
+    accord = _find(st, "Caracas reach an oil reserves accord")
+
+    strong = ss.similar_diagnostics(st, strike["id"])
+    weak = ss.similar_diagnostics(st, accord["id"])
+    # The two distributions differ in scale, not only in content.
+    assert weak["scoreQuantiles"]["max"] < strong["cutInEffect"] < strong["scoreQuantiles"]["max"]
+
+    # The relative rule keeps each story's own best match.
+    assert [s["title"] for s in ss.similar_stories(st, strike["id"], min_score=0.01, rel_ratio=0.5)] == \
+        ["Ukrainian gunners down Shahed drones above Kyiv oblast"]
+    assert [s["title"] for s in ss.similar_stories(st, accord["id"], min_score=0.01, rel_ratio=0.5)] == \
+        ["Crude output from Orinoco climbs following the accord"]
+
+    # A FIXED floor at the strong story's cut — the best a single absolute number can do for it —
+    # deletes the weak story's genuine match. This is the bug, reproduced.
+    fixed = strong["cutInEffect"]
+    assert ss.similar_stories(st, accord["id"], min_score=fixed, rel_ratio=0.0) == []
+    # And a fixed floor low enough to keep it admits the Senate story into the strike's rail.
+    loose = [s["title"] for s in ss.similar_stories(st, strike["id"], min_score=0.05, rel_ratio=0.0)]
+    assert any("Senat" in t for t in loose)
+
+
+def test_similar_floor_is_the_backstop_for_a_story_with_nothing_related():
+    """The one case a ratio cannot handle: a story whose best candidate is noise. A ratio would
+    keep the top few of nothing, so an absolute floor still has to say there is nothing."""
+    st = store_mod.Store("sqlite://"); _kyiv_and_caracas(st)
+    fire = _find(st, "Wildfires spread")
+    assert ss.similar_stories(st, fire["id"], min_score=0.035, rel_ratio=0.5) == []
+    # Fewer results, not padded ones: the rail is allowed to be empty.
+    assert ss.similar_diagnostics(st, fire["id"])["scoreQuantiles"]["max"] == 0.0
+
+
+def test_similar_never_returns_the_story_itself_and_honours_limit():
+    st = store_mod.Store("sqlite://"); _kyiv_and_caracas(st)
+    strike = _find(st, "Drone barrage kills 27")
+    everything = ss.similar_stories(st, strike["id"], limit=25, min_score=0.0, rel_ratio=0.0)
+    ids = [s["id"] for s in everything]
+    assert strike["id"] not in ids
+    assert len(ids) == len(set(ids))
+    assert len(ss.similar_stories(st, strike["id"], limit=1, min_score=0.0, rel_ratio=0.0)) == 1
+    # Best first, and stable: the same build gives the same order.
+    assert ids == [s["id"] for s in ss.similar_stories(st, strike["id"], limit=25, min_score=0.0,
+                                                       rel_ratio=0.0)]
+
+
+def test_similar_is_none_for_an_id_the_catalog_no_longer_holds():
+    """Distinguishable from "nothing is similar" — the route turns this into a 404 and the empty
+    list into an empty rail, which are different facts about the page."""
+    st = store_mod.Store("sqlite://"); _kyiv_and_caracas(st)
+    assert ss.similar_stories(st, "st_nosuchstory") is None
+    assert ss.similar_diagnostics(st, "st_nosuchstory") is None
+
+
+def test_similar_thresholds_resolve_from_env(monkeypatch):
+    """Both knobs: unset is the calibrated default, junk is the default (never a guess), and a
+    value is clamped into [0, 1]. RWE_STORY_SIMILAR_MIN spent a release missing from the compose
+    allowlist, so every probe of it was inert — the resolution itself is worth pinning."""
+    for name, fn, default in (("RWE_STORY_SIMILAR_MIN", ss.similar_min_score, ss.SIMILAR_NOISE_FLOOR),
+                              ("RWE_STORY_SIMILAR_RATIO", ss.similar_rel_ratio, ss.SIMILAR_REL_RATIO)):
+        monkeypatch.delenv(name, raising=False)
+        assert fn() == default
+        monkeypatch.setenv(name, "0.4")
+        assert fn() == 0.4
+        monkeypatch.setenv(name, "nope")
+        assert fn() == default
+        monkeypatch.setenv(name, "9")
+        assert fn() == 1.0
+        monkeypatch.setenv(name, "-1")
+        assert fn() == 0.0
+        monkeypatch.delenv(name)
+
+
+def test_similar_profile_memo_refreshes_when_coverage_grows():
+    """The memo exists because the rail tokenizes every coverage headline in the catalog on every
+    request. It is keyed on a fingerprint that MOVES with the story's coverage, so a story whose
+    coverage grew is re-read rather than served from a profile that predates it."""
+    ss._SIMILAR_PROFILES.clear()
+    story = {"id": "st_x", "totalCoverage": 1, "updatedAt": "2026-09-01T00:00:00Z",
+             "title": "Senate passes the funding bill", "summary": "",
+             "coverage": [{"headline": "Senate passes the funding bill"}]}
+    first = ss._similar_profile(story)
+    assert ss._similar_profile(story) is first                      # warm: the same object
+    grew = dict(story, totalCoverage=2, updatedAt="2026-09-02T00:00:00Z",
+                coverage=story["coverage"] + [{"headline": "Shutdown averted as senators vote"}])
+    second = ss._similar_profile(grew)
+    assert "shutdown" in second and "shutdown" not in first
+    assert ss._SIMILAR_PROFILE_MAX > 0                              # bounded, so it cannot grow forever
+
+
+def test_similar_diagnostics_reports_the_distribution_with_no_cut_applied():
+    """The instrument for choosing the thresholds: it must report what the rail WOULD cut, not the
+    already-cut result — an operator sweeping a real catalog needs the scores the floor rejects."""
+    st = store_mod.Store("sqlite://"); _kyiv_and_caracas(st)
+    strike = _find(st, "Drone barrage kills 27")
+    d = ss.similar_diagnostics(st, strike["id"])
+    assert d["candidates"] == 5                                     # every other story, unfiltered
+    assert len(d["top"]) == 5
+    assert [r["score"] for r in d["top"]] == sorted((r["score"] for r in d["top"]), reverse=True)
+    assert any(r["score"] < d["cutInEffect"] for r in d["top"])     # below the cut, still reported
+    assert d["cutInEffect"] == round(max(d["floorInEffect"],
+                                         d["scoreQuantiles"]["max"] * d["ratioInEffect"]), 4)
+    assert d["minSharedInEffect"] == ss.clustering.MIN_SHARED_TOKENS

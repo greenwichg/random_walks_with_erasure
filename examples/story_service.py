@@ -2847,6 +2847,11 @@ def clear_cache() -> None:
         # And the pending-refresh set: a test that cleared the cache must not have its first stale
         # serve silently coalesced into a refresh a PREVIOUS test left in flight.
         _REFRESH_PENDING.clear()
+        # The Similar Stories profile memo is derived from a build, so it belongs to the build's
+        # lifetime. Its key already carries a per-story fingerprint, so this is belt-and-braces
+        # rather than a correctness fix — but a memo that outlives every cache it was computed
+        # from is the kind of thing that is only ever wrong once, in production.
+        _SIMILAR_PROFILES.clear()
 
 
 def build_subprocess_enabled() -> bool:
@@ -3937,46 +3942,75 @@ def get_story(store_, story_id: str, *, min_articles: int = 2, min_publishers: i
     return None
 
 
-#: Near-threshold band floor — the score below :func:`merge_similarity` at which the duplicate audit
-#: (``examples/audit_verifier_band.py``, ``MERGE_BAND_LO``) considers a pair close enough that a
-#: human verifier was asked whether it is one event. That question is the definition of "closely
-#: related", which is why it is this rail's floor.
-SIMILAR_BAND_LO = 0.25
+#: Noise floor for the Similar Stories rail, measured on the live catalog (2,852 stories).
+#:
+#: This is a BACKSTOP, not the selector — :func:`similar_rel_ratio` does the selecting. Its job is
+#: the one case a relative rule cannot handle: a story with no related coverage at all, whose best
+#: candidate is noise. A ratio would happily keep the top few of nothing; an absolute floor says
+#: there is nothing. Production p90 (the noise level) runs 0.011-0.017 and genuine matches start
+#: around 0.048, so this sits between them.
+SIMILAR_NOISE_FLOOR = 0.035
+
+#: Share of the BEST candidate's score another must reach to be shown. The actual selector.
+#:
+#: Measured against three production stories, reading the titles at each rank to find where genuine
+#: matches stop:
+#:
+#:     story           best     last good   first bad                      ratio at the break
+#:     Lake Ontario    0.1122   0.0617      0.0424 (NFL boycott)           0.55
+#:     Kyiv strike     0.2456   0.1467      0.1210 (Iran wedding)          0.60
+#:     Venezuela oil   0.0678   0.0488      0.0480 (meat tariffs)          0.72
+#:
+#: 0.5 sits under every break, so nothing genuine is cut, and above the noise in the two stories
+#: with a clear gap. The Venezuela distribution is flat — its top five span 0.048-0.068 and four of
+#: them are the same event — so a ratio cannot isolate its one marginal card, and a fixed threshold
+#: could not either. Fewer false negatives is the right trade for a rail.
+SIMILAR_REL_RATIO = 0.5
 
 
 def similar_min_score() -> float:
-    """Floor a story pair must clear to appear in another's "Similar Stories" rail.
-    ``RWE_STORY_SIMILAR_MIN`` overrides without a deploy.
+    """Absolute noise floor for the Similar Stories rail; ``RWE_STORY_SIMILAR_MIN`` overrides.
 
-    THIS DEFAULT WAS 0.33 AND THAT WAS A STRUCTURAL MISTAKE, not a tuning miss. 0.33 is
-    :func:`merge_similarity` — the score at or above which the clusterer calls two clusters the
-    SAME EVENT and merges them. So a pair scoring that high has, by construction, already been
-    merged into one story: the population above the floor is nearly empty in the served catalog,
-    and the rail rendered nothing on every story.
+    TWO EARLIER DEFAULTS WERE WRONG HERE, both because a single absolute number cannot do this job.
+    0.33 was :func:`merge_similarity` — the score at which the clusterer MERGES two clusters, so
+    nothing above it survives as a separate story and the rail rendered nothing. 0.25 was the
+    duplicate audit's near-threshold band, still far above anything a 2,852-story catalog produces:
+    with IDF at ``log(1 + N/df)`` and a median pair score of 0, real matches there land at
+    0.05-0.25.
 
-    The calibration that produced it measured the wrong thing. Its positives were one story's
-    coverage headlines split into halves — same event, real wording, scoring 0.557+. That is not
-    the population this rail shows. Two stories that are genuinely RELATED BUT DISTINCT survive as
-    two stories precisely because they scored BELOW the merge threshold; the split-half positives
-    could never exist as separate rows. I calibrated against a population the catalog cannot
-    contain and then set the floor at the top of it.
-
-    The band that does contain related-but-distinct events is the one the duplicate audit already
-    names: ``[SIMILAR_BAND_LO, merge_similarity())`` — plausibly one event, not merged. On the same
-    9-story demo catalog, whose events are mutually unrelated, exactly ONE of 36 pairs clears 0.25
-    (a 0.321 pair sharing synthetic boilerplate) against a median of 0.117, so the floor still
-    rejects the "shares a household name" matches this rail was reported for.
-
-    It remains a floor set on demo data. Probe a real catalog before trusting it — the endpoint
-    takes ``minScore`` for exactly that, so the number can be chosen from titles rather than
-    guessed twice."""
+    And the top score itself varies per story — 0.246 for a Kyiv strike, 0.068 for the Venezuela
+    oil deal — so no fixed value keeps one story's genuine matches without admitting another's
+    noise. :func:`similar_rel_ratio` is the selector; this is only the backstop that lets a story
+    with NO related coverage return nothing instead of the best few of nothing."""
     v = os.environ.get("RWE_STORY_SIMILAR_MIN", "").strip()
     if v:
         try:
             return max(0.0, min(1.0, float(v)))
         except ValueError:
             pass
-    return SIMILAR_BAND_LO
+    return SIMILAR_NOISE_FLOOR
+
+
+def similar_rel_ratio() -> float:
+    """Share of the best candidate's score another must reach; ``RWE_STORY_SIMILAR_RATIO`` overrides.
+
+    The selector, and relative BY NECESSITY: see :data:`SIMILAR_REL_RATIO` for the measurement.
+    0 disables it and leaves only the absolute floor."""
+    v = os.environ.get("RWE_STORY_SIMILAR_RATIO", "").strip()
+    if v:
+        try:
+            return max(0.0, min(1.0, float(v)))
+        except ValueError:
+            pass
+    return SIMILAR_REL_RATIO
+
+
+#: Profiles are rebuilt from every coverage headline in the catalog, which at 2,852 stories is tens
+#: of thousands of tokenizations. Memoised on a per-story fingerprint that changes whenever its
+#: coverage does, so a warm process pays it once per story per rebuild rather than once per request.
+_SIMILAR_PROFILES: dict = {}
+#: Bound: the memo is cleared wholesale past this, so it cannot grow without limit across rebuilds.
+_SIMILAR_PROFILE_MAX = 20000
 
 
 def _similar_profile(s: dict) -> frozenset:
@@ -3984,17 +4018,29 @@ def _similar_profile(s: dict) -> frozenset:
 
     The same shape as :func:`_profile`, from what a built story carries. Not the title alone, for
     the measured reason recorded there: the four Seattle clusters score 0.15 on headlines and 0.56
-    on profiles, and headline-only matching is the failure this rail was reported for."""
+    on profiles, and headline-only matching is the failure this rail was reported for.
+
+    Memoised: the key carries the coverage count and the last update, so a story whose coverage
+    grew is re-tokenized and one that did not is not."""
+    key = f"{s.get('id')}:{s.get('totalCoverage')}:{s.get('updatedAt')}"
+    hit = _SIMILAR_PROFILES.get(key)
+    if hit is not None:
+        return hit
     toks: set = set()
     toks |= clustering.title_tokens(s.get("title") or "")
     toks |= clustering.title_tokens(s.get("summary") or "")
     for row in s.get("coverage") or []:
         toks |= clustering.title_tokens(row.get("headline") or "")
-    return frozenset(toks)
+    out = frozenset(toks)
+    if len(_SIMILAR_PROFILES) >= _SIMILAR_PROFILE_MAX:
+        _SIMILAR_PROFILES.clear()
+    _SIMILAR_PROFILES[key] = out
+    return out
 
 
 def similar_stories(store_, story_id: str, *, limit: int = 10, min_score: Optional[float] = None,
-                    min_shared: Optional[int] = None, max_scan: int = None,
+                    min_shared: Optional[int] = None, rel_ratio: Optional[float] = None,
+                    max_scan: int = None,
                     min_articles: int = 2, min_publishers: int = 2) -> Optional[list]:
     """Stories about the same or a closely related event, best first. ``None`` if the id is gone.
 
@@ -4016,6 +4062,7 @@ def similar_stories(store_, story_id: str, *, limit: int = 10, min_score: Option
     agree with what the reader just clicked and a cold build is never forced onto this request."""
     floor = similar_min_score() if min_score is None else min_score
     shared_floor = clustering.MIN_SHARED_TOKENS if min_shared is None else min_shared
+    ratio = similar_rel_ratio() if rel_ratio is None else rel_ratio
     stories = _cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=max_scan,
                             min_articles=min_articles, min_publishers=min_publishers)
     target = None
@@ -4044,9 +4091,15 @@ def similar_stories(store_, story_id: str, *, limit: int = 10, min_score: Option
         w = sum(weights.get(t, 1.0) for t in inter)
         den = tt + sum(weights.get(t, 1.0) for t in p) - w
         score = (w / den) if den else 0.0
-        if score < floor:
-            continue
         scored.append((score, s))
+    # SELECTION IS RELATIVE, gated by an absolute backstop. The best candidate's score varies by
+    # nearly 4x between stories on the live catalog (0.246 for a Kyiv strike, 0.068 for the
+    # Venezuela oil deal), so a fixed cut keeps one story's real matches only by admitting
+    # another's noise. Everything within `ratio` of the best is kept; the floor is what lets a
+    # story with nothing related return nothing rather than the best few of nothing.
+    best = max((sc for sc, _ in scored), default=0.0)
+    cut = max(floor, best * ratio)
+    scored = [(sc, st) for sc, st in scored if sc >= cut]
     # Ties broken by breadth of coverage then id, so the order is stable build to build rather than
     # dependent on catalog order.
     scored.sort(key=lambda r: (-r[0], -(r[1].get("totalCoverage") or 0), r[1]["id"]))
@@ -4103,6 +4156,8 @@ def similar_diagnostics(store_, story_id: str, *, top: int = 8, max_scan: int = 
         "targetTotalWeight": round(tt, 2),
         "candidateProfileTokens": {"min": sizes[0], "median": sizes[len(sizes) // 2], "max": sizes[-1]},
         "floorInEffect": similar_min_score(),
+        "ratioInEffect": similar_rel_ratio(),
+        "cutInEffect": round(max(similar_min_score(), (scores[0] if scores else 0.0) * similar_rel_ratio()), 4),
         "minSharedInEffect": clustering.MIN_SHARED_TOKENS,
         # The shape a floor must be chosen against: best first, then where the mass sits.
         "scoreQuantiles": {"max": at(0.0), "p90": at(0.1), "p50": at(0.5), "min": round(scores[-1], 4)},
