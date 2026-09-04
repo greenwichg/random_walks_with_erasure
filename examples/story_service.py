@@ -3937,30 +3937,46 @@ def get_story(store_, story_id: str, *, min_articles: int = 2, min_publishers: i
     return None
 
 
+#: Near-threshold band floor — the score below :func:`merge_similarity` at which the duplicate audit
+#: (``examples/audit_verifier_band.py``, ``MERGE_BAND_LO``) considers a pair close enough that a
+#: human verifier was asked whether it is one event. That question is the definition of "closely
+#: related", which is why it is this rail's floor.
+SIMILAR_BAND_LO = 0.25
+
+
 def similar_min_score() -> float:
     """Floor a story pair must clear to appear in another's "Similar Stories" rail.
+    ``RWE_STORY_SIMILAR_MIN`` overrides without a deploy.
 
-    Defaults to :func:`merge_similarity`'s production value — the score at which the CLUSTERER
-    calls two clusters the same event. ``RWE_STORY_SIMILAR_MIN`` overrides without a deploy.
+    THIS DEFAULT WAS 0.33 AND THAT WAS A STRUCTURAL MISTAKE, not a tuning miss. 0.33 is
+    :func:`merge_similarity` — the score at or above which the clusterer calls two clusters the
+    SAME EVENT and merges them. So a pair scoring that high has, by construction, already been
+    merged into one story: the population above the floor is nearly empty in the served catalog,
+    and the rail rendered nothing on every story.
 
-    Calibrated, not chosen. Scoring the catalog's own text two ways — one story's coverage
-    headlines split into halves (same event, real wording) against every distinct pair of real
-    stories (different events) — separates cleanly:
+    The calibration that produced it measured the wrong thing. Its positives were one story's
+    coverage headlines split into halves — same event, real wording, scoring 0.557+. That is not
+    the population this rail shows. Two stories that are genuinely RELATED BUT DISTINCT survive as
+    two stories precisely because they scored BELOW the merge threshold; the split-half positives
+    could never exist as separate rows. I calibrated against a population the catalog cannot
+    contain and then set the floor at the top of it.
 
-        same event      n=4    min 0.557  median 0.673  max 0.769
-        different       n=36   min 0.041  median 0.117  max 0.321
+    The band that does contain related-but-distinct events is the one the duplicate audit already
+    names: ``[SIMILAR_BAND_LO, merge_similarity())`` — plausibly one event, not merged. On the same
+    9-story demo catalog, whose events are mutually unrelated, exactly ONE of 36 pairs clears 0.25
+    (a 0.321 pair sharing synthetic boilerplate) against a median of 0.117, so the floor still
+    rejects the "shares a household name" matches this rail was reported for.
 
-    Any floor in (0.321, 0.557) divides them; 0.33 is the one the system already defines. A pair
-    that clears it and still exists as two stories was held apart by a merge GUARD — complete
-    linkage, the coherence veto, the gap window, the size cap — not by being unrelated, which is
-    exactly the population this rail wants."""
+    It remains a floor set on demo data. Probe a real catalog before trusting it — the endpoint
+    takes ``minScore`` for exactly that, so the number can be chosen from titles rather than
+    guessed twice."""
     v = os.environ.get("RWE_STORY_SIMILAR_MIN", "").strip()
     if v:
         try:
             return max(0.0, min(1.0, float(v)))
         except ValueError:
             pass
-    return merge_similarity() or 0.33
+    return SIMILAR_BAND_LO
 
 
 def _similar_profile(s: dict) -> frozenset:
