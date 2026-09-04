@@ -56,7 +56,7 @@ test("the story page shows it instead of Picked for you — on desktop", () => {
   // The swap was specified for the desktop story view, so it is made by mounting one composition
   // or the other — not by a CSS class that hides a mounted tree, which would run both queries.
   assert.ok(PAGE.includes("useIsDesktop"), "the page does not choose a composition by viewport");
-  assert.ok(/desktop && \(\s*<SimilarStoriesPanel/.test(PAGE), "the card is not gated to desktop");
+  assert.ok(/desktop && \(\s*(?:<>\s*)?<SimilarStoriesPanel/.test(PAGE), "the card is not gated to desktop");
   // …and the desktop rail reads stories first, then the topics that open onto more of them.
   const card = PAGE.indexOf("<SimilarStoriesPanel");
   const topics = PAGE.indexOf("<StoryTopics", card);
@@ -70,6 +70,16 @@ test("below `lg`, the horizontal rail is the Similar Stories surface", () => {
   assert.ok(/<SimilarStories(?![A-Za-z])/.test(PAGE), "the rail is no longer rendered anywhere");
   assert.ok(/desktop === false && \(\s*<SimilarStories(?![A-Za-z])/.test(PAGE),
     "the rail must render below `lg` only — on desktop it would repeat the card");
+  // …and below `lg` the topics sit in the flow between the coverage list and that rail, so the
+  // phone reads coverage → what this is about → what else covers it.
+  const list = PAGE.indexOf("<CoverageList");
+  const topics = PAGE.indexOf("{desktop === false && <StoryTopics", list);
+  const rail = PAGE.indexOf("desktop === false && (", list);
+  assert.ok(topics > list && rail > topics,
+    "below `lg`, Similar news topics belongs between the coverage list and the Similar Stories rail");
+  // One mount per viewport — the section must never render twice on the same page.
+  assert.equal(PAGE.split("<StoryTopics").length - 1, 2,
+    "exactly two gated instances: one per composition");
 });
 
 test("the story page carries no personalised feed on either viewport", () => {

@@ -206,20 +206,22 @@ export default function StoryDetailPage() {
                 failure, stated absence) lives here with the query state it needs. Below `lg` the
                 horizontal rail at the foot of the page answers the same question. */}
             {desktop && (
-              <SimilarStoriesPanel
-                story={story}
-                similar={related}
-                isLoading={similar.isLoading}
-                isError={similar.isError}
-                onRetry={() => similar.refetch()}
-              />
+              <>
+                <SimilarStoriesPanel
+                  story={story}
+                  similar={related}
+                  isLoading={similar.isLoading}
+                  isError={similar.isError}
+                  onRetry={() => similar.refetch()}
+                />
+                {/* What this story is ABOUT — the engine's ranked tags, each one a way into the
+                    other stories carrying it (story-topics.tsx). Under the card, because stories a
+                    reader can open are the direct answer and topics are the wider way out of the
+                    event. Below `lg` this section is in the flow instead, between the coverage
+                    list and the Similar Stories rail — SAME component, mounted once either way. */}
+                <StoryTopics story={story} />
+              </>
             )}
-            {/* What this story is ABOUT — the engine's ranked tags, each one a way into the other
-                stories carrying it (story-topics.tsx). It closes the rail on both viewports: on
-                desktop under the card, because stories a reader can open are the direct answer and
-                topics are the wider way out of the event; below `lg` it is simply the last thing
-                in the rail, where "Picked for you" used to follow it. */}
-            <StoryTopics story={story} />
           </>
         }
         lead={
@@ -322,6 +324,11 @@ export default function StoryDetailPage() {
 
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
+
+          {/* BELOW `lg` only: the topics sit in the flow rather than the rail, so the phone reads
+              coverage → what this is about → what else covers it. Desktop keeps them in the
+              companion column under the card; the gate is what stops the section rendering twice. */}
+          {desktop === false && <StoryTopics story={story} />}
 
           {/* What to read next, BELOW `lg` only — the engine's ranked same-event selection as a
               collapsible rail (similar-stories.tsx). It states an empty result instead of
