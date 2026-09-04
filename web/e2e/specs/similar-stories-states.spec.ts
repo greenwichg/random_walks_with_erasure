@@ -2,17 +2,21 @@ import type { Page, Route } from "@playwright/test";
 import { test, expect } from "../fixtures";
 
 /**
- * Similar Stories — the three things an empty rail can mean, and the fact that a reader can tell
+ * Similar Stories — the three things an empty card can mean, and the fact that a reader can tell
  * them apart.
  *
- * WHY THIS EXISTS. The rail used to render `null` for an empty array, so the section vanished. A
+ * WHY THIS EXISTS. The card used to render `null` for an empty array, so the section vanished. A
  * similarity threshold shipped an order of magnitude too high, every story returned zero, and the
  * story page simply ended at the coverage list — with nothing on the page to say that a section
  * was missing rather than absent by design. The first person to see it asked whether that was
  * correct behaviour, which is the question a silent gap always produces and can never answer.
  *
  * So the three outcomes now render differently, and this asserts the difference from the reader's
- * side. It is deliberately the ONLY thing asserted here: the ranking is measured in Python
+ * side. The section under test moved — it was a horizontal rail at the foot of the page, and is
+ * now the Similar Stories card in the story rail — but the rule outlived the component, which is
+ * why this file survived the rail's removal rather than being deleted with it.
+ *
+ * It is deliberately the ONLY thing asserted here: the ranking is measured in Python
  * (`tests/test_story_service.py`), the endpoint in `tests/test_api_fastapi.py`, and the proxy's
  * parameter forwarding in `lib/similar-params.test.ts`. What none of those can see is what the page
  * looks like when the answer is nothing.
@@ -25,13 +29,13 @@ import { test, expect } from "../fixtures";
  * one was that count reading 3. Distinctiveness cannot help with a total.
  *
  * So the story page is served entirely from interception: {@link STORY} below is the detail
- * response, and each test supplies the rail's. The catalog is never written to and never read, so
+ * response, and each test supplies the card's. The catalog is never written to and never read, so
  * this file cannot perturb another spec and no other spec's data can change what it asserts —
  * which is also what makes it runnable on its own.
  */
 
-/** The rail's own section, whatever it currently renders inside. */
-const RAIL = 'section[aria-labelledby="similar-stories-heading"]';
+/** The card's own section, whatever it currently renders inside. */
+const CARD = 'section[aria-labelledby="similar-panel-heading"]';
 
 /** Any id: nothing resolves it against the catalog. */
 const STORY_ID = "st_similarstatesfixture";
@@ -41,7 +45,7 @@ const STORY_ID = "st_similarstatesfixture";
  *
  * Minimal but COMPLETE for the shape — the page derives publisher stats, the register split and
  * the breakdown panel from `coverage`, so an omitted field shows up as a crashed page rather than
- * as a missing section, and the rail under test would then never render at all.
+ * as a missing section, and the card under test would then never render at all.
  */
 const NOW = new Date();
 const HOURS_AGO = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
@@ -90,10 +94,10 @@ const STORY = {
 };
 
 /**
- * Open the fixture story with the rail's response under the test's control.
+ * Open the fixture story with the card's response under the test's control.
  *
  * `**\/api/stories/*` and `**\/api/stories/*\/similar*` are disjoint — a Playwright `*` does not
- * cross a `/` — so the detail route never swallows the rail's request.
+ * cross a `/` — so the detail route never swallows the card's request.
  */
 async function openStory(page: Page, similar: (route: Route) => unknown): Promise<void> {
   await page.route("**/api/stories/*/similar*", similar);
@@ -104,7 +108,7 @@ async function openStory(page: Page, similar: (route: Route) => unknown): Promis
   await page.waitForSelector("h1", { timeout: 20_000 });
 }
 
-test.describe("Similar Stories: an empty rail says which kind of empty it is", () => {
+test.describe("Similar Stories: an empty card says which kind of empty it is", () => {
   test("no matches renders a stated absence, not a missing section", async ({ authedPage }) => {
     await openStory(authedPage, (route) =>
       route.fulfill({
@@ -113,12 +117,12 @@ test.describe("Similar Stories: an empty rail says which kind of empty it is", (
         body: JSON.stringify({ stories: [], total: 0 }),
       }),
     );
-    const rail = authedPage.locator(RAIL);
+    const card = authedPage.locator(CARD);
 
-    await expect(rail, "the section stays on the page").toBeVisible();
-    await expect(rail).toContainText("Similar Stories");
-    await expect(rail, "and says why it is empty").toContainText(/Nothing else in the catalog covers this event/i);
-    await expect(rail.locator("li"), "with no cards invented to fill it").toHaveCount(0);
+    await expect(card, "the section stays on the page").toBeVisible();
+    await expect(card).toContainText("Similar Stories");
+    await expect(card, "and says why it is empty").toContainText(/Nothing else in the catalog covers this event/i);
+    await expect(card.locator("li"), "with no cards invented to fill it").toHaveCount(0);
   });
 
   test("a failed request offers a retry and never claims nothing is similar", async ({ authedPage }) => {
@@ -129,14 +133,14 @@ test.describe("Similar Stories: an empty rail says which kind of empty it is", (
         body: JSON.stringify({ error: { code: "engine_unavailable", message: "down" } }),
       }),
     );
-    const rail = authedPage.locator(RAIL);
+    const card = authedPage.locator(CARD);
 
     // The query retries a 5xx with backoff, so the failure surfaces after several seconds — and
-    // until it does the rail is correctly still LOADING. That wait is the behaviour, not a flake.
-    await expect(rail.getByRole("button", { name: /try again/i })).toBeVisible({ timeout: 25_000 });
-    await expect(rail).toContainText(/couldn't load related coverage/i);
+    // until it does the card is correctly still LOADING. That wait is the behaviour, not a flake.
+    await expect(card.getByRole("button", { name: /try again/i })).toBeVisible({ timeout: 25_000 });
+    await expect(card).toContainText(/couldn't load related coverage/i);
     await expect(
-      rail,
+      card,
       "a request that failed is not evidence that nothing is similar",
     ).not.toContainText(/Nothing else in the catalog covers this event/i);
   });
@@ -154,17 +158,17 @@ test.describe("Similar Stories: an empty rail says which kind of empty it is", (
         body: JSON.stringify({ stories: [], total: 0 }),
       });
     });
-    const rail = authedPage.locator(RAIL);
+    const card = authedPage.locator(CARD);
 
-    await expect(rail).toBeVisible();
+    await expect(card).toBeVisible();
     await expect(
-      rail,
+      card,
       "an answer that has not arrived is not an answer of none",
     ).not.toContainText(/Nothing else in the catalog covers this event/i);
-    await expect(rail).not.toContainText(/couldn't load related coverage/i);
+    await expect(card).not.toContainText(/couldn't load related coverage/i);
 
     // …and once it lands, the empty line does appear.
     release();
-    await expect(rail).toContainText(/Nothing else in the catalog covers this event/i, { timeout: 20_000 });
+    await expect(card).toContainText(/Nothing else in the catalog covers this event/i, { timeout: 20_000 });
   });
 });

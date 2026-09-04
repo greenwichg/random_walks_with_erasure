@@ -1,13 +1,15 @@
 // The Similar Stories rail card, checked where it is cheapest to check: against the card it
-// replaces and against the rule that keeps it honest.
+// replaces and against the rules that keep it honest.
 //
 // It has no logic of its own to unit-test — the stories are the engine's ranked answer, handed in
-// by the page. What CAN rot is the two things this file asserts: that the card still wears the
-// shell "Picked for you" established, and that it never grows a similarity opinion. Both are
-// properties of the source, so both are read from it.
+// by the page. What CAN rot is what this file asserts: that the card still wears the shell "Picked
+// for you" established, that it never grows a similarity opinion, and that it still tells loading,
+// failure and genuine absence apart. That last one is inherited from the horizontal rail this card
+// replaced, and is the reason it is asserted here — the rail was the only place it was written
+// down, and deleting a component is exactly how such a rule goes missing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const WEB = join(import.meta.dirname, "..");
@@ -19,7 +21,8 @@ const PAGE = readFileSync(join(WEB, "app", "(app)", "stories", "[id]", "page.tsx
 const SHELL = [
   'className="rounded-lg border bg-card p-4"',   // the card itself
   "<SectionHeader",                              // the header, not a hand-rolled one
-  'actionLabel={t("home.viewAll")}',             // the "View all" treatment
+  '"home.viewAll"',                              // the "View all" treatment
+  "actionLabel=",
   'className="mb-3"',
   '<ul className="divide-y">',                   // the dividers
   'className="group block rounded-md py-3',      // the row
@@ -51,11 +54,27 @@ test("the story page shows it instead of Picked for you", () => {
   assert.ok(!PAGE.includes("RecommendationPanel"), "Picked for you is still on the story page");
   // …and does not pay for a feed it no longer renders.
   assert.ok(!PAGE.includes("useRecommendations"), "the recommendations query is still being made");
-  // One query feeds both surfaces: the card and the full rail below.
-  assert.ok(/similar=\{related\}/.test(PAGE), "the card must be fed the same array as the rail");
-  // Multi-line JSX, so match the prop rather than a formatting of the element.
-  assert.ok(/<SimilarStories\b[\s\S]{0,200}?stories=\{related\}/.test(PAGE),
-    "the rail must read the same array as the card");
+  assert.ok(/similar=\{related\}/.test(PAGE), "the card must be fed the engine's ranked answer");
+});
+
+test("the horizontal rail is gone, and nothing still reaches for it", () => {
+  assert.ok(!existsSync(join(WEB, "components", "stories", "similar-stories.tsx")),
+    "the rail component is still present");
+  // `SimilarStoriesPanel` shares the prefix, so match the element name exactly.
+  assert.ok(!/<SimilarStories(?![A-Za-z])/.test(PAGE), "the story page still renders the rail");
+});
+
+test("the card tells loading, failure and absence apart", () => {
+  // An empty array is what all three look like from here, so the query's STATE is passed in and
+  // each has its own render. Reporting "nothing is similar" while the request is in flight — or
+  // after it failed — would be the card inventing a fact from a missing one.
+  for (const marker of ["isLoading", "isError", "onRetry"]) {
+    assert.ok(PANEL.includes(marker), `the card cannot see ${marker}`);
+    assert.ok(PAGE.includes(`${marker}=`), `the story page does not hand the card ${marker}`);
+  }
+  assert.ok(PANEL.includes('t("story.similar.error")'), "a failed query must say so");
+  assert.ok(PANEL.includes('t("story.similar.none")'), "a genuine absence must be stated");
+  assert.ok(PANEL.includes("<Skeleton"), "an in-flight query must hold the card's height");
 });
 
 test("Picked for you itself is untouched", () => {

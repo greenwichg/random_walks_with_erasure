@@ -1,63 +1,116 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
-import { EyeOff, Sparkles } from "lucide-react";
+import { EyeOff, RefreshCw, Sparkles } from "lucide-react";
 import type { Story } from "@ih/core/domain/types";
 import { SectionHeader } from "@/components/shared/section-header";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useTranslation } from "@/lib/i18n";
 
 /**
- * "Similar Stories" — the rail card, in the shell "Picked for you" (recommendation-panel.tsx)
- * established: same container, same `SectionHeader` with its trailing action, same `divide-y`
- * rows, same four-line row (eyebrow · headline · supporting line · indicator).
+ * "Similar Stories" — the story page's answer to "what else covers this", in the shell
+ * "Picked for you" (recommendation-panel.tsx) established: same container, same `SectionHeader`
+ * with its trailing action, same `divide-y` rows, same four-line row (eyebrow · headline ·
+ * supporting line · indicator).
  *
- * IT COMPUTES NOTHING ABOUT SIMILARITY. The stories are the engine's own ranked answer, fetched
- * once by the story page for the rail below and handed here — same request, same order, no second
+ * IT COMPUTES NOTHING ABOUT SIMILARITY. The stories are the engine's own ranked answer
+ * (`/api/stories/{id}/similar`), fetched once by the story page and handed here — no second
  * opinion. That constraint is the whole reason this file is presentational: a card that decided
  * for itself what "similar" meant would be a second matching rule to disagree with the first, and
- * the rail's own history is a long argument for having exactly one.
+ * this feature's history is a long argument for having exactly one.
  *
  * What it DOES decide is the supporting line, and that is presentation over data the story already
  * carries: the topics this story and the current one have in common (`story_tags`), which is the
  * honest answer to "why am I being shown this" — it names the actual overlap rather than asserting
- * a relevance the reader cannot check. Where two stories share no NAMED topic — the rail can rank
+ * a relevance the reader cannot check. Where two stories share no NAMED topic — the engine can rank
  * on profile overlap alone — it falls back to the coverage count, which is the next most useful
  * thing about a cluster.
+ *
+ * IT SAYS SO RATHER THAN VANISHING when there is nothing, and that discipline is inherited, not
+ * invented: it belonged to the horizontal rail this card replaced, and outlived it because the
+ * reason for it did. An empty result used to render `null`, so the whole section disappeared — and
+ * when a bad similarity threshold emptied it on every story, the page simply ended, with nothing to
+ * say it had. A reader cannot tell a deliberate silence from a broken feature by looking at a gap.
+ * Three outcomes, three different renders:
+ *
+ *   in flight   skeleton rows, so the card holds its height instead of appearing late
+ *   failed      "couldn't be loaded", with a retry — never "nothing is similar", which is a lie a
+ *               failed request cannot support
+ *   empty       one line saying nothing else covers this event, and that the space is left empty
+ *               on purpose
+ *
+ * The three are passed in rather than inferred from `similar.length`, because an empty array is
+ * what loading, failure and genuine absence all look like from here.
  */
 
-/** Rows in the card. Four, like the reference: enough to be worth a look, short enough that the
- *  rail stays vertically balanced beside the coverage list. The full ranked set is below. */
+/** How many stories the page fetches. Ten, because the ranked answer costs the same at four and
+ *  the reader who presses "View all" gets a real list rather than one more row. */
+export const MAX_CARDS = 10;
+
+/** Rows shown before "View all". Four, like the reference: enough to be worth a look, short enough
+ *  that the card stays vertically balanced beside the coverage list. */
 export const PANEL_CARDS = 4;
 
 export function SimilarStoriesPanel({
   story,
   similar,
   limit = PANEL_CARDS,
+  isLoading = false,
+  isError = false,
+  onRetry,
 }: {
   /** The story being read — supplies the topics a row's overlap is measured against. */
   story: Story;
-  /** The engine's ranked answer, already fetched for the rail below. */
+  /** The engine's ranked answer. */
   similar: Story[];
   limit?: number;
+  /** The query is in flight. Renders skeleton rows, never the empty line. */
+  isLoading?: boolean;
+  /** The query failed. Renders the retry notice, never the empty line. */
+  isError?: boolean;
+  onRetry?: () => void;
 }) {
   const { t, formatCompact } = useTranslation();
-  const items = similar.slice(0, limit);
+  const [expanded, setExpanded] = React.useState(false);
+  const items = expanded ? similar : similar.slice(0, limit);
   const mine = new Set((story.tags ?? []).map((tag) => tag.name));
+  // "View all" is offered only when there IS more — a control that reveals nothing is a promise
+  // the card cannot keep. It reveals the rest of THIS list in place: the ranked set is already
+  // here, and there is no page of similar stories to send anyone to.
+  const more = !isLoading && !isError && similar.length > limit;
 
   return (
     <section aria-labelledby="similar-panel-heading" className="rounded-lg border bg-card p-4">
       <SectionHeader
         id="similar-panel-heading"
         title={t("story.related")}
-        // The full ranked list is the rail at the foot of this page, so "View all" goes there
-        // rather than inventing a destination. An in-page anchor is the honest target when the
-        // complete answer is already on the page.
-        href="#similar-stories-heading"
-        actionLabel={t("home.viewAll")}
+        onAction={more ? () => setExpanded((v) => !v) : undefined}
+        actionLabel={more ? t(expanded ? "story.similar.less" : "home.viewAll") : undefined}
         className="mb-3"
       />
 
-      {items.length === 0 ? (
+      {isLoading ? (
+        <div className="divide-y" aria-hidden>
+          {Array.from({ length: limit }).map((_, i) => (
+            <div key={i} className="space-y-2 py-3">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-3 w-4/5" />
+            </div>
+          ))}
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-start gap-3 py-2">
+          <p className="text-sm text-muted-foreground">{t("story.similar.error")}</p>
+          {onRetry && (
+            <Button variant="outline" size="sm" onClick={onRetry}>
+              <RefreshCw className="h-4 w-4" aria-hidden /> {t("common.tryAgain")}
+            </Button>
+          )}
+        </div>
+      ) : items.length === 0 ? (
         <p className="rounded-lg border border-dashed bg-card/40 px-4 py-6 text-center text-sm text-muted-foreground">
           {t("story.similar.none")}
         </p>

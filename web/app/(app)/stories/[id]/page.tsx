@@ -18,9 +18,8 @@ import { StoryIntelligencePanel } from "@/components/stories/story-intelligence-
 import { CoverageList } from "@/components/stories/coverage-list";
 import { FramingComparison } from "@/components/stories/framing-comparison";
 import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
-import { MAX_CARDS, SimilarStories } from "@/components/stories/similar-stories";
 import { StoryTopics } from "@/components/stories/story-topics";
-import { SimilarStoriesPanel } from "@/components/stories/similar-stories-panel";
+import { MAX_CARDS, SimilarStoriesPanel } from "@/components/stories/similar-stories-panel";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
 import { track, urlHost } from "@/lib/analytics";
@@ -38,14 +37,12 @@ const fmtDate = (iso?: string) =>
  * zero-side callouts), and what to read next (the engine's ranked similar stories).
  *
  * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the Similar
- * Stories rail — ONE ranked query that returns at most MAX_CARDS stories. This page still does not
+ * Stories card — ONE ranked query that returns at most MAX_CARDS stories. This page still does not
  * fetch the home page's 60-story list: the RUM investigation measured that at ~200 KB and ~a third
  * of this page's entire API transfer, all to pick a handful of cards, and on the entry paths that
  * matter most (a shared link, a notification tap) nothing has warmed the cache, so every such
- * visitor paid it. Scoring similarity where the catalog already lives is what lets the rail see the
- * whole catalog while the wire carries ten cards. That ONE query feeds both surfaces the page has
- * for it — the rail card and the full list at the foot — so they can never disagree about what is
- * similar or in what order.
+ * visitor paid it. Scoring similarity where the catalog already lives is what lets the selection
+ * see the whole catalog while the wire carries ten cards.
  */
 export default function StoryDetailPage() {
   const { t, timeAgo } = useTranslation();
@@ -188,12 +185,19 @@ export default function StoryDetailPage() {
                 it belongs to the story: it answers "what is this" where the panel below answers
                 "what else is for me". */}
             <StoryTopics story={story} />
-            {/* "Similar Stories" in the shell "Picked for you" established, fed by the SAME ranked
-                answer the rail below renders — one request, one ordering, no second opinion about
-                what similar means. It takes that card's place in the rail: on a story page the
-                question "what else covers this" is the story's own, where a personalised feed is
-                about the reader and has its own surface. */}
-            <SimilarStoriesPanel story={story} similar={related} />
+            {/* "Similar Stories" in the shell "Picked for you" established. It took that card's
+                place in the rail — on a story page the question "what else covers this" is the
+                story's own, where a personalised feed is about the reader and has its own surface —
+                and it is now the page's ONLY similar-stories surface: the horizontal rail that used
+                to close the page was removed, and its three-state discipline (loading, failure,
+                stated absence) moved here with the query state it needs. */}
+            <SimilarStoriesPanel
+              story={story}
+              similar={related}
+              isLoading={similar.isLoading}
+              isError={similar.isError}
+              onRetry={() => similar.refetch()}
+            />
           </>
         }
         lead={
@@ -297,15 +301,8 @@ export default function StoryDetailPage() {
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
 
-          {/* What to read next — the engine's ranked same-event selection, as a collapsible rail
-              (similar-stories.tsx). It states an empty result instead of disappearing, so a story
-              with genuinely nothing related reads as a decision rather than as a broken section. */}
-          <SimilarStories
-            stories={related}
-            isLoading={similar.isLoading}
-            isError={similar.isError}
-            onRetry={() => similar.refetch()}
-          />
+          {/* Nothing closes the column after the coverage list: "what to read next" is the rail's
+              Similar Stories card, which is the whole ranked answer with "View all" to open it. */}
       </PageGrid>
     </PageContainer>
   );
