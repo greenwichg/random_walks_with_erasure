@@ -913,6 +913,9 @@ export interface StoryQuery {
 export interface SimilarStoriesResponse {
   stories: Story[];
   total: number;
+  /** Present only under `?debug=1`: the score distribution behind the ranking, with no floor
+   *  applied. A diagnostic for choosing a floor against a real catalog — never rendered. */
+  debug?: unknown;
 }
 
 export interface StoriesResponse {

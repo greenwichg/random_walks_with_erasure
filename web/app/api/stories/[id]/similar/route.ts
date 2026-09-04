@@ -13,9 +13,24 @@ import { engineAuthHeaders } from "@/lib/engine-auth";
 // real 404, like the story route beside it, so the page can distinguish "gone" from "engine down".
 export const dynamic = "force-dynamic";
 
+// Query parameters forwarded to the engine. An ALLOWLIST rather than a pass-through of the whole
+// query string, so this route cannot be used to smuggle arbitrary parameters at the engine.
+//
+// It started as `limit` alone, and the two it was missing were the two that mattered: `minScore`
+// and `debug` were dropped here, silently, while an operator probed production with them. Seven
+// sweeps of `?minScore=…` all returned the same empty result, which read as evidence about the
+// DATA and was evidence about this line. Anything the engine accepts and a caller may set has to
+// be listed here or it does not exist.
+const FORWARDED = ["limit", "minScore", "debug"] as const;
+
 export async function GET(request: Request, { params }: { params: { id: string } }) {
-  const limit = new URL(request.url).searchParams.get("limit");
-  const qs = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+  const incoming = new URL(request.url).searchParams;
+  const out = new URLSearchParams();
+  for (const key of FORWARDED) {
+    const value = incoming.get(key);
+    if (value !== null) out.set(key, value);
+  }
+  const qs = out.size > 0 ? `?${out.toString()}` : "";
   const { status, data } = await backendGetResult<SimilarStoriesResponse>(
     `/api/stories/${encodeURIComponent(params.id)}/similar${qs}`,
     await engineAuthHeaders(),
