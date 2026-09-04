@@ -751,6 +751,21 @@ export interface StoryCoverage {
   tierB?: boolean;
 }
 
+/** One topic/entity a story is about — the story-level projection of `article_entities`. */
+export interface StoryTag {
+  /** Normalised name, and the join key: pass it as `StoryQuery.tag` to retrieve other stories
+   *  carrying it. Lower-cased and whitespace-collapsed. */
+  name: string;
+  /** Display form, computed engine-side so every client renders the same string. */
+  label: string;
+  /** `direct` — this story's own coverage corroborated it; `inherited` — a strongly-related story
+   *  carried it and this story's text corroborates it; `topic` — the story's category, marked as
+   *  the shelf it is rather than passed off as evidence about this story specifically. */
+  source: "direct" | "inherited" | "topic";
+  /** Corroboration x specificity in 0..1. The array is already sorted by it. */
+  score: number;
+}
+
 export interface Story {
   id: string;
   title: string;
@@ -790,6 +805,9 @@ export interface Story {
   /** Lightweight Story Intelligence badge attached by /api/stories (Commit 10) — no extra request. */
   freshness?: StoryFreshness;
   lifecycle?: StoryLifecycle;
+  /** Topics/entities this story is about, best first. Absent when the deployment has tags off;
+   *  an EMPTY array when the story simply has no corroborated names — a different fact. */
+  tags?: StoryTag[];
 }
 
 // --- Story Intelligence (Commit 10) — deterministic, computed on top of a Story ----------------
@@ -897,6 +915,9 @@ export interface StoryQuery {
    *  one publisher the outlet registry classifies that way. A publisher the registry does not
    *  carry is unclassified and matches no type. Absent = "All". */
   type?: string;
+  /** Retrieval by topic/entity: the NORMALISED tag name (`Story.tags[].name`, or `tagFacets[].tag`)
+   *  — never the display label, so a link cannot break on capitalisation. Absent = "All". */
+  tag?: string;
   dateFrom?: string;
   dateTo?: string;
   sort?: "top" | "latest" | "oldest" | "publishers";
@@ -938,6 +959,10 @@ export interface StoriesResponse {
    *  reads as 0 rather than going missing. A story covered by both a journal and a newspaper
    *  counts under BOTH, so these do not sum to `total`. */
   typeFacets?: Record<string, number>;
+  /** The topic index for this view: how many of the page's stories carry each tag, most first.
+   *  A list, not a map, because the order is the answer — a tag vocabulary has no fixed option
+   *  set to enumerate, unlike the three facets above. */
+  tagFacets?: { tag: string; label: string; count: number }[];
 }
 
 /** Discover feed: the latest catalog articles plus the facet values for the filters. */

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { LucideIcon } from "lucide-react";
+import { X, type LucideIcon } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useStories, useDiscover } from "@/hooks/use-data";
@@ -100,6 +100,11 @@ export function StoryBrowser({
   const country = rawCountry ? rawCountry.toUpperCase() : "all";
   const blindspot = params.get("blindspot") ?? initialBlindspot ?? "all";
   const type = params.get("type") ?? "all";
+  // Deep link only: /stories?tag=ebola, from a story's Similar News Topics rail. There is no
+  // picker for it and there should not be — the window's tag vocabulary is thousands of names, so
+  // a dropdown would be a search box pretending to be a filter. It still clears like every other
+  // filter (the chip below), and it still narrows the same one build.
+  const tag = params.get("tag") ?? "all";
   const sort = params.get("sort") ?? defaultSort;
 
   const setParam = React.useCallback(
@@ -125,6 +130,7 @@ export function StoryBrowser({
   const setCountry = React.useCallback((v: string) => setParam("country", v, "all"), [setParam]);
   const setBlindspot = React.useCallback((v: string) => setParam("blindspot", v, "all"), [setParam]);
   const setType = React.useCallback((v: string) => setParam("type", v, "all"), [setParam]);
+  const setTag = React.useCallback((v: string) => setParam("tag", v, "all"), [setParam]);
   const setSort = React.useCallback(
     (v: string) => setParam("sort", v, defaultSort), [setParam, defaultSort]);
 
@@ -132,7 +138,7 @@ export function StoryBrowser({
 
   React.useEffect(() => {
     setOffset(0);
-  }, [topic, publisher, lean, country, blindspot, type, sort]);
+  }, [topic, publisher, lean, country, blindspot, type, tag, sort]);
 
 
   const facets = useDiscover({});
@@ -151,10 +157,19 @@ export function StoryBrowser({
     country: asFilter(country),
     blindspot: asFilter(blindspot),
     type: asFilter(type),
+    tag: asFilter(tag),
     sort: sort as StoryQuery["sort"],
     limit: PAGE,
     offset,
   });
+
+  // The chip's wording. `tagFacets` is computed BEFORE the tag filter, so the row for the active
+  // tag is still in it and carries the display label; the raw URL value is the fallback for the
+  // moment before the response lands.
+  const tagLabel = React.useMemo(() => {
+    const hit = (data?.tagFacets ?? []).find((row) => row.tag === tag);
+    return hit?.label ?? tag;
+  }, [data?.tagFacets, tag]);
 
   // The picker's options: countries with ≥1 matching STORY (server-computed, country-filter
   // independent). Sticky across refetches — the response is briefly absent while a new filter
@@ -248,6 +263,23 @@ export function StoryBrowser({
         )}
         <FilterSelect label={t("filter.sort")} value={sort} options={SORT_OPTIONS} onChange={setSort} resettable={false} />
       </FilterBar>
+
+      {/* The tag lens, when a Similar News Topics link brought the reader here. A chip rather than
+          a picker: there is no option list to choose from, so what the reader needs is to see what
+          is narrowing the page and be able to undo it. Uses the tag's own label from the response,
+          so the chip reads "Ebola" and not the normalised key that travelled in the URL. */}
+      {tag !== "all" && (
+        <div className="-mt-3 mb-6">
+          <button
+            type="button"
+            onClick={() => setTag("all")}
+            className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {t("filter.tag", { tag: tagLabel })}
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+      )}
 
       {/* Counted facts for the selected country (the former Countries-page overview, folded in):
           all three numbers come straight from the places facets already fetched for the picker. */}

@@ -2135,6 +2135,11 @@ def story_tags_enabled() -> bool:
 #: one story in six and no signal that the rest are simply unextracted.
 TAG_ENTITY_KINDS = ("person", "org", "span")
 
+#: Tag facets carried in a story-list envelope. The window's whole tag vocabulary is
+#: thousands of names; a picker shows a handful, and the ``tag`` filter itself accepts any
+#: name the projection holds, so truncating the FACETS costs a caller nothing.
+TAG_FACET_LIMIT = 40
+
 #: Direct tags two stories must share before their relation is even scored for INHERITANCE. A
 #: blocking rule, not a quality bar: an all-pairs similarity over the window is quadratic (2,852
 #: production stories is four million pairs of set intersections, on every build), and two stories
@@ -2143,22 +2148,38 @@ TAG_ENTITY_KINDS = ("person", "org", "span")
 #: agency, two independent ones is the signature of a shared subject.
 TAG_RELATION_MIN_SHARED = 2
 
-#: Relation strength a pair needs before any tag crosses it. Deliberately ABOVE the Similar
-#: Stories rail's own cut: showing a reader a card is a suggestion they can dismiss, and copying a
-#: tag asserts that a story is ABOUT something. The stricter bar is what keeps a tag from
-#: spreading outward through a chain of merely-plausible relations.
-TAG_RELATION_MIN_SCORE = 0.30
+#: Relations that carry tags are the ones the Similar Stories rail would SHOW: everything within
+#: :func:`similar_rel_ratio` of this story's best candidate, floored by :func:`similar_min_score`.
+#:
+#: This was an absolute 0.30 first, and that was the same error this codebase has now made three
+#: times — a fixed number on a measure whose scale is a property of the catalog. IDF-weighted
+#: Jaccard's totals grow with a story's coverage and its weights with the window's size, so
+#: production's per-story BEST relation ranges 0.068 to 0.246; a bar of 0.30 was not strict, it was
+#: unreachable, and the two genuinely-related outbreak stories that motivated the feature scored
+#: 0.237 and inherited nothing.
+#:
+#: The strictness that inheritance does need is not a second threshold on the same number. It is
+#: the relevance gate in ``story_tags.inherit_tags``, which is about CONTENT — the target's own
+#: text must corroborate the tag, or several neighbours must agree on it — and therefore does not
+#: move when the catalog does.
+def _tag_relation_cut(scores: list) -> float:
+    """The cut for one story's candidate relations, from its own best. Mirrors the rule in
+    :func:`similar_stories` so "strongly related" means one thing in this codebase."""
+    best = max(scores, default=0.0)
+    return max(similar_min_score(), best * similar_rel_ratio())
 
 
 def _tag_relations(stories: list, direct: dict) -> dict:
     """``story id -> [(related id, strength)]`` for tag inheritance only.
 
-    Scored with the SAME measure the Similar Stories rail uses — IDF-weighted Jaccard over each
-    story's whole profile — so "strongly related" means one thing in this codebase and not two.
-    What differs is the candidate set and the bar: candidates are blocked on
-    :data:`TAG_RELATION_MIN_SHARED` shared direct tags, and the bar is
-    :data:`TAG_RELATION_MIN_SCORE` rather than the rail's relative cut, because a tag is an
-    assertion where a card is a suggestion."""
+    Scored with the SAME measure AND the same relative cut as the Similar Stories rail, so
+    "strongly related" means one thing in this codebase and not two: a tag can only travel along a
+    relation the product would have shown the reader as a card.
+
+    What differs is only the candidate set. An all-pairs pass over the window is quadratic — 2,852
+    production stories is four million profile intersections on every build — so candidates are
+    blocked on :data:`TAG_RELATION_MIN_SHARED` shared direct tags first. That is a cost guard, not
+    a quality bar: two stories sharing no corroborated name were never going to clear the cut."""
     by_tag: dict = {}
     for sid, tags in direct.items():
         for tag in tags:
@@ -2185,7 +2206,7 @@ def _tag_relations(stories: list, direct: dict) -> dict:
     weights = clustering.idf_weights(list(profiles.values()))
     totals = {sid: sum(weights.get(t, 1.0) for t in p) for sid, p in profiles.items()}
 
-    out: dict = {}
+    scored: dict = {}
     for a, b in candidates:
         pa, pb = profiles.get(a), profiles.get(b)
         if pa is None or pb is None:
@@ -2194,10 +2215,20 @@ def _tag_relations(stories: list, direct: dict) -> dict:
         w = sum(weights.get(t, 1.0) for t in inter)
         den = totals[a] + totals[b] - w
         score = (w / den) if den else 0.0
-        if score < TAG_RELATION_MIN_SCORE:
+        if score <= 0:
             continue
-        out.setdefault(a, []).append((b, score))
-        out.setdefault(b, []).append((a, score))
+        scored.setdefault(a, []).append((b, score))
+        scored.setdefault(b, []).append((a, score))
+
+    # The cut is applied PER STORY against that story's own best relation, not once across the
+    # build — the same rule and the same reason as the rail: the top score varies several-fold
+    # between stories, so one number cannot serve them all.
+    out: dict = {}
+    for sid, rows in scored.items():
+        cut = _tag_relation_cut([s for _, s in rows])
+        kept = [(rid, s) for rid, s in rows if s >= cut]
+        if kept:
+            out[sid] = sorted(kept, key=lambda r: (-r[1], r[0]))
     return out
 
 
@@ -3988,7 +4019,7 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
 
 
 def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,
-                 story_type=None, date_from=None, date_to=None,
+                 story_type=None, tag=None, date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
                  min_publishers: int = 2, max_scan: int = None, debug: bool = False) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
@@ -4050,6 +4081,9 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
     # showing the number. `source_type` memoises its registry resolves, so the per-publisher walk
     # costs one lookup per distinct name for the life of the process.
     type_facets: dict = {t: 0 for t in outlet_registry.SOURCE_TYPES}
+    # Tags have no fixed option list to seed — the vocabulary is whatever the window's stories are
+    # about — so this one is built from what is present, and the caller trims it to the top N.
+    tag_facets: dict = {}
     for s in stories:
         for c in s["countries"]:
             country_facets[c] = country_facets.get(c, 0) + 1
@@ -4062,6 +4096,15 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         for kind in {outlet_registry.source_type(p) for p in s["publishers"]}:
             if kind in type_facets:
                 type_facets[kind] += 1
+        # Tag facets are the topic index for THIS view: how many of the stories now on the page
+        # carry each tag. Counted here with the others, before any of their own filters, so the
+        # number beside a tag is what selecting it would return.
+        for t in s.get("tags") or []:
+            name = t.get("name")
+            if name:
+                row = tag_facets.setdefault(name, {"tag": name, "label": t.get("label") or name,
+                                                   "count": 0})
+                row["count"] += 1
     if country and country.strip():
         want = country.strip().upper()
         stories = [s for s in stories if want in s["countries"]]
@@ -4082,12 +4125,26 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         # conjunctive, so the position changes the facets and never the result.
         stories = [s for s in stories
                    if any(outlet_registry.source_type(p) == story_type for p in s["publishers"])]
+    if tag and tag.strip():
+        # Retrieval by topic/entity — the reader clicking a tag in Similar News Topics. Matched on
+        # the NORMALISED name (``story_tags`` stores lower-cased, whitespace-collapsed), never on
+        # the display label, so a link cannot break on capitalisation. Post-filter and last, like
+        # every other coverage-derived lens: the facets above describe the page before this
+        # narrowing, which is what makes them a picker rather than an echo.
+        want = " ".join(tag.strip().lower().split())
+        stories = [s for s in stories
+                   if any(t.get("name") == want for t in (s.get("tags") or []))]
 
     stories = _sort_stories(stories, sort)
     total = len(stories)
     page = stories[pg.offset: pg.offset + pg.limit] if pg.limit > 0 else stories
     out = {"stories": page, "total": total, "sort": sort, "countryFacets": country_facets,
            "blindspotFacets": blindspot_facets, "typeFacets": type_facets,
+           # Most-carried first, bounded: the whole vocabulary of a 2,852-story window is thousands
+           # of names and no picker shows them, so the envelope carries the head of the list and
+           # the tag filter itself accepts anything the projection holds.
+           "tagFacets": sorted(tag_facets.values(),
+                               key=lambda r: (-r["count"], r["tag"]))[:TAG_FACET_LIMIT],
            **pg.meta(total)}
     if debug:
         out["clusterMs"] = cluster_ms

@@ -2601,3 +2601,71 @@ def test_similar_stories_endpoint(client):
         assert client.get(f"/api/stories/{strike}/similar", params={"ratio": 2}).status_code == 422
     finally:
         st.delete_feed_articles(urls)
+
+
+def test_story_tags_over_the_wire(client):
+    """Tags on the served Story, and the retrieval they exist for.
+
+    The engine-side rules are pinned in tests/test_story_tags.py; what this adds is the CONTRACT a
+    client codes against — that the join key travels, that the label travels with it so no client
+    re-derives one, and that passing the key back narrows the list to the stories carrying it."""
+    st = api_fastapi.state.store
+    urls = []
+    outbreak = ("The World Health Organization declared the outbreak in the Democratic Republic of "
+                "the Congo. Response teams reached the clinics.")
+    markets = "The Federal Reserve held rates steady as Wall Street closed higher."
+    try:
+        for cu, pub, lean, title, cat, desc in [
+            ("https://tag-npr.example/1", "TagNPR", -1.1,
+             "World Health Organization declares Ebola outbreak in the Democratic Republic of the Congo",
+             "Health", outbreak),
+            ("https://tag-bbc.example/1", "TagBBC", 0.0,
+             "World Health Organization confirms Ebola outbreak in the Democratic Republic of the Congo",
+             "Health", outbreak),
+            ("https://tag-rtr.example/1", "TagReuters", 0.0,
+             "World Health Organization reports Ebola outbreak in the Democratic Republic of the Congo",
+             "Health", outbreak),
+            ("https://tag-wsj.example/1", "TagWSJ", 0.9,
+             "Federal Reserve holds rates as Wall Street rallies", "Business", markets),
+            ("https://tag-fox.example/1", "TagFox", 1.2,
+             "Federal Reserve holds rates steady, Wall Street rallies", "Business", markets),
+        ]:
+            urls.append(cu)
+            st.upsert_feed_article(canonical_url=cu, url=cu, publisher=pub, source_publisher=pub,
+                                   title=title, description=desc, body=None,
+                                   published_at="2026-07-06T12:00:00+00:00", source_feed="f",
+                                   scored={"article_id": cu, "outlet": pub, "lean": lean, "category": cat})
+        body = client.get("/api/stories", params={"limit": 100}).json()
+        outbreak_story = next(s for s in body["stories"] if "Ebola outbreak" in s["title"])
+
+        tags = {t["name"]: t for t in outbreak_story["tags"]}
+        assert {"ebola", "world health organization", "democratic republic of the congo"} <= set(tags)
+        assert tags["democratic republic of the congo"]["label"] == "Democratic Republic of the Congo"
+        assert tags["ebola"]["source"] == "direct"
+        # Best first, so a client that shows three tags shows the three that matter.
+        scores = [t["score"] for t in outbreak_story["tags"]]
+        assert scores == sorted(scores, reverse=True)
+        # The category rides along, marked, and never above an entity.
+        assert tags["health"]["source"] == "topic"
+        assert tags["health"]["score"] < tags["ebola"]["score"]
+
+        # The facet list: the join key, the label, and the count selecting it would return.
+        facets = {row["tag"]: row for row in body["tagFacets"]}
+        assert facets["ebola"]["label"] == "Ebola"
+
+        # …which is exactly what it does return.
+        got = client.get("/api/stories", params={"tag": "ebola", "limit": 100}).json()
+        assert got["total"] == facets["ebola"]["count"]
+        assert all("Ebola" in s["title"] for s in got["stories"])
+        assert not any("Federal Reserve" in s["title"] for s in got["stories"])
+
+        # A caller who pastes the display label gets the same page — a tag link cannot 404 on case.
+        assert client.get("/api/stories", params={"tag": "Wall Street"}).json()["total"] == \
+            client.get("/api/stories", params={"tag": "wall street"}).json()["total"] == 1
+        assert client.get("/api/stories", params={"tag": "no such subject"}).json()["total"] == 0
+
+        # The single-story route carries them too, so a story page needs no extra request.
+        detail = client.get(f"/api/story/{outbreak_story['id']}").json()
+        assert {t["name"] for t in detail["tags"]} == set(tags)
+    finally:
+        st.delete_feed_articles(urls)

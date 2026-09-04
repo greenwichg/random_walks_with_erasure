@@ -19,6 +19,7 @@ import { CoverageList } from "@/components/stories/coverage-list";
 import { FramingComparison } from "@/components/stories/framing-comparison";
 import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
 import { MAX_CARDS, SimilarStories } from "@/components/stories/similar-stories";
+import { StoryTopics } from "@/components/stories/story-topics";
 import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
@@ -182,6 +183,11 @@ export default function StoryDetailPage() {
             {/* No per-publisher tally here: the coverage list below names every publisher with its
                 own headline and lean, and the breakdown above already carries the aggregate shape.
                 A ranked repeat of the same names said nothing the page had not said twice. */}
+            {/* What this story is ABOUT — the engine's ranked tags, each one a way into the other
+                stories carrying it (story-topics.tsx). Placed above the reader's own feed because
+                it belongs to the story: it answers "what is this" where the panel below answers
+                "what else is for me". */}
+            <StoryTopics story={story} />
             {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
           </>
         }

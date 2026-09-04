@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { BiasStrip } from "@/components/shared/bias-strip";
 import { StoryRow } from "@/components/shared/story-row";
+import { TopicList } from "@/components/shared/topic-list";
 import type { HomeModel } from "@/components/home/home-model";
 import { useTranslation } from "@/lib/i18n";
 import { activeLang } from "@/lib/active-lang";
@@ -722,7 +723,11 @@ function TopicSection({ group, lead, gaps }: { group: TopicGroup; lead: Story; g
 }
 
 /** "Similar news topics" — the topic index with the reference's plus/check marks; the same in-page
- *  filter the strip drives, so the two can never disagree. */
+ *  filter the strip drives, so the two can never disagree.
+ *
+ *  The list markup itself now lives in `components/shared/topic-list.tsx`, because the story page
+ *  needed the same design for its own tags and the requirement was that the design not change.
+ *  One component, two callers, rather than two copies that agree until the next edit. */
 function SimilarTopics({
   topics,
   active,
@@ -732,34 +737,19 @@ function SimilarTopics({
   active: string | null;
   onSelect: (topic: string | null) => void;
 }) {
-  const { t, formatCompact } = useTranslation();
+  const { t } = useTranslation();
   if (topics.length === 0) return null;
   return (
     <section aria-labelledby="similar-topics-heading">
       <h2 id="similar-topics-heading" className={SECTION_TITLE}>
         {t("home.similarTopics")}
       </h2>
-      <ul className="mt-2">
-        {topics.map((entry) => {
-          const on = active === entry.topic;
-          return (
-            <li key={entry.topic} className="border-b last:border-b-0">
-              <button
-                type="button"
-                aria-pressed={on}
-                onClick={() => onSelect(on ? null : entry.topic)}
-                className="flex w-full items-center justify-between gap-3 py-2.5 text-left text-[14px] transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <span className="min-w-0 truncate font-medium">{entry.topic}</span>
-                <span className="inline-flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
-                  {formatCompact(entry.count)}
-                  {on ? <Check className="h-4 w-4 text-foreground" aria-hidden /> : <Plus className="h-4 w-4" aria-hidden />}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <TopicList
+        labelledBy="similar-topics-heading"
+        items={topics.map((entry) => ({ value: entry.topic, label: entry.topic, count: entry.count }))}
+        active={active}
+        onSelect={onSelect}
+      />
     </section>
   );
 }

@@ -1339,6 +1339,23 @@ class TimelinePointModel(BaseModel):
     label: str
 
 
+class StoryTagModel(BaseModel):
+    """One topic/entity a story is about (``story_tags``)."""
+    #: Normalised name — lower-cased, whitespace-collapsed. THE JOIN KEY: pass it back as
+    #: ``/api/stories?tag=`` to retrieve the other stories carrying it. Never the display form,
+    #: so a link cannot break on capitalisation.
+    name: str
+    #: Display form, computed once at build time so every client renders the same string.
+    label: str
+    #: ``direct`` — this story's own members corroborated it; ``inherited`` — a strongly-related
+    #: story carried it and this story's text corroborates it; ``topic`` — the story's category,
+    #: marked as the shelf it is rather than passed off as evidence about this story.
+    source: str
+    #: Corroboration x specificity in 0..1. The list is already sorted by it; it is exposed so a
+    #: client can set its own bar (a card showing three tags wants a higher one than a tag page).
+    score: float
+
+
 class StoryModel(BaseModel):
     id: str
     title: str
@@ -1388,6 +1405,10 @@ class StoryModel(BaseModel):
     # Present only when > 0; every count above (totalCoverage, publisherCount, distribution) still
     # describes the Tier A cluster alone — attached coverage is an addendum, not a vote.
     attachedCoverage: Optional[int] = None
+    #: Topics/entities this story is about, best first (``story_tags``). Absent when the deployment
+    #: has ``RWE_STORY_TAGS=0``; EMPTY when the story simply has no corroborated names, which is a
+    #: different fact and is left as an empty list rather than omitted.
+    tags: Optional[list[StoryTagModel]] = None
 
 
 class StoryIntelligenceModel(BaseModel):
@@ -1443,6 +1464,12 @@ class StoriesResponseModel(BaseModel):
     # reads as 0 rather than going missing. A story covered by both a journal and a newspaper
     # counts under BOTH, so these do not sum to `total`.
     typeFacets: "dict[str, int]" = {}
+    # The topic index for THIS view: how many of the stories on the page carry each tag, most first
+    # and bounded (``story_service.TAG_FACET_LIMIT``). A LIST rather than a dict because the order
+    # is the answer — a tag vocabulary has no fixed option set to seed, so unlike the three facets
+    # above there is nothing to enumerate and everything to rank. Each row carries both the join
+    # key and the display label, so a picker needs no second lookup.
+    tagFacets: "list[dict[str, Any]]" = []
 
 
 class CitationModel(BaseModel):
@@ -2974,6 +3001,9 @@ def stories(
     # Named `type` because FastAPI takes the query-string name from the parameter name, and the
     # filter is `?type=`. It shadows the builtin for the length of this function, which never calls
     # it; renaming it would quietly rename the public parameter, so use `alias=` if it ever must.
+    tag: Optional[str] = Query(None, description="stories carrying this topic/entity — the "
+                                                "NORMALISED tag name from a story's `tags[].name` "
+                                                "or from `tagFacets`, not the display label"),
     type: Optional[str] = Query(None, description="news | research | community — stories with "
                                                   "coverage from a source CURATED as that type "
                                                   "(outlet registry `kind`); a publisher the "
@@ -2992,7 +3022,7 @@ def stories(
     debug = debug or os.environ.get("RWE_STORIES_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
     result = story_service.list_stories(_require_store(), topic=topic, publisher=publisher, lean=lean,
                                         country=country, blindspot=blindspot, story_type=type,
-                                        date_from=dateFrom, date_to=dateTo, sort=sort,
+                                        tag=tag, date_from=dateFrom, date_to=dateTo, sort=sort,
                                         limit=limit, offset=offset, debug=debug)
     # Additive Story Intelligence summary (freshness + lifecycle) per story — computed HERE (the API
     # layer consumes Story Intelligence; story_service never does), so cards badge without extra calls.

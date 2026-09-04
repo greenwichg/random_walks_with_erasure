@@ -13,6 +13,7 @@ export const STORY_WIRE_KEYS = [
   "country",
   "blindspot",
   "type",
+  "tag",
   "dateFrom",
   "dateTo",
   "sort",

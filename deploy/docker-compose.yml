@@ -731,6 +731,12 @@ services:
       # needs only a restart, not a rebuild.
       RWE_STORY_SIMILAR_MIN: ${RWE_STORY_SIMILAR_MIN:-}
       RWE_STORY_SIMILAR_RATIO: ${RWE_STORY_SIMILAR_RATIO:-}
+      # Whether a served story carries its topics/tags (`story_tags`) — ON in code, so unset is on.
+      # Listed anyway, and this line exists because the hygiene test demanded it by name: a var the
+      # code reads and this block omits can only ever be set to its default, so the switch would
+      # look present in deploy/.env and be inert. `0` takes the projection out of the build path —
+      # one batched entity query and a wholesale table rewrite — without a deploy.
+      RWE_STORY_TAGS: ${RWE_STORY_TAGS:-}
       # Most cards one outlet may hold in a recommendation feed. The feed deduped ARTICLES and
       # nothing else, so one high-volume outlet could take several of the 14 slots. Verified in
       # production 2026-08-09: 56 of 59 sampled feeds sit at <= 2 cards from their top outlet,
