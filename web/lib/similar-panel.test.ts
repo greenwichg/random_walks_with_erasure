@@ -56,7 +56,11 @@ test("the story page shows it instead of Picked for you — on desktop", () => {
   // The swap was specified for the desktop story view, so it is made by mounting one composition
   // or the other — not by a CSS class that hides a mounted tree, which would run both queries.
   assert.ok(PAGE.includes("useIsDesktop"), "the page does not choose a composition by viewport");
-  assert.ok(/desktop \? \(\s*<SimilarStoriesPanel/.test(PAGE), "the card is not gated to desktop");
+  assert.ok(/desktop \? \(\s*(?:<>\s*)?<SimilarStoriesPanel/.test(PAGE), "the card is not gated to desktop");
+  // …and the desktop rail reads stories first, then the topics that open onto more of them.
+  const card = PAGE.indexOf("<SimilarStoriesPanel");
+  const topics = PAGE.indexOf("<StoryTopics", card);
+  assert.ok(card > -1 && topics > card, "Similar news topics must follow the card on desktop");
 });
 
 test("below `lg` the page is the one it always was", () => {
@@ -67,6 +71,10 @@ test("below `lg` the page is the one it always was", () => {
   assert.ok(/desktop === false && \(\s*<SimilarStories(?![A-Za-z])/.test(PAGE),
     "the rail must render below `lg` only — on desktop it would repeat the card");
   assert.ok(PAGE.includes("<RecommendationPanel"), "Picked for you must stay on the mobile page");
+  // Its rail order is the one that shipped: topics above the reader's own feed.
+  const mobile = PAGE.lastIndexOf("<StoryTopics");
+  assert.ok(mobile > -1 && PAGE.indexOf("<RecommendationPanel") > mobile,
+    "below `lg` the topics section must keep its place above Picked for you");
   // …and neither viewport pays for the other's feed.
   assert.ok(/useRecommendations\(undefined, desktop === false\)/.test(PAGE),
     "the recommendations query must be off wherever Picked for you is not rendered");

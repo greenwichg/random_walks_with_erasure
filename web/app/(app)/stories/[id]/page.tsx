@@ -197,28 +197,33 @@ export default function StoryDetailPage() {
             {/* No per-publisher tally here: the coverage list below names every publisher with its
                 own headline and lean, and the breakdown above already carries the aggregate shape.
                 A ranked repeat of the same names said nothing the page had not said twice. */}
-            {/* What this story is ABOUT — the engine's ranked tags, each one a way into the other
-                stories carrying it (story-topics.tsx). Placed above the reader's own feed because
-                it belongs to the story: it answers "what is this" where the panel below answers
-                "what else is for me". */}
-            <StoryTopics story={story} />
-            {/* DESKTOP: "Similar Stories" in the shell "Picked for you" established. It takes that
-                card's place — on a story page the question "what else covers this" is the story's
-                own, where a personalised feed is about the reader and has its own surface — and on
-                this viewport it is the page's ONLY similar-stories surface, so the rail's
-                three-state discipline (loading, failure, stated absence) lives here with the query
-                state it needs.
-                BELOW `lg`: the slot is unchanged — the reader's own feed, as before. */}
+            {/* The tail of the rail is where the two viewports differ, ORDER INCLUDED.
+                DESKTOP: "Similar Stories" in the shell "Picked for you" established — it takes that
+                card's place, because on a story page "what else covers this" is the story's own
+                question where a personalised feed is about the reader and has its own surface — and
+                it is this viewport's ONLY similar-stories surface, so the removed rail's three-state
+                discipline (loading, failure, stated absence) lives here with the query state it
+                needs. "Similar news topics" then follows it: stories first, then the topics that
+                open onto more of them, which is the narrower way in.
+                BELOW `lg`: unchanged — topics keep their place above the reader's own feed. */}
             {desktop ? (
-              <SimilarStoriesPanel
-                story={story}
-                similar={related}
-                isLoading={similar.isLoading}
-                isError={similar.isError}
-                onRetry={() => similar.refetch()}
-              />
+              <>
+                <SimilarStoriesPanel
+                  story={story}
+                  similar={related}
+                  isLoading={similar.isLoading}
+                  isError={similar.isError}
+                  onRetry={() => similar.refetch()}
+                />
+                {/* What this story is ABOUT — the engine's ranked tags, each one a way into the
+                    other stories carrying it (story-topics.tsx). */}
+                <StoryTopics story={story} />
+              </>
             ) : (
-              recommendations.data && <RecommendationPanel recs={recommendations.data} />
+              <>
+                <StoryTopics story={story} />
+                {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
+              </>
             )}
           </>
         }
