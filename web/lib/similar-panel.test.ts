@@ -3,10 +3,10 @@
 //
 // It has no logic of its own to unit-test — the stories are the engine's ranked answer, handed in
 // by the page. What CAN rot is what this file asserts: that the card still wears the shell "Picked
-// for you" established, that it never grows a similarity opinion, and that it still tells loading,
-// failure and genuine absence apart. That last one is inherited from the horizontal rail this card
-// replaced, and is the reason it is asserted here — the rail was the only place it was written
-// down, and deleting a component is exactly how such a rule goes missing.
+// for you" established, that it never grows a similarity opinion, that it still tells loading,
+// failure and genuine absence apart, and that it stays on the viewport it was specified for. That
+// last one is the reason the horizontal rail is still in the tree: the card replaces it on DESKTOP
+// only, and below `lg` the page is the one it always was.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -16,6 +16,7 @@ const WEB = join(import.meta.dirname, "..");
 const PANEL = readFileSync(join(WEB, "components", "stories", "similar-stories-panel.tsx"), "utf8");
 const REFERENCE = readFileSync(join(WEB, "components", "home", "recommendation-panel.tsx"), "utf8");
 const PAGE = readFileSync(join(WEB, "app", "(app)", "stories", "[id]", "page.tsx"), "utf8");
+const RAIL = readFileSync(join(WEB, "components", "stories", "similar-stories.tsx"), "utf8");
 
 /** The shell the reference established: container, header treatment, row rhythm. */
 const SHELL = [
@@ -49,19 +50,26 @@ test("it holds no opinion about what similar means", () => {
   }
 });
 
-test("the story page shows it instead of Picked for you", () => {
+test("the story page shows it instead of Picked for you — on desktop", () => {
   assert.ok(PAGE.includes("<SimilarStoriesPanel"), "the card is not on the story page");
-  assert.ok(!PAGE.includes("RecommendationPanel"), "Picked for you is still on the story page");
-  // …and does not pay for a feed it no longer renders.
-  assert.ok(!PAGE.includes("useRecommendations"), "the recommendations query is still being made");
   assert.ok(/similar=\{related\}/.test(PAGE), "the card must be fed the engine's ranked answer");
+  // The swap was specified for the desktop story view, so it is made by mounting one composition
+  // or the other — not by a CSS class that hides a mounted tree, which would run both queries.
+  assert.ok(PAGE.includes("useIsDesktop"), "the page does not choose a composition by viewport");
+  assert.ok(/desktop \? \(\s*<SimilarStoriesPanel/.test(PAGE), "the card is not gated to desktop");
 });
 
-test("the horizontal rail is gone, and nothing still reaches for it", () => {
-  assert.ok(!existsSync(join(WEB, "components", "stories", "similar-stories.tsx")),
-    "the rail component is still present");
+test("below `lg` the page is the one it always was", () => {
+  assert.ok(existsSync(join(WEB, "components", "stories", "similar-stories.tsx")),
+    "the horizontal rail is mobile's Similar Stories surface and must still exist");
   // `SimilarStoriesPanel` shares the prefix, so match the element name exactly.
-  assert.ok(!/<SimilarStories(?![A-Za-z])/.test(PAGE), "the story page still renders the rail");
+  assert.ok(/<SimilarStories(?![A-Za-z])/.test(PAGE), "the rail is no longer rendered anywhere");
+  assert.ok(/desktop === false && \(\s*<SimilarStories(?![A-Za-z])/.test(PAGE),
+    "the rail must render below `lg` only — on desktop it would repeat the card");
+  assert.ok(PAGE.includes("<RecommendationPanel"), "Picked for you must stay on the mobile page");
+  // …and neither viewport pays for the other's feed.
+  assert.ok(/useRecommendations\(undefined, desktop === false\)/.test(PAGE),
+    "the recommendations query must be off wherever Picked for you is not rendered");
 });
 
 test("the card tells loading, failure and absence apart", () => {
@@ -72,6 +80,8 @@ test("the card tells loading, failure and absence apart", () => {
     assert.ok(PANEL.includes(marker), `the card cannot see ${marker}`);
     assert.ok(PAGE.includes(`${marker}=`), `the story page does not hand the card ${marker}`);
   }
+  assert.ok(RAIL.includes("isLoading") && RAIL.includes("isError"),
+    "the rail below `lg` must keep the same three states");
   assert.ok(PANEL.includes('t("story.similar.error")'), "a failed query must say so");
   assert.ok(PANEL.includes('t("story.similar.none")'), "a genuine absence must be stated");
   assert.ok(PANEL.includes("<Skeleton"), "an in-flight query must hold the card's height");

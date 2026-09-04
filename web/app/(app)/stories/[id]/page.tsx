@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, EyeOff, Newspaper, Users } from "lucide-react";
-import { useSimilarStories, useStory } from "@/hooks/use-data";
+import { useRecommendations, useSimilarStories, useStory } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageGrid } from "@/components/layout/page-grid";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
@@ -20,10 +20,13 @@ import { FramingComparison } from "@/components/stories/framing-comparison";
 import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
 import { StoryTopics } from "@/components/stories/story-topics";
 import { MAX_CARDS, SimilarStoriesPanel } from "@/components/stories/similar-stories-panel";
+import { SimilarStories } from "@/components/stories/similar-stories";
+import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
 import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
+import { useIsDesktop } from "@/lib/use-is-desktop";
 import { formatDate } from "@ih/core/i18n/core";
 import { activeLang } from "@/lib/active-lang";
 
@@ -36,19 +39,30 @@ const fmtDate = (iso?: string) =>
  * (filterable coverage list + the intelligence timeline), where coverage is thin (breakdown panel's
  * zero-side callouts), and what to read next (the engine's ranked similar stories).
  *
+ * TWO COMPOSITIONS, ONE PAGE. The Similar Stories card in the companion rail is the DESKTOP story
+ * view's answer to "what else covers this", and was specified for that view alone; below `lg` the
+ * page is unchanged — "Picked for you" keeps the rail slot and the horizontal Similar Stories rail
+ * still closes the page. `useIsDesktop` mounts exactly one of the two, the same way the home page
+ * picks between its desktop and mobile compositions, so neither viewport pays for the other's
+ * components or the other's queries.
+ *
  * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the Similar
- * Stories card — ONE ranked query that returns at most MAX_CARDS stories. This page still does not
+ * Stories surfaces — ONE ranked query that returns at most MAX_CARDS stories. This page still does not
  * fetch the home page's 60-story list: the RUM investigation measured that at ~200 KB and ~a third
  * of this page's entire API transfer, all to pick a handful of cards, and on the entry paths that
  * matter most (a shared link, a notification tap) nothing has warmed the cache, so every such
  * visitor paid it. Scoring similarity where the catalog already lives is what lets the selection
- * see the whole catalog while the wire carries ten cards.
+ * see the whole catalog while the wire carries ten cards. That ONE query feeds whichever surface
+ * the viewport mounts, so the card and the rail can never disagree about what is similar.
  */
 export default function StoryDetailPage() {
   const { t, timeAgo } = useTranslation();
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
   const { data: story, isLoading, isError, error, refetch } = useStory(id);
+  // Which composition this viewport gets. `null` until mounted — the server has no viewport — so
+  // for one frame neither surface renders, which is what the page already shows while data loads.
+  const desktop = useIsDesktop();
   // The Similar Stories rail, ranked by the engine over the WHOLE catalog.
   //
   // It replaced two queries composed on this page — a same-topic list plus the day's top six,
@@ -58,6 +72,9 @@ export default function StoryDetailPage() {
   // "Trump". Re-ranking cannot repair a candidate pool chosen that way, and widening the pool here
   // would mean fetching the 60-story list this page deliberately does not fetch.
   const similar = useSimilarStories(id, MAX_CARDS);
+  // Mobile only, and switched off elsewhere rather than skipped: the desktop rail shows Similar
+  // Stories in this slot, and must not fetch a feed it will not render.
+  const recommendations = useRecommendations(undefined, desktop === false);
   // A hero that errors mid-load hands the slot to the coverage masthead, exactly like absence —
   // but counted separately (story_hero_error), because the engine never downloads images and a
   // dead or hotlink-protected URL is only observable here. Reset if a refetch changes the URL.
@@ -185,19 +202,24 @@ export default function StoryDetailPage() {
                 it belongs to the story: it answers "what is this" where the panel below answers
                 "what else is for me". */}
             <StoryTopics story={story} />
-            {/* "Similar Stories" in the shell "Picked for you" established. It took that card's
-                place in the rail — on a story page the question "what else covers this" is the
-                story's own, where a personalised feed is about the reader and has its own surface —
-                and it is now the page's ONLY similar-stories surface: the horizontal rail that used
-                to close the page was removed, and its three-state discipline (loading, failure,
-                stated absence) moved here with the query state it needs. */}
-            <SimilarStoriesPanel
-              story={story}
-              similar={related}
-              isLoading={similar.isLoading}
-              isError={similar.isError}
-              onRetry={() => similar.refetch()}
-            />
+            {/* DESKTOP: "Similar Stories" in the shell "Picked for you" established. It takes that
+                card's place — on a story page the question "what else covers this" is the story's
+                own, where a personalised feed is about the reader and has its own surface — and on
+                this viewport it is the page's ONLY similar-stories surface, so the rail's
+                three-state discipline (loading, failure, stated absence) lives here with the query
+                state it needs.
+                BELOW `lg`: the slot is unchanged — the reader's own feed, as before. */}
+            {desktop ? (
+              <SimilarStoriesPanel
+                story={story}
+                similar={related}
+                isLoading={similar.isLoading}
+                isError={similar.isError}
+                onRetry={() => similar.refetch()}
+              />
+            ) : (
+              recommendations.data && <RecommendationPanel recs={recommendations.data} />
+            )}
           </>
         }
         lead={
@@ -301,8 +323,20 @@ export default function StoryDetailPage() {
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
 
-          {/* Nothing closes the column after the coverage list: "what to read next" is the rail's
-              Similar Stories card, which is the whole ranked answer with "View all" to open it. */}
+          {/* What to read next, BELOW `lg` only — the engine's ranked same-event selection as a
+              collapsible rail (similar-stories.tsx). It states an empty result instead of
+              disappearing, so a story with genuinely nothing related reads as a decision rather
+              than as a broken section. On desktop the rail card above IS this answer, and a second
+              copy of it at the foot of the page would show the reader the same four stories
+              twice. */}
+          {desktop === false && (
+            <SimilarStories
+              stories={related}
+              isLoading={similar.isLoading}
+              isError={similar.isError}
+              onRetry={() => similar.refetch()}
+            />
+          )}
       </PageGrid>
     </PageContainer>
   );
