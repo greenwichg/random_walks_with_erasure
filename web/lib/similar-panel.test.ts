@@ -88,9 +88,11 @@ test("the story page carries no personalised feed on either viewport", () => {
   // is not enough — the QUERY has to go too, or every reader still pays for a feed nobody sees.
   assert.ok(!PAGE.includes("RecommendationPanel"), "Picked for you is still on the story page");
   assert.ok(!PAGE.includes("useRecommendations"), "the recommendations query is still being made");
-  // It is still the home page's card, on both of that page's compositions.
+  // The mobile home page dropped its copy too, so nothing renders "Picked for you" any more —
+  // but the component stays, because this file reads it as the design reference the card wears.
   const home = readFileSync(join(WEB, "components", "home", "home-mobile.tsx"), "utf8");
-  assert.ok(home.includes("<RecommendationPanel"), "the home page must keep Picked for you");
+  assert.ok(!home.includes("<RecommendationPanel"), "Picked for you is still on the mobile home page");
+  assert.ok(!home.includes("<InformationHealthPanel"), "Your Information Health is still there");
 });
 
 test("the card tells loading, failure and absence apart", () => {
@@ -109,7 +111,8 @@ test("the card tells loading, failure and absence apart", () => {
 });
 
 test("Picked for you itself is untouched", () => {
-  // It is still the home page's card; replacing it on the story page must not have edited it.
+  // Nothing renders it now, but it is the design reference the Similar Stories card is measured
+  // against by the first test in this file, so it must stay as it is rather than be deleted.
   assert.ok(REFERENCE.includes('t("home.recs.title")'));
   assert.ok(REFERENCE.includes('href="/recommendations"'));
 });

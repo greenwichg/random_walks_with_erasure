@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useDashboard, useRecommendations, useStories } from "@/hooks/use-data";
+import { useDashboard, useStories } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { HomeMobile } from "@/components/home/home-mobile";
@@ -14,8 +14,9 @@ import { useIsDesktop } from "@/lib/use-is-desktop";
  *
  * ONE `/api/stories` request drives the lead, the story lists, the topic sections, the topic
  * strip and every rail module (components/home/home-model.ts); the reader's own Information
- * Health and recommendation feed ride alongside it. Three queries in total, all of them
- * endpoints that already existed — no new backend surface, no new data contract.
+ * Health rides alongside it for the desktop rail. Two queries, both of them endpoints that
+ * already existed — no new backend surface, no new data contract. The recommendations query went
+ * with the mobile "Picked for you" card: it had no other reader on this page.
  *
  * Two compositions, one model. On a desktop viewport (`lg`+) the page renders the front page
  * laid out to the desktop reference — topic strip, three columns, topic sections, closing lists
@@ -26,7 +27,6 @@ import { useIsDesktop } from "@/lib/use-is-desktop";
 export default function HomePage() {
   const stories = useStories({ sort: "top", limit: STORY_PAGE_SIZE });
   const dashboard = useDashboard();
-  const recommendations = useRecommendations();
   const desktop = useIsDesktop();
 
   const all = React.useMemo(() => stories.data?.stories ?? [], [stories.data]);
@@ -55,8 +55,6 @@ export default function HomePage() {
   return (
     <HomeMobile
       model={model}
-      dashboard={dashboard.data}
-      recommendations={recommendations.data}
       loading={stories.isLoading}
       error={stories.isError}
       onRetry={() => stories.refetch()}

@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { Newspaper } from "lucide-react";
-import type { DashboardSummary, Recommendation, Story } from "@ih/core/domain/types";
+import type { Story } from "@ih/core/domain/types";
 import type { TopicGroup } from "@ih/core/logic/home";
 import { PageContainer } from "@/components/layout/page-container";
 import { EmptyState, ErrorState } from "@/components/shared/states";
@@ -12,8 +12,6 @@ import { SpotCard } from "@/components/shared/spot-card";
 import { StoryRow } from "@/components/shared/story-row";
 import { FollowButton } from "@/components/shared/follow-button";
 import { LocalPulse } from "@/components/home/local-pulse";
-import { RecommendationPanel } from "@/components/home/recommendation-panel";
-import { InformationHealthPanel } from "@/components/home/information-health-panel";
 import { HomeSkeleton } from "@/components/home/home-skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -27,7 +25,12 @@ import { cn } from "@/lib/utils";
  * FollowButton), so the two layouts are one product at two widths rather than two designs.
  *
  *   Briefing → lens tabs → lead → story rows → More stories
- *   → Blind spots → Daily local news → {Topic} news sections → your own modules
+ *   → Blind spots → Daily local news → {Topic} news sections
+
+ * It closes on the news. "Picked for you" and "Your Information Health" used to follow the topic
+ * sections; both were about the READER rather than the day, and both have their own destinations
+ * in the nav (/recommendations, /report). The desktop front page keeps its own reader module —
+ * this is a mobile composition decision, not a product-wide one.
  *
  * The LENS TABS are the reference's feed selector, over the three orderings the page already
  * derives (home-model.ts): most-covered, newest, and the events flagged one-sided. They reorder
@@ -44,15 +47,11 @@ type Lens = (typeof LENSES)[number];
 
 export function HomeMobile({
   model,
-  dashboard,
-  recommendations,
   loading,
   error,
   onRetry,
 }: {
   model: HomeModel;
-  dashboard: DashboardSummary | undefined;
-  recommendations: Recommendation[] | undefined;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
@@ -164,10 +163,6 @@ export function HomeMobile({
           {categories.slice(0, 2).map((group: TopicGroup) => (
             <TopicSection key={group.topic} group={group} />
           ))}
-
-          {/* The reader's own modules close the page: what to read next, then how the diet looks. */}
-          {recommendations && <RecommendationPanel recs={recommendations} />}
-          {dashboard && <InformationHealthPanel data={dashboard} />}
         </div>
       )}
     </PageContainer>
