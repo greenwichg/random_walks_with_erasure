@@ -67,10 +67,14 @@ export default function StoryDetailPage() {
   const heroSrc = story?.image;
   React.useEffect(() => setHeroFailed(false), [heroSrc]);
 
-  // Rendered as given: already scored, floored and ranked. Anything under the engine's similarity
-  // floor was dropped there, so this can arrive SHORT or empty — `SimilarStories` renders nothing
-  // when it does, which is the correct answer on a day with no related coverage rather than a gap
-  // to be filled with the day's top stories.
+  // Rendered as given: already scored, cut and ranked. Anything below the engine's relative cut was
+  // dropped there, so this can arrive SHORT or empty — which is the correct answer on a day with no
+  // related coverage, rather than a gap to be filled with the day's top stories.
+  //
+  // The query's STATE goes with it, and must: `?? []` makes loading, failure and a genuine absence
+  // indistinguishable downstream, and the rail has a different thing to say about each. Reporting
+  // "nothing is similar" while the request is still in flight — or after it failed — would be the
+  // component inventing a fact from a missing one.
   const related = similar.data?.stories ?? [];
 
   const back = (
@@ -282,10 +286,15 @@ export default function StoryDetailPage() {
           {/* How is it covered — every article, filterable by the facets the data really has. */}
           <CoverageList coverage={story.coverage} />
 
-          {/* What to read next — same-topic first, from the same cached top-stories page, as a
-              collapsible rail (similar-stories.tsx). Same selection the vertical list rendered;
-              only the presentation changed. */}
-          <SimilarStories stories={related} />
+          {/* What to read next — the engine's ranked same-event selection, as a collapsible rail
+              (similar-stories.tsx). It states an empty result instead of disappearing, so a story
+              with genuinely nothing related reads as a decision rather than as a broken section. */}
+          <SimilarStories
+            stories={related}
+            isLoading={similar.isLoading}
+            isError={similar.isError}
+            onRetry={() => similar.refetch()}
+          />
       </PageGrid>
     </PageContainer>
   );

@@ -813,6 +813,8 @@
   "story.similar.options": "Options du sujet",
   "story.similar.followTopic": "Suivre {topic}",
   "story.similar.unfollowTopic": "Ne plus suivre {topic}",
+  "story.similar.none": "Rien d'autre dans le catalogue ne couvre encore cet événement — nous préférons laisser cette section vide plutôt que d'y mettre des sujets qui ne partagent qu'un thème ou un nom.",
+  "story.similar.error": "Impossible de charger la couverture associée.",
   "story.registerSplit": "{reporting} factuel · {opinion} opinion",
   "story.noCoverage": "Pas encore de couverture {side}",
   "story.noMatches": "Aucun article ne correspond à ces filtres.",

@@ -813,6 +813,8 @@
   "story.similar.options": "Opciones de la historia",
   "story.similar.followTopic": "Seguir {topic}",
   "story.similar.unfollowTopic": "Dejar de seguir {topic}",
+  "story.similar.none": "Nada más en el catálogo cubre este suceso todavía: preferimos dejar esto vacío antes que llenarlo con historias que solo comparten un tema o un nombre.",
+  "story.similar.error": "No pudimos cargar la cobertura relacionada.",
   "story.registerSplit": "{reporting} información · {opinion} opinión",
   "story.noCoverage": "Aún sin cobertura de {side}",
   "story.noMatches": "Ningún artículo coincide con estos filtros.",

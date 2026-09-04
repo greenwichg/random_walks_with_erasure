@@ -2,11 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Check, ChevronDown, MoreVertical, Share2 } from "lucide-react";
+import { Check, ChevronDown, MoreVertical, RefreshCw, Share2 } from "lucide-react";
 import type { Story } from "@ih/core/domain/types";
 import { interestForTopic, isFollowedInterest, toggleInterest } from "@ih/core/logic/interests";
 import { useSettings, useUpdateSettings } from "@/hooks/use-data";
 import { CardImage } from "@/components/shared/card-image";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,14 +23,30 @@ import { cn } from "@/lib/utils";
  *
  * It replaces the vertical "More stories" list that used to close the page. What it renders is
  * decided entirely upstream: the engine scores every story in the catalog against this one with the
- * clusterer's own IDF-weighted profile overlap and returns the ones above its same-event floor,
- * ranked (`/api/stories/{id}/similar`). The page hands that array straight here.
+ * clusterer's own IDF-weighted profile overlap and returns the ones within a fixed share of THIS
+ * story's best match, ranked (`/api/stories/{id}/similar`). The page hands that array straight here.
  *
  * So this component holds no notion of "similar" of its own, and must not acquire one. In
  * particular it does not pad: an array shorter than {@link MAX_CARDS} means the catalog held
- * nothing closer, and an EMPTY array means nothing qualified at all — which renders as no section,
- * not as a section filled with the day's top stories. That padding was the defect the rail was
- * reported for, and it put a Venezuelan oil deal beside a Supreme Court ruling about a ballroom.
+ * nothing closer, and an EMPTY array means nothing qualified at all — which renders as a stated
+ * absence, not as a section filled with the day's top stories. That padding was the defect the
+ * rail was reported for, and it put a Venezuelan oil deal beside a Supreme Court ruling about a
+ * ballroom.
+ *
+ * IT SAYS SO RATHER THAN VANISHING, and that is a correction. The empty array used to return
+ * `null`, so the whole section disappeared — and when a bad similarity threshold emptied the rail
+ * on every story, the page just ended at the coverage list with nothing to say it had. The reader
+ * cannot tell a deliberate silence from a broken feature by looking at a gap, and the first person
+ * to hit it asked exactly that question. Three outcomes, three different renders:
+ *
+ *   in flight   a skeleton row, so the section holds its place instead of appearing late
+ *   failed      "couldn't be loaded", with a retry — never "nothing is similar", which is a lie
+ *               a failed request cannot support
+ *   empty       one line saying nothing else covers this event, and that the space is left empty
+ *               on purpose
+ *
+ * The three are passed in rather than inferred from `stories.length`, because an empty array is
+ * what loading, failure and genuine absence all look like from here.
  *
  * A rail rather than a list because the selection is a browse surface, not a ranking: the reader
  * is meant to skim sideways and pick, and the horizontal form says that where a numbered column
@@ -45,11 +63,22 @@ import { cn } from "@/lib/utils";
  *  (topic limit 5 + top limit 6, minus this story), so raising it costs no additional request. */
 export const MAX_CARDS = 10;
 
-export function SimilarStories({ stories }: { stories: Story[] }) {
+export function SimilarStories({
+  stories,
+  isLoading = false,
+  isError = false,
+  onRetry,
+}: {
+  stories: Story[];
+  /** The rail's query is in flight. Renders the skeleton row, never the empty line. */
+  isLoading?: boolean;
+  /** The rail's query failed. Renders the retry notice, never the empty line. */
+  isError?: boolean;
+  onRetry?: () => void;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(true);
   const shown = stories.slice(0, MAX_CARDS);
-  if (shown.length === 0) return null;
 
   return (
     <section aria-labelledby="similar-stories-heading" className="border-t pt-2">
@@ -80,29 +109,81 @@ export function SimilarStories({ stories }: { stories: Story[] }) {
       </h2>
 
       {open && (
-        <ul
-          id="similar-stories-rail"
-          // Edge-to-edge on a phone: the negative margin and matching padding let the first card
-          // sit flush with the page gutter and the last one scroll past it, which is what makes
-          // the next card PEEK instead of being clipped against a hard container edge.
-          //
-          // `scroll-px-4` is load-bearing, not decoration. A snapport is the padding box inset by
-          // scroll-padding — NOT the content box — so with mandatory snapping and no scroll-padding
-          // the browser snaps the first card's edge to the padding box and swallows the gutter on
-          // load: measured cardLeft 0 against a heading at 16. Matching scroll-padding to the
-          // padding is what keeps every snap position on the page's own gutter.
-          className={cn(
-            "-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 scroll-px-4",
-            "sm:mx-0 sm:scroll-px-0 sm:px-0",
-            "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        <div id="similar-stories-rail">
+          {isLoading ? (
+            <RailSkeleton />
+          ) : isError ? (
+            <RailNotice text={t("story.similar.error")}>
+              {onRetry && (
+                <Button variant="outline" size="sm" onClick={onRetry}>
+                  <RefreshCw className="h-4 w-4" aria-hidden /> {t("common.tryAgain")}
+                </Button>
+              )}
+            </RailNotice>
+          ) : shown.length === 0 ? (
+            <RailNotice text={t("story.similar.none")} />
+          ) : (
+            <ul
+              // Edge-to-edge on a phone: the negative margin and matching padding let the first card
+              // sit flush with the page gutter and the last one scroll past it, which is what makes
+              // the next card PEEK instead of being clipped against a hard container edge.
+              //
+              // `scroll-px-4` is load-bearing, not decoration. A snapport is the padding box inset by
+              // scroll-padding — NOT the content box — so with mandatory snapping and no scroll-padding
+              // the browser snaps the first card's edge to the padding box and swallows the gutter on
+              // load: measured cardLeft 0 against a heading at 16. Matching scroll-padding to the
+              // padding is what keeps every snap position on the page's own gutter.
+              className={cn(
+                "-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 scroll-px-4",
+                "sm:mx-0 sm:scroll-px-0 sm:px-0",
+                "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              )}
+            >
+              {shown.map((story) => (
+                <SimilarStoryCard key={story.id} story={story} />
+              ))}
+            </ul>
           )}
-        >
-          {shown.map((story) => (
-            <SimilarStoryCard key={story.id} story={story} />
-          ))}
-        </ul>
+        </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The stated absence, and the failure notice — one quiet line, in the register the story page's
+ * other "nothing to show" lines already use (`story.bias.none`, `story.factuality.none`).
+ *
+ * Deliberately NOT the shared `EmptyState`: that is a dashed panel with its own icon and heading,
+ * sized for a page with nothing on it. Here the section heading directly above already names what
+ * is missing, so a bordered box under it would say the same thing twice and weigh more than the
+ * rail it replaces.
+ */
+function RailNotice({ text, children }: { text: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-start gap-3 pb-6">
+      <p className="max-w-prose text-sm text-muted-foreground">{text}</p>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Card-shaped placeholders at the rail's own dimensions, so the section occupies the height it
+ * will keep and the page below it does not jump when the cards land.
+ *
+ * The heights are the real card's, MEASURED rather than guessed: 163px on a phone and 179px from
+ * `sm` up, which is the square image column (w-28 / w-32) plus the source-count footer. A round
+ * number close to them still shifts the whole page by tens of pixels mid-load, which is the one
+ * thing a skeleton exists to prevent.
+ */
+function RailSkeleton() {
+  return (
+    <div className="flex gap-3 overflow-hidden pb-4" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-[163px] w-[300px] shrink-0 rounded-lg sm:h-[179px] sm:w-[340px]" />
+      ))}
+    </div>
   );
 }
 
