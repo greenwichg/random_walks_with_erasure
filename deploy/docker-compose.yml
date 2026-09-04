@@ -709,6 +709,20 @@ services:
       RWE_STORY_MERGE_SIM: ${RWE_STORY_MERGE_SIM:-0.33}
       RWE_STORY_MERGE_MAX_GAP: ${RWE_STORY_MERGE_MAX_GAP:-48}
       RWE_STORY_MERGE_MAX_SIZE: ${RWE_STORY_MERGE_MAX_SIZE:-130}
+      # Floor a pair must clear to appear in the other's "Similar Stories" rail, scored with the
+      # SAME weighted-profile measure as the merge above. Unset it inherits RWE_STORY_MERGE_SIM,
+      # which is the intended default and the reason it sits here: at that score the clusterer
+      # calls two clusters one event, so a card means "at least as close as a merge candidate".
+      #
+      # Listed even while empty for the reason this block repeats throughout: `environment:` is an
+      # explicit allowlist and this stack has no `env_file:`, so a variable absent from it never
+      # reaches the container however carefully deploy/.env sets it.
+      #
+      # Lower it if the rail proves too quiet on a real catalog — the floor was calibrated against
+      # a 9-story demo whose unrelated pairs share synthetic boilerplate, so its negatives are
+      # likely pessimistic. Re-run the calibration in `similar_min_score`'s docstring before moving
+      # it; a change here needs only a restart, not a rebuild.
+      RWE_STORY_SIMILAR_MIN: ${RWE_STORY_SIMILAR_MIN:-}
       # Most cards one outlet may hold in a recommendation feed. The feed deduped ARTICLES and
       # nothing else, so one high-volume outlet could take several of the 14 slots. Verified in
       # production 2026-08-09: 56 of 59 sampled feeds sit at <= 2 cards from their top outlet,
