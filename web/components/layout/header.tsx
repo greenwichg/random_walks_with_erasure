@@ -3,13 +3,14 @@
 import * as React from "react";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
-import { Puzzle, ScanSearch, Search } from "lucide-react";
+import { Puzzle, ScanSearch } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { DesktopNav } from "@/components/layout/desktop-nav";
 import { MobileMenu } from "@/components/layout/mobile-menu";
 import { DesktopMenu } from "@/components/layout/desktop-menu";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { SearchCommand } from "@/components/layout/search-command";
+import { HeaderSearch } from "@/components/layout/header-search";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -22,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTranslation } from "@/lib/i18n";
+import { useIsDesktop } from "@/lib/use-is-desktop";
 
 /** Today's date in the reader's locale, resolved after mount (SSR has no timezone to trust). */
 function useToday(): string {
@@ -57,7 +59,12 @@ export function Header() {
       .slice(0, 2)
       .join("")
       .toUpperCase() || "U";
+  // Two shells, one search: the overlay below `lg` (search-command.tsx) and the header's own
+  // field above it (header-search.tsx). The state lives here because ⌘K has to reach whichever
+  // one this viewport uses.
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [inlineSearch, setInlineSearch] = React.useState(false);
+  const desktop = useIsDesktop() === true;
   const today = useToday();
 
   const { t } = useTranslation();
@@ -65,12 +72,14 @@ export function Header() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setSearchOpen((v) => !v);
+        // Same shortcut, whichever shell this viewport has.
+        if (desktop) setInlineSearch((v) => !v);
+        else setSearchOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [desktop]);
 
   return (
     // On desktop the bar is a tile like every other surface (card, not page) over the grey page;
@@ -115,24 +124,12 @@ export function Header() {
         </React.Suspense>
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          {/* Not a <Button>: it is a pill with a label and a ⌘K hint, so it composes its own box.
-              That means it must ALSO restate the focus ring and the radius Button provides — it had
-              neither, so it was the one header control with no visible keyboard focus and the only
-              one at `rounded-lg` while every sibling sits at `rounded-md`.
-
-              On desktop it reads as the search FIELD in the reference's bar — a fixed width and the
-              real placeholder — while still opening the ⌘K overlay, which is the one search
-              implementation. Below lg it is the compact "Search ⌘K" pill it always was. */}
-          <button
-            onClick={() => setSearchOpen(true)}
-            aria-label={t("header.search")}
-            className="hidden h-9 shrink-0 items-center gap-2 rounded-md border bg-background/60 px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex lg:w-56 xl:w-72"
-          >
-            <Search className="h-4 w-4 shrink-0" />
-            <span className="lg:hidden">{t("header.search")}</span>
-            <span className="hidden min-w-0 flex-1 truncate text-left lg:inline">{t("header.search")}</span>
-            <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[0.65rem]">⌘K</kbd>
-          </button>
+          <HeaderSearch
+            desktop={desktop}
+            open={inlineSearch}
+            onOpenChange={setInlineSearch}
+            onOpenOverlay={() => setSearchOpen(true)}
+          />
           {/* No search control below `sm`: the row measured 406px into a 390px viewport, and
               Search is a destination in the bottom tab bar on exactly those widths. From `sm` up
               the pill above returns, and ⌘K works everywhere. */}

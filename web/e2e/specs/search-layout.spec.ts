@@ -88,26 +88,53 @@ test.describe("Search overlay layout (mobile)", () => {
   });
 });
 
-test.describe("Search overlay layout (desktop is unchanged)", () => {
+/**
+ * Desktop searches from the header itself now, so the layout question is not "how much screen does
+ * the overlay give back" but "does activating it move anything". It must not: the field takes the
+ * pill's slot and the row's right-hand controls stay exactly where they were.
+ */
+test.describe("Header search layout (desktop)", () => {
   test.use({ viewport: DESKTOP });
 
-  test("keeps its 14px field, its content height, and its fixed 50vh result box", async ({
+  test("activating the field moves nothing else in the header", async ({ authedPage }) => {
+    await authedPage.goto("/");
+    // The account trigger is labelled with the reader's NAME, so it is located structurally: the
+    // last control in the bar, and the one furthest right of search.
+    const account = authedPage.locator("header button").last();
+    const before = (await account.boundingBox())!;
+    const headerBefore = (await authedPage.locator("header").boundingBox())!;
+
+    await authedPage.getByRole("button", { name: /search/i }).first().click();
+    const field = authedPage.getByRole("searchbox");
+    await expect(field).toBeFocused();
+
+    const after = (await account.boundingBox())!;
+    expect(Math.round(after.x), "the controls beside search do not shift").toBe(Math.round(before.x));
+    expect(Math.round(after.y)).toBe(Math.round(before.y));
+    const headerAfter = (await authedPage.locator("header").boundingBox())!;
+    expect(Math.round(headerAfter.height), "and the bar does not change height")
+      .toBe(Math.round(headerBefore.height));
+
+    const size = await field.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(size, "desktop keeps the 14px field it always had").toBe(14);
+  });
+
+  test("the results hang under the field, bounded, with the page still behind them", async ({
     authedPage,
   }) => {
     await authedPage.goto("/");
-    const { panel, results } = await openSearch(authedPage);
+    await authedPage.getByRole("button", { name: /search/i }).first().click();
+    const field = authedPage.getByRole("searchbox");
+    await field.fill("the");
 
-    const size = await authedPage
-      .getByPlaceholder(/search/i)
-      .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-    expect(size, "desktop keeps the 14px field it always had").toBe(14);
-
-    const maxHeight = await panel.evaluate((el) => getComputedStyle(el).maxHeight);
-    expect(maxHeight, "desktop's panel is content-height, never bounded by the visible viewport")
-      .toBe("none");
-
-    const resultsBox = (await results.boundingBox())!;
-    expect(resultsBox.height, "and its result box is still capped at 50vh")
-      .toBeLessThanOrEqual(DESKTOP.height / 2);
+    // The panel is the field's sibling in the header's search box.
+    const panel = authedPage.locator("header form[role='search'] ~ div").first();
+    await expect(panel).toBeVisible();
+    const fieldBox = (await field.boundingBox())!;
+    const panelBox = (await panel.boundingBox())!;
+    expect(panelBox.y, "it opens below the field, not over the page").toBeGreaterThan(fieldBox.y);
+    expect(panelBox.height, "and is bounded well short of the screen")
+      .toBeLessThanOrEqual(DESKTOP.height * 0.6 + 4);
+    await expect(authedPage.getByRole("dialog"), "still no modal").toHaveCount(0);
   });
 });

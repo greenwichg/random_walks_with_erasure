@@ -103,18 +103,52 @@ test.describe("Search overlay dismissal (mobile)", () => {
   });
 });
 
-test.describe("Search overlay dismissal (desktop is unchanged)", () => {
+/**
+ * Desktop has no overlay to dismiss any more — the header expands its own field in place — so the
+ * question becomes how the HEADER gets back to normal. Same three exits, one of them new: Escape,
+ * the ESC chip, and a press anywhere else on the page.
+ */
+test.describe("Header search dismissal (desktop)", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("keeps the ESC hint and no Cancel button, and Escape still closes", async ({ authedPage }) => {
+  const field = (page: import("@playwright/test").Page) => page.getByRole("searchbox");
+  const pill = (page: import("@playwright/test").Page) =>
+    page.getByRole("button", { name: /search/i }).first();
+
+  test("pressing search expands the field in place, and never covers the page", async ({ authedPage }) => {
     await authedPage.goto("/");
-    const dialog = await openSearch(authedPage);
-    await expect(dialog).toContainText("ESC");
-    await expect(
-      authedPage.getByRole("button", { name: /^(cancel|cancelar|annuler|abbrechen)$/i }),
-    ).toBeHidden();
+    await pill(authedPage).click();
+
+    await expect(field(authedPage), "the field is focused and ready to type").toBeFocused();
+    await expect(authedPage.getByRole("dialog"), "no modal, no dimmed page").toHaveCount(0);
+    // The page behind it is still there and still scrollable.
+    const overflow = await authedPage.evaluate(() => getComputedStyle(document.body).overflow);
+    expect(overflow, "nothing locked the page's scroll").not.toBe("hidden");
+  });
+
+  test("Escape returns the header to its normal state", async ({ authedPage }) => {
+    await authedPage.goto("/");
+    await pill(authedPage).click();
+    await expect(field(authedPage)).toBeVisible();
 
     await authedPage.keyboard.press("Escape");
-    await expect(authedPage.getByRole("dialog")).toHaveCount(0);
+    await expect(field(authedPage)).toHaveCount(0);
+    await expect(pill(authedPage), "the pill is back").toBeVisible();
+  });
+
+  test("the ESC chip closes it, and so does a press outside", async ({ authedPage }) => {
+    await authedPage.goto("/");
+    await pill(authedPage).click();
+    // The chip reads "ESC" and is labelled with the same copy the phone's Cancel uses.
+    await authedPage
+      .getByRole("button", { name: /^(cancel|cancelar|annuler|abbrechen)$/i })
+      .first()
+      .click();
+    await expect(field(authedPage)).toHaveCount(0);
+
+    await pill(authedPage).click();
+    await expect(field(authedPage)).toBeVisible();
+    await authedPage.mouse.click(200, 600);           // the page, well clear of the header
+    await expect(field(authedPage), "a press outside puts the header back").toHaveCount(0);
   });
 });

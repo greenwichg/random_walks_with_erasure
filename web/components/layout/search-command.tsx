@@ -1,15 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
-import { Search, FileText, Loader2, CornerDownLeft, ArrowRight } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
-import { LeanBadge } from "@/components/shared/article-badges";
-import { useSearch } from "@/hooks/use-data";
-import type { Article } from "@ih/core/domain/types";
+import { SearchResultList, useSearchLauncher } from "@/components/layout/search-results";
 import { useTranslation } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 
 /**
  * The height the reader can actually SEE, tracked while the overlay is open.
@@ -46,23 +42,25 @@ function useVisibleHeight(open: boolean): number | null {
   return height;
 }
 
-/** ⌘K / global search — a quick launcher over the live FeedArticle catalog, backed by /api/search. */
+/**
+ * Global search as a full-screen overlay — the phone's shell.
+ *
+ * It is no longer the desktop's: above `lg` the header expands its own field in place
+ * (header-search.tsx) rather than covering the page a reader is reading. What both share is
+ * search-results.tsx — the query, the endpoint and what a result opens — so this file is now the
+ * sheet, the visible-viewport sizing and the Back gesture, and nothing about search itself.
+ */
 export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { t } = useTranslation();
   const [q, setQ] = React.useState("");
-  const router = useRouter();
-  const active = q.trim().length > 1;
-  const { data, isFetching } = useSearch({ query: q.trim(), limit: 7 }, active);
-  const results = data?.results ?? [];
+  const close = React.useCallback(() => onOpenChange(false), [onOpenChange]);
+  const { active, isFetching, results, total, seeAll, openArticle, navigatingRef } =
+    useSearchLauncher(q, close);
   const visibleHeight = useVisibleHeight(open);
 
   React.useEffect(() => {
     if (!open) setQ("");
   }, [open]);
-
-  // Closing in order to NAVIGATE must not also pop our history entry (see the effect below) —
-  // that would undo the navigation we just started.
-  const navigatingRef = React.useRef(false);
 
   /**
    * The Back gesture closes the overlay instead of leaving the page.
@@ -89,25 +87,9 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
       }
       if (window.history.state?.rweSearch) window.history.back();
     };
-  }, [open, onOpenChange]);
-
-  const seeAll = () => {
-    navigatingRef.current = true;
-    onOpenChange(false);
-    router.push(`/search?query=${encodeURIComponent(q.trim())}`);
-  };
-
-  // A result opens the canonical publisher URL (the Read flow the extension captures); with no usable
-  // link, fall back to the full search page.
-  const openArticle = (a: Article) => {
-    const href = a.url && /^https?:\/\//i.test(a.url) ? a.url : null;
-    // Only the fallback moves THIS tab; opening the publisher in a new one leaves our history
-    // alone, so that path still wants the pushed entry taken back out.
-    if (!href) navigatingRef.current = true;
-    onOpenChange(false);
-    if (href) window.open(href, "_blank", "noopener,noreferrer");
-    else router.push(`/search?query=${encodeURIComponent(q.trim())}`);
-  };
+    // `navigatingRef` comes from the shared launcher now; its identity is stable, but naming it
+    // here keeps the dependency list honest rather than relying on that.
+  }, [open, onOpenChange, navigatingRef]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -200,58 +182,19 @@ export function SearchCommand({ open, onOpenChange }: { open: boolean; onOpenCha
               `overscroll-contain` keeps a flick at the end of the list from scrolling the page
               behind the overlay. */}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 sm:max-h-[50vh] sm:flex-none">
-            {!active && (
-              <p className="px-3 py-8 text-center text-sm text-muted-foreground">{t("searchCmd.hint")}</p>
-            )}
-            {active && results.length === 0 && !isFetching && (
-              <p className="px-3 py-8 text-center text-sm text-muted-foreground">{t("searchCmd.noMatches", { q: q.trim() })}</p>
-            )}
-
-            {results.length > 0 && (
-              <div className="mb-1">
-                <p className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                  {t("analytics.articles")}
-                </p>
-                {results.map((a) => (
-                  <Row key={a.id} icon={FileText} onClick={() => openArticle(a)}>
-                    <span className="truncate">{a.headline}</span>
-                    <LeanBadge lean={a.lean} className="ml-auto shrink-0" />
-                  </Row>
-                ))}
-                <Row icon={ArrowRight} onClick={seeAll}>
-                  <span className="text-muted-foreground">
-                    {t("searchCmd.seeAll", { n: data?.total ?? results.length, q: q.trim() })}
-                  </span>
-                </Row>
-              </div>
-            )}
+            <SearchResultList
+              q={q}
+              active={active}
+              isFetching={isFetching}
+              results={results}
+              total={total}
+              seeAll={seeAll}
+              openArticle={openArticle}
+            />
           </div>
         </div>
         </div>
       </SheetContent>
     </Sheet>
-  );
-}
-
-function Row({
-  icon: Icon,
-  onClick,
-  children,
-}: {
-  icon: React.ElementType;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent",
-      )}
-    >
-      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      {children}
-      <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-    </button>
   );
 }
