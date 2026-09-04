@@ -19,11 +19,16 @@ import { cn } from "@/lib/utils";
 /**
  * SIMILAR STORIES — the story page's "what else is this like" rail.
  *
- * It replaces the vertical "More stories" list that used to close the page, and it renders from
- * the SAME `related` selection that list did (same-topic first, then the day's top events, never
- * this story itself — see the story page). No second similar-story query and no second notion of
- * "similar": the rail is a different presentation of one existing data flow, which is why the page
- * hands it an array rather than fetching its own.
+ * It replaces the vertical "More stories" list that used to close the page. What it renders is
+ * decided entirely upstream: the engine scores every story in the catalog against this one with the
+ * clusterer's own IDF-weighted profile overlap and returns the ones above its same-event floor,
+ * ranked (`/api/stories/{id}/similar`). The page hands that array straight here.
+ *
+ * So this component holds no notion of "similar" of its own, and must not acquire one. In
+ * particular it does not pad: an array shorter than {@link MAX_CARDS} means the catalog held
+ * nothing closer, and an EMPTY array means nothing qualified at all — which renders as no section,
+ * not as a section filled with the day's top stories. That padding was the defect the rail was
+ * reported for, and it put a Venezuelan oil deal beside a Supreme Court ruling about a ballroom.
  *
  * A rail rather than a list because the selection is a browse surface, not a ranking: the reader
  * is meant to skim sideways and pick, and the horizontal form says that where a numbered column

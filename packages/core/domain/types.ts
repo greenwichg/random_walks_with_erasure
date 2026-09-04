@@ -905,6 +905,16 @@ export interface StoryQuery {
 }
 
 /** Paginated Story list — Discover and Stories both consume this from the single Story Service. */
+/**
+ * The Similar Stories rail's envelope — a RANKING, not a page, so it carries no pagination and
+ * cannot be paged through. `total` is what cleared the similarity floor, which is often fewer than
+ * the requested limit and sometimes zero.
+ */
+export interface SimilarStoriesResponse {
+  stories: Story[];
+  total: number;
+}
+
 export interface StoriesResponse {
   stories: Story[];
   total: number;

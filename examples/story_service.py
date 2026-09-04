@@ -3937,6 +3937,106 @@ def get_story(store_, story_id: str, *, min_articles: int = 2, min_publishers: i
     return None
 
 
+def similar_min_score() -> float:
+    """Floor a story pair must clear to appear in another's "Similar Stories" rail.
+
+    Defaults to :func:`merge_similarity`'s production value — the score at which the CLUSTERER
+    calls two clusters the same event. ``RWE_STORY_SIMILAR_MIN`` overrides without a deploy.
+
+    Calibrated, not chosen. Scoring the catalog's own text two ways — one story's coverage
+    headlines split into halves (same event, real wording) against every distinct pair of real
+    stories (different events) — separates cleanly:
+
+        same event      n=4    min 0.557  median 0.673  max 0.769
+        different       n=36   min 0.041  median 0.117  max 0.321
+
+    Any floor in (0.321, 0.557) divides them; 0.33 is the one the system already defines. A pair
+    that clears it and still exists as two stories was held apart by a merge GUARD — complete
+    linkage, the coherence veto, the gap window, the size cap — not by being unrelated, which is
+    exactly the population this rail wants."""
+    v = os.environ.get("RWE_STORY_SIMILAR_MIN", "").strip()
+    if v:
+        try:
+            return max(0.0, min(1.0, float(v)))
+        except ValueError:
+            pass
+    return merge_similarity() or 0.33
+
+
+def _similar_profile(s: dict) -> frozenset:
+    """A BUILT story's vocabulary: title, summary, and every coverage headline.
+
+    The same shape as :func:`_profile`, from what a built story carries. Not the title alone, for
+    the measured reason recorded there: the four Seattle clusters score 0.15 on headlines and 0.56
+    on profiles, and headline-only matching is the failure this rail was reported for."""
+    toks: set = set()
+    toks |= clustering.title_tokens(s.get("title") or "")
+    toks |= clustering.title_tokens(s.get("summary") or "")
+    for row in s.get("coverage") or []:
+        toks |= clustering.title_tokens(row.get("headline") or "")
+    return frozenset(toks)
+
+
+def similar_stories(store_, story_id: str, *, limit: int = 10, min_score: Optional[float] = None,
+                    min_shared: Optional[int] = None, max_scan: int = None,
+                    min_articles: int = 2, min_publishers: int = 2) -> Optional[list]:
+    """Stories about the same or a closely related event, best first. ``None`` if the id is gone.
+
+    WHY THIS IS AN ENDPOINT and not a client-side pass over ``/api/stories``. The rail used to be
+    filled by a same-topic query plus the day's top events — topic is a shelf, not a subject, and
+    "also busy today" is not a relationship, so a Venezuelan oil deal sat beside a Supreme Court
+    ruling about a ballroom on the strength of sharing the word "Trump". Fixing the RANKING alone
+    cannot help when the candidate pool was chosen that way; the pool has to be the catalog. Doing
+    that in the browser would mean shipping the whole 60-story list to the story page, which a RUM
+    investigation measured at ~200 KB and a third of the page's API transfer and which was removed
+    from this page for exactly that reason. Scored here, the wire carries ``limit`` stories.
+
+    Scored with the clusterer's own measure: IDF-weighted Jaccard over profiles, the arithmetic
+    :func:`_merge_duplicates` uses to decide whether two clusters are one story. The IDF weighting
+    is what makes this work — plain overlap treats every shared word as equal evidence, so "trump",
+    in hundreds of headlines, counts for as much as a name in two.
+
+    Costs no clustering: reads the SAME cached build the list and detail pages serve, so the ids
+    agree with what the reader just clicked and a cold build is never forced onto this request."""
+    floor = similar_min_score() if min_score is None else min_score
+    shared_floor = clustering.MIN_SHARED_TOKENS if min_shared is None else min_shared
+    stories = _cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=max_scan,
+                            min_articles=min_articles, min_publishers=min_publishers)
+    target = None
+    for s in stories:
+        if s["id"] == story_id:
+            target = s
+            break
+    if target is None:
+        return None
+
+    others = [s for s in stories if s["id"] != story_id]
+    if not others:
+        return []
+    tp = _similar_profile(target)
+    profiles = [_similar_profile(s) for s in others]
+    # The target joins the corpus the weights are computed over: its own vocabulary is part of what
+    # makes a token common or rare in this catalog.
+    weights = clustering.idf_weights([tp] + profiles)
+    tt = sum(weights.get(t, 1.0) for t in tp)
+
+    scored = []
+    for s, p in zip(others, profiles):
+        inter = tp & p
+        if len(inter) < shared_floor:
+            continue
+        w = sum(weights.get(t, 1.0) for t in inter)
+        den = tt + sum(weights.get(t, 1.0) for t in p) - w
+        score = (w / den) if den else 0.0
+        if score < floor:
+            continue
+        scored.append((score, s))
+    # Ties broken by breadth of coverage then id, so the order is stable build to build rather than
+    # dependent on catalog order.
+    scored.sort(key=lambda r: (-r[0], -(r[1].get("totalCoverage") or 0), r[1]["id"]))
+    return [s for _, s in scored[:max(0, limit)]]
+
+
 def _diagnostics(stories: list, cluster_ms: float) -> dict:
     sizes = sorted((s["totalCoverage"] for s in stories), reverse=True)
     dist: dict = {}

@@ -1406,6 +1406,19 @@ class StoryIntelligenceModel(BaseModel):
     diagnostics: dict[str, Any]
 
 
+class SimilarStoriesResponseModel(BaseModel):
+    """The Similar Stories rail's envelope — a RANKING, not a page, so it carries no pagination.
+
+    Deliberately its own model rather than a reuse of ``StoriesResponseModel``: that one requires
+    ``page``/``pageSize``/``hasMore``/``remainingPages``/``sort``, and inventing values for them
+    here would claim this result can be paged through when it cannot. ``total`` is what was found
+    above the similarity floor, which is frequently fewer than the requested limit and sometimes
+    zero — see ``/api/stories/{id}/similar``."""
+    model_config = ConfigDict(extra="allow")
+    stories: list[StoryModel]
+    total: int
+
+
 class StoriesResponseModel(BaseModel):
     # Paginated Story envelope (Commit 7). `clusterMs` + `diagnostics` appear only in debug mode, so
     # allow extras. Discover and Stories both consume this from the single Story Service.
@@ -3014,6 +3027,29 @@ def story(story_id: str) -> dict:
     """Backward-compatible alias of ``GET /api/story/{story_id}`` (the web detail page still calls the
     plural path). Same Story Service, same result."""
     return story_single(story_id)
+
+
+@app.get("/api/stories/{story_id}/similar", response_model=SimilarStoriesResponseModel,
+         response_model_exclude_none=True, tags=["discover"],
+         summary="Stories about the same or a closely related event, best first",
+         responses=_ERR_RESPONSES)
+def story_similar(
+    story_id: str,
+    limit: int = Query(10, ge=1, le=25, description="maximum cards to return"),
+) -> dict:
+    """Similarity, not adjacency. Scored with the clusterer's own measure — IDF-weighted Jaccard
+    over each story's whole profile (title, summary and every coverage headline) — and floored at
+    the threshold the clusterer uses to call two clusters the same event, so a pair sharing only a
+    household name or a topic does not qualify.
+
+    Returns FEWER than ``limit`` — including none — whenever the catalog holds nothing that close.
+    That is the correct answer and callers must render it as one; padding the rail with the day's
+    top stories is the defect this replaced. 404 when the event is no longer in the live catalog."""
+    st = _require_store()
+    found = story_service.similar_stories(st, story_id, limit=limit)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Story not found.")
+    return {"stories": found, "total": len(found)}
 
 
 @app.get("/api/story/{story_id}/intelligence", response_model=StoryIntelligenceModel,

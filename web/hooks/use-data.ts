@@ -48,6 +48,19 @@ export const useStory = (id: string) =>
     enabled: !!id,
     retry: (count, error) => (error as { status?: number })?.status !== 404 && count < 3,
   });
+/**
+ * The Similar Stories rail's candidates — already scored, filtered and ranked by the engine, so the
+ * page renders the array as given. A 404 (the event dissolved) is surfaced rather than retried,
+ * matching `useStory`: the rail simply does not render.
+ */
+export const useSimilarStories = (id: string, limit?: number) =>
+  useQuery({
+    queryKey: queryKeys.similarStories(id, limit),
+    queryFn: () => services.similarStories(id, limit),
+    enabled: !!id,
+    retry: (count, error) => (error as { status?: number })?.status !== 404 && count < 3,
+  });
+
 /** Publisher Intelligence profile; a 404 (unknown publisher) is surfaced, not retried. */
 export const usePublisher = (name: string) =>
   useQuery({

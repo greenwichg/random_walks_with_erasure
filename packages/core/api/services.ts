@@ -33,6 +33,7 @@ import type {
   SearchResponse,
   Settings,
   StoriesResponse,
+  SimilarStoriesResponse,
   Story,
   StoryIntelligence,
   StoryQuery,
@@ -120,6 +121,11 @@ export const services = {
   },
   story: (id: string) => getJson<Story>(`/stories/${id}`),
   publisher: (name: string) => getJson<PublisherProfile>(`/publishers/${encodeURIComponent(name)}`),
+  // Stories about the same or a closely related EVENT, scored engine-side with the clusterer's own
+  // IDF-weighted profile overlap and floored at its same-event threshold. Ranked, best first, and
+  // frequently SHORTER than the limit — "nothing is this close" is a real answer here.
+  similarStories: (id: string, limit?: number) =>
+    getJson<SimilarStoriesResponse>(`/stories/${id}/similar`, limit ? { limit } : undefined),
   // Deterministic Story Intelligence (freshness / lifecycle / momentum / timeline / new-since-last-visit).
   storyIntelligence: (id: string) => getJson<StoryIntelligence>(`/stories/${id}/intelligence`),
   profile: () => getJson<Profile>("/profile"),
@@ -190,6 +196,7 @@ export const queryKeys = {
   stories: (query?: StoryQuery) => ["stories", requestParams(query ?? {})] as const,
   story: (id: string) => ["story", id] as const,
   publisher: (name: string) => ["publisher", name] as const,
+  similarStories: (id: string, limit?: number) => ["similar-stories", id, limit ?? null] as const,
   storyIntelligence: (id: string) => ["story-intelligence", id] as const,
   profile: ["profile"] as const,
   saved: ["saved"] as const,

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, EyeOff, Newspaper, Users } from "lucide-react";
-import { useRecommendations, useStories, useStory } from "@/hooks/use-data";
+import { useRecommendations, useSimilarStories, useStory } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageGrid } from "@/components/layout/page-grid";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
@@ -37,28 +37,28 @@ const fmtDate = (iso?: string) =>
  * zero-side callouts), and what to read next (related stories + the reader's own feed).
  *
  * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the Similar
- * Stories rail — two SMALL story queries instead of the home page's full 60-story list. The RUM
- * investigation measured that list at ~200 KB and ~a third of this page's entire API transfer, all
- * to pick a handful of cards; on the entry paths that matter most (a shared link, a notification tap)
- * nothing has warmed the cache, so every such visitor paid it. The reader's recommendations reuse
- * their existing cached feed. No new endpoints — both queries are existing `/api/stories` filters.
+ * Stories rail — ONE ranked query that returns at most MAX_CARDS stories. This page still does not
+ * fetch the home page's 60-story list: the RUM investigation measured that at ~200 KB and ~a third
+ * of this page's entire API transfer, all to pick a handful of cards, and on the entry paths that
+ * matter most (a shared link, a notification tap) nothing has warmed the cache, so every such
+ * visitor paid it. Scoring similarity where the catalog already lives is what lets the rail see the
+ * whole catalog while the wire carries ten cards. The reader's recommendations reuse their existing
+ * cached feed.
  */
 export default function StoryDetailPage() {
   const { t, timeAgo } = useTranslation();
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
   const { data: story, isLoading, isError, error, refetch } = useStory(id);
-  // Related coverage — same topic first, then the day's top events, never this story itself. Two
-  // bounded queries, deliberately left at their original limits: together they yield up to eleven
-  // candidates, and the rail's cap (MAX_CARDS) sits under that, so widening the module from four
-  // cards to a scrollable rail added NO request and no bytes — it spends candidates the page was
-  // already fetching and throwing away. A same-topic story ranked below the old top-60 window is
-  // eligible here. The topic query waits for the story (its input); the fill query fires at once.
-  const topStories = useStories({ sort: "top", limit: 6 });
-  const topicStories = useStories(
-    { topic: story?.topic, sort: "top", limit: 5 },
-    { enabled: !!story?.topic },
-  );
+  // The Similar Stories rail, ranked by the engine over the WHOLE catalog.
+  //
+  // It replaced two queries composed on this page — a same-topic list plus the day's top six,
+  // shown in that order — which is the defect the rail was reported for. Topic is a shelf, not a
+  // subject, and "also busy today" is not a relationship at all: that is how a Venezuelan oil deal
+  // came to sit beside a Supreme Court ruling about a ballroom, alike only in containing the word
+  // "Trump". Re-ranking cannot repair a candidate pool chosen that way, and widening the pool here
+  // would mean fetching the 60-story list this page deliberately does not fetch.
+  const similar = useSimilarStories(id, MAX_CARDS);
   const recommendations = useRecommendations();
   // A hero that errors mid-load hands the slot to the coverage masthead, exactly like absence —
   // but counted separately (story_hero_error), because the engine never downloads images and a
@@ -67,23 +67,11 @@ export default function StoryDetailPage() {
   const heroSrc = story?.image;
   React.useEffect(() => setHeroFailed(false), [heroSrc]);
 
-  // Wait for the topic query to settle before composing, or the top-6 fill — which usually lands
-  // first now — would paint an unprioritised list and visibly reshuffle when the topic results
-  // arrive. The old code never showed that (its one big query carried both halves at once), and a
-  // below-fold module appearing ~100 ms later is better than one that rearranges itself.
-  const topicSettled = !story?.topic || topicStories.isSuccess || topicStories.isError;
-  const related = React.useMemo(() => {
-    if (!topicSettled) return [];
-    const seen = new Set([id]);
-    const merged = [];
-    for (const s of [...(topicStories.data?.stories ?? []), ...(topStories.data?.stories ?? [])]) {
-      if (!seen.has(s.id)) {
-        seen.add(s.id);
-        merged.push(s);
-      }
-    }
-    return merged.slice(0, MAX_CARDS);
-  }, [topicSettled, topicStories.data, topStories.data, id]);
+  // Rendered as given: already scored, floored and ranked. Anything under the engine's similarity
+  // floor was dropped there, so this can arrive SHORT or empty — `SimilarStories` renders nothing
+  // when it does, which is the correct answer on a day with no related coverage rather than a gap
+  // to be filled with the day's top stories.
+  const related = similar.data?.stories ?? [];
 
   const back = (
     <Link
