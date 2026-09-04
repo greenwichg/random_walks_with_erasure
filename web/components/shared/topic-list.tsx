@@ -53,7 +53,14 @@ export function TopicList({
         const on = active === entry.value;
         const inner = (
           <>
-            <span className="min-w-0 truncate font-medium">{entry.label}</span>
+            {/* Truncation is the LAST line of defence, not the fix. Names are bounded engine-side
+                (story_tags.well_formed caps them at 48 characters and five content words) because
+                a topic that only LOOKS short because CSS cut it is still the wrong topic — a
+                headline behind an ellipsis. This catches a long-but-legitimate name in a narrow
+                column, and `title` keeps it readable when it does. */}
+            <span className="min-w-0 truncate font-medium" title={entry.label}>
+              {entry.label}
+            </span>
             <span className="inline-flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
               {entry.count === undefined ? null : formatCompact(entry.count)}
               {on ? (

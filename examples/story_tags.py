@@ -160,9 +160,13 @@ def direct_votes(members: list, entities: dict, *, noise) -> dict:
     votes: dict = {}
     for m in members:
         ents = entities.get(m.get("id") or m.get("url")) or {}
-        seen = {n for names in ents.values() for n in names if n}
-        seen.update(entity_spans.extract(m.get("headline") or ""))
-        seen.update(phrases(m.get("headline") or ""))
+        raw = {n for names in ents.values() for n in names if n}
+        raw.update(entity_spans.extract(m.get("headline") or ""))
+        raw.update(phrases(m.get("headline") or ""))
+        # Tidied AS THEY ARRIVE, so the stored side-table rows — written by an extractor that
+        # trims less — are held to the same shape as the ones read here, and two spellings of one
+        # entity do not become two tags.
+        seen = {t for t in (tidy(n) for n in raw) if t}
         for name in seen:
             if noise(name):
                 continue
@@ -171,6 +175,66 @@ def direct_votes(members: list, entities: dict, *, noise) -> dict:
 
 
 _PHRASE_WORD_RE = re.compile(r"[^\W\d_][\w'’.\-]*", re.UNICODE)
+
+#: Longest a tag name may be, in CONTENT words (connectors and other function words do not count,
+#: so "Democratic Republic of the Congo" is three). A topic is a name, not a clause: past this the
+#: string is describing an event rather than identifying one, and the reader is being offered a
+#: sentence to click on.
+#:
+#: Five, not three: "New York City Police Department" and "Dolly Parton Imagination Library" are
+#: real four-word entities, and a cap that cannot hold them would trade one wrong answer for
+#: another. What actually kills the headlines is the Title Case guard in :func:`phrases`; this is
+#: the backstop for a sentence-cased headline that slips past it.
+TAG_MAX_CONTENT_WORDS = 5
+
+#: …and a character bound for the same reason, because content words can be long. Comfortably
+#: above every real entity name the catalog carries and comfortably below a headline.
+TAG_MAX_CHARS = 48
+
+
+def tidy(name: str) -> str:
+    """Trim the grammar off a name's ends, leaving the name.
+
+    A capitalised run can START with a preposition the sentence needed and the entity does not —
+    "Beside the Dolly Parton statue" gave production the topic "Beside the Dolly Parton". REJECTING
+    that string is easy and wrong: it throws away Dolly Parton along with the preposition. Trimming
+    keeps the entity and drops the grammar, which is what the reader wanted from the run.
+
+    ``entity_spans._normalise`` already trims connectors and calendar words for the clustering
+    reader; this widens the same idea to every function word, which that reader cannot safely do
+    (a trimmed name there changes which articles cluster) and this one can."""
+    words = [_POSSESSIVE.sub("", w) for w in (name or "").split()]
+    while words and words[0] in entity_spans._FUNCTION_WORDS:
+        words.pop(0)
+    while words and words[-1] in entity_spans._FUNCTION_WORDS:
+        words.pop()
+    return " ".join(w for w in words if w)
+
+
+def well_formed(name: str) -> bool:
+    """Whether a normalised name is shaped like a NAME rather than like a fragment or a clause.
+
+    Four rejections, each one a defect seen in the live rail:
+
+    * too many content words, or too many characters — a headline wearing a topic's clothes;
+    * a leading function word — "Beside the Dolly Parton" got in because a preposition can begin a
+      capitalised run and neither ``_LEADS`` (sentence openers) nor ``_CONNECTORS`` (words a name
+      runs THROUGH) lists it. A name does not start with "beside", "amid" or "over";
+    * a possessive — "Parton's" is not an entity, it is an entity with grammar attached;
+    * nothing left after normalisation.
+    """
+    words = name.split()
+    if not words or len(name) > TAG_MAX_CHARS:
+        return False
+    if len(words) > 1 and words[0] in entity_spans._FUNCTION_WORDS:
+        return False
+    if any(_POSSESSIVE.search(w) for w in words):
+        return False
+    content = [w for w in words if w not in entity_spans._FUNCTION_WORDS]
+    return 1 <= len(content) <= TAG_MAX_CONTENT_WORDS
+
+
+_POSSESSIVE = re.compile(r"['’]s$")
 
 
 def phrases(text: str) -> list:
@@ -191,17 +255,25 @@ def phrases(text: str) -> list:
     out: list = []
     for segment in entity_spans._SEGMENT_RE.split(text or ""):
         words = _PHRASE_WORD_RE.findall(segment)
+        # A TITLE CASE segment capitalises every content word, so capitalisation says nothing about
+        # names in it — and a reader who chained through it got the headline back AS a topic:
+        # production offered "Dolly Parton Laid to Rest Privately Days After Her Death" and "Bad
+        # Wolves Guitarist Quits Band Over Dolly Parton Tribute" in the Similar News Topics rail.
+        # `entity_spans.extract` has always refused these (it returns [] for such a headline); this
+        # reader did not, which is the whole of that defect. Per SEGMENT rather than per string,
+        # because this is also called on the story's whole text, where one title-cased headline
+        # must not silence the sentence-cased ones beside it.
+        if entity_spans._title_cased(words):
+            continue
         run: list = []
         caps = 0
 
         def flush() -> None:
             nonlocal run, caps
             if caps >= 2:
-                name = entity_spans._normalise(run)
-                if name.startswith("the "):
-                    name = name[4:]
-                if (len(name.split()) >= 2 and 3 <= len(name) <= entity_spans.MAX_NAME_LEN
-                        and name not in entity_spans._NOISE_SPANS and name not in out):
+                name = tidy(entity_spans._normalise(run))
+                if (len(name.split()) >= 2 and name not in entity_spans._NOISE_SPANS
+                        and well_formed(name) and name not in out):
                     out.append(name)
             run, caps = [], 0
 
@@ -277,9 +349,16 @@ def singleton_votes(members: list, names: set, *, noise) -> dict:
     for m in members:
         seen = set()
         for raw in _CAP_TOKEN_RE.findall(m.get("headline") or ""):
-            token = raw.lower().strip("'’-")
+            # Possessive stripped HERE and not only in the phrase reader's normaliser, which is
+            # the whole of the "Parton's" defect: that rail entry came down this path, where a
+            # trailing `strip("'’-")` cannot reach an apostrophe that has an "s" after it.
+            token = _POSSESSIVE.sub("", raw.lower()).strip("'’-.")
             if (raw[:1].isupper() and token in names and not noise(token)
-                    and token not in entity_spans._LEADS):
+                    # Both lists, not just `_LEADS`: a sentence opener is one way a word gets
+                    # capitalised without being a name, and a preposition mid-headline is another.
+                    and token not in entity_spans._LEADS
+                    and token not in entity_spans._FUNCTION_WORDS
+                    and well_formed(token)):
                 seen.add(token)
         for token in seen:
             votes[token] = votes.get(token, 0) + 1
@@ -307,7 +386,21 @@ def _canonicalise(votes: dict, canon: list) -> dict:
         target = name
         best = len(words)
         for cwords, cname in by_words:
-            if words < cwords and len(cwords) > best:
+            # Onto the LONGEST well-formed phrase the story's own text spells out, and no further
+            # condition. A vote test was tried here — fold only onto a container at least as
+            # corroborated as the fragment — to stop "Dolly Parton" being absorbed by "Dolly Parton
+            # Imagination Library" when a summary mentions the charity once. It works for that and
+            # breaks the case the fold exists for: a story whose headlines say "Congo province"
+            # while only its dek spells the country out has NO votes on the full name, so the
+            # country came back as "Congo" AND "Democratic Republic" AND the full phrase — one
+            # country, three rival tags, measured on the fixture.
+            #
+            # The trade is taken knowingly and in the direction asked for: keep the most specific
+            # name. What it costs is a story whose main subject is a short name that happens to be
+            # contained in a longer one mentioned in passing. `well_formed` is what keeps the
+            # target from being a phrase the shape rules would reject — folding into one of those
+            # would lose the entity entirely, which is worse than either outcome here.
+            if words < cwords and len(cwords) > best and well_formed(cname):
                 target, best = cname, len(cwords)
         out[target] = max(out.get(target, 0), v)
     return out
@@ -354,15 +447,25 @@ def extract_tags(stories: list, entities: dict, *, noise, cap: int = TAG_CAP) ->
         for name, v in singleton_votes(members, names, noise=noise).items():
             votes[name] = max(votes.get(name, 0), v)
         votes = _canonicalise(votes, phrases(_story_text(story)))
-        kept = {n: v for n, v in votes.items() if v >= TAG_MIN_MEMBERS}
+        # ONE gate on every name, whatever produced it. Three extractors and a stored side table
+        # feed this dict, and a shape rule enforced in three of the four places is a rule that
+        # holds until the fourth is edited — which is how a headline reached the rail.
+        kept = {n: v for n, v in votes.items() if v >= TAG_MIN_MEMBERS and well_formed(n)}
         # A longer name absorbs any shorter one built from its own words: "Congo" and "Democratic
         # Republic" beside "Democratic Republic of the Congo" are the same tag three times, and
         # the full one is what the reader means. Three extractors read the same headline, so this
         # is the normalisation step that makes them one answer rather than three. Dropped here
         # rather than at render, so the dedup holds for every consumer of the projection.
+        # A shorter name is absorbed by a longer one built from its own words ONLY when it has no
+        # independent support — that is, when it never appears anywhere the longer one does not.
+        # Vote counts say which: "Congo" and "Democratic Republic of the Congo" carried by the same
+        # members are one country written twice, while "Dolly Parton" carried by more members than
+        # "Dolly Parton Imagination Library" is a person who also happens to have a charity. The
+        # first version absorbed on subset alone and deleted the person.
         words = {n: set(n.split()) for n in kept}
         for name in list(kept):
-            if any(other != name and words[name] < words[other] for other in kept):
+            if any(other != name and words[name] < words[other] and kept[name] <= kept[other]
+                   for other in kept):
                 kept.pop(name)
         votes_by_story[story["id"]] = kept
         for name in kept:

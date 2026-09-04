@@ -194,11 +194,17 @@ def test_phrases_chain_connectors_where_the_span_reader_will_not():
 
 def test_canonicalise_folds_fragments_and_keeps_the_larger_vote():
     canon = ["democratic republic of the congo"]
-    folded = stg._canonicalise({"congo": 2, "democratic republic": 3, "ebola": 4}, canon)
+    folded = stg._canonicalise(
+        {"congo": 2, "democratic republic": 3, "democratic republic of the congo": 3, "ebola": 4},
+        canon)
     assert folded == {"democratic republic of the congo": 3, "ebola": 4}
     # Votes transfer by MAX, not sum: one member saying both is one member.
     assert stg._canonicalise({"congo": 2, "democratic republic of the congo": 2}, canon) == \
         {"democratic republic of the congo": 2}
+    # The container needs no votes of its own: the case this exists for is a story whose HEADLINES
+    # carry only fragments ("Congo province") while the dek spells the country out.
+    assert stg._canonicalise({"congo": 2, "democratic republic": 3}, canon) == \
+        {"democratic republic of the congo": 3}
 
 
 def test_no_story_ever_lists_the_same_tag_twice():
@@ -426,3 +432,116 @@ def test_the_feature_can_be_switched_off(monkeypatch):
     monkeypatch.setenv("RWE_STORY_TAGS", "1")
     ss.clear_cache()
     assert any(s.get("tags") for s in _stories(st))
+
+
+# --------------------------------------------------------------------------- #
+# Name shape — a topic is a NAME, not a headline.
+#
+# Every string in this section is one the live rail actually offered a reader. The Similar News
+# Topics list came back with "Dolly Parton Laid to Rest Privately Days After H…", "Parton's" and
+# "Beside" in it, which is what a capitalisation reader does when nothing downstream asks whether
+# the thing it found is shaped like a name.
+# --------------------------------------------------------------------------- #
+def test_a_title_case_headline_yields_no_phrase():
+    """The whole of the headline-as-topic defect. A Title Case headline capitalises every content
+    word, so capitalisation carries no signal — `entity_spans.extract` has always returned nothing
+    for one, and the phrase reader had no such guard."""
+    import entity_spans
+    for head in ["Dolly Parton Laid to Rest Privately Days After Her Death at 79",
+                 "Bad Wolves Guitarist Quits Band Over Dolly Parton Tribute"]:
+        assert entity_spans.extract(head) == []          # the clustering reader's answer, unchanged
+        assert stg.phrases(head) == []                   # and now this one's
+
+
+def test_a_sentence_cased_headline_still_gives_up_its_entities():
+    """The guard above must not be a mute button: the same reader still reads a normal headline."""
+    assert stg.phrases("Dolly Parton Imagination Library expands to three more states") == \
+        ["dolly parton imagination library"]
+    assert stg.phrases("Amid the Bank of England review, Rachel Reeves spoke") == \
+        ["bank of england", "rachel reeves"]
+
+
+def test_grammar_is_trimmed_off_a_name_not_used_to_reject_it():
+    """"Beside the Dolly Parton statue" gave the rail the topic "Beside the Dolly Parton". Rejecting
+    that string is easy and wrong — it throws away Dolly Parton with the preposition."""
+    assert stg.tidy("beside the dolly parton") == "dolly parton"
+    assert stg.tidy("over the iran war") == "iran war"
+    assert stg.tidy("the pentagon") == "pentagon"
+    assert stg.phrases("Beside the Dolly Parton statue, Nashville mourns") == ["dolly parton"]
+    # A run that is ONLY grammar tidies to nothing and cannot become a tag.
+    assert stg.tidy("of the") == ""
+    assert not stg.well_formed(stg.tidy("of the"))
+
+
+def test_a_possessive_is_not_an_entity():
+    """"Parton's" reached the rail down the singleton path, where a trailing strip cannot reach an
+    apostrophe with an "s" after it."""
+    assert stg.tidy("parton's") == "parton"
+    assert not stg.well_formed("parton's")
+    names = {"parton", "nashville"}
+    votes = stg.singleton_votes(
+        [{"headline": "Fans gather at Parton's Nashville home"},
+         {"headline": "Crowds outside Parton's Nashville home"}],
+        names, noise=lambda n: False)
+    assert "parton's" not in votes and votes.get("parton") == 2
+
+
+def test_a_function_word_is_never_a_tag():
+    """"Beside" was offered as a topic: a preposition capitalised by position. `_LEADS` covers
+    sentence openers and `_CONNECTORS` covers words a name runs through; neither lists this one."""
+    votes = stg.singleton_votes(
+        [{"headline": "Beside the statue, Nashville mourns"},
+         {"headline": "Beside the museum, Nashville mourns"}],
+        {"beside", "nashville"}, noise=lambda n: False)
+    assert "beside" not in votes
+    assert votes.get("nashville") == 2
+
+
+def test_names_are_bounded_in_length():
+    """A sentence-cased headline that slips past the Title Case guard still cannot become a topic."""
+    assert not stg.well_formed("bad wolves guitarist quits band over dolly parton tribute")
+    assert not stg.well_formed("a " * 40)
+    # …while the long entities that genuinely exist are kept, which is what the bound is for.
+    assert stg.well_formed("democratic republic of the congo")
+    assert stg.well_formed("new york city police department")
+    assert stg.well_formed("dolly parton imagination library")
+
+
+def test_the_shape_rule_is_applied_once_for_every_extractor():
+    """Three extractors and a stored side table feed the same dict. A rule enforced in three of
+    four places holds until the fourth is edited — which is how a headline reached the rail."""
+    story = {"id": "s", "title": "Anything", "summary": "", "topic": "",
+             "coverage": [{"headline": "Anything", "url": "u1"},
+                          {"headline": "Anything", "url": "u2"}]}
+    # A side-table row carrying a headline-shaped "entity" must not survive.
+    entities = {"u1": {"span": ["bad wolves guitarist quits band over dolly parton tribute"]},
+                "u2": {"span": ["bad wolves guitarist quits band over dolly parton tribute"]}}
+    tags = stg.extract_tags([story], entities, noise=lambda n: False)
+    assert all("bad wolves" not in t["name"] for t in tags["s"])
+
+
+def test_a_fragment_folds_onto_the_fullest_name_the_story_spells_out():
+    """One entity, one tag — however many ways the story's outlets wrote it."""
+    canon = ["dolly parton imagination library"]
+    # Same support -> one entity, written long and short.
+    assert stg._canonicalise({"dolly parton": 2, "dolly parton imagination library": 2}, canon) == \
+        {"dolly parton imagination library": 2}
+    # KNOWN TRADE, recorded rather than discovered later: a short name contained in a longer one
+    # the story mentions in passing is folded into it. The alternative — a vote test on the
+    # container — was measured and broke the case the fold exists for (see `_canonicalise`), and
+    # "keep the most specific name" is the direction that was asked for.
+    assert stg._canonicalise({"dolly parton": 3, "dolly parton imagination library": 1}, canon) == \
+        {"dolly parton imagination library": 3}
+    story = {"id": "s", "title": "Dolly Parton statue unveiled in Nashville",
+             "summary": "The Dolly Parton Imagination Library also announced a grant.", "topic": "",
+             "coverage": [
+                 {"headline": "Dolly Parton statue unveiled in Nashville", "url": "u1"},
+                 {"headline": "Dolly Parton statue draws crowds in Nashville", "url": "u2"},
+                 {"headline": "Dolly Parton Imagination Library announces grant", "url": "u3"},
+             ]}
+    names = {t["name"] for t in stg.extract_tags([story], {}, noise=lambda n: False)["s"]}
+    # The charity absorbs the person here, by the trade recorded above; what must NOT happen is
+    # that the story loses the subject altogether, or gains a headline-shaped tag.
+    assert "dolly parton imagination library" in names
+    assert "nashville" in names
+    assert all(stg.well_formed(n) for n in names)
