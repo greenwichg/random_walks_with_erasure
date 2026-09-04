@@ -837,6 +837,7 @@
   "story.coverageMasthead": "Cobertura",
   "storyIntel.joinedGroup": "{n} medios se unieron a la cobertura",
   "storyIntel.showAllEvents": "Mostrar los {n} eventos",
+  "storyIntel.showFewerEvents": "Ver menos eventos",
   "nav.section.insights": "Análisis",
   "local.noArticles.body": "Los artículos obtienen país a medida que la ingesta usa el Location Resolver. Vuelve pronto.",
   "local.scope.international": "Internacional",

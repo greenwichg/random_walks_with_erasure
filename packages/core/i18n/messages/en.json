@@ -837,6 +837,7 @@
   "story.coverageMasthead": "Coverage",
   "storyIntel.joinedGroup": "{n} publishers joined the coverage",
   "storyIntel.showAllEvents": "Show all {n} events",
+  "storyIntel.showFewerEvents": "Show fewer events",
   "nav.section.insights": "Insights",
   "local.noArticles.body": "Articles gain a country as ingestion runs with the Location Resolver. Check back shortly.",
   "local.scope.international": "International",

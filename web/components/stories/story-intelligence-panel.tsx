@@ -257,15 +257,20 @@ export function StoryIntelligencePanel({ storyId, headless = false }: { storyId:
           <h3 className="mb-3 flex items-center gap-1.5 font-sans text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <Gauge className="h-3.5 w-3.5" /> {t("storyIntel.coverageTimeline")}
           </h3>
-          <ol className="relative space-y-3">
+          <ol id="story-intel-timeline" className="relative space-y-3">
             {/* Inset top and bottom so the thread starts and ends at the first and last node
                 rather than running past them into the panel's padding. */}
             <span aria-hidden className="absolute bottom-2 left-[8px] top-2 w-px bg-border" />
 
             {visibleRows.map((row, i) => {
+              // Rows past the collapsed window are the ones the press revealed, so they are the
+              // ones that animate. `motion-reduce` opts a reader who asked for less motion out.
+              const revealed = i >= TIMELINE_LIMIT
+                ? "animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none"
+                : undefined;
               if (row.kind === "day") {
                 return (
-                  <li key={`day-${row.iso}`} className="relative list-none pt-2 first:pt-0">
+                  <li key={`day-${row.iso}`} className={cn("relative list-none pt-2 first:pt-0", revealed)}>
                     <div className="flex items-center gap-2">
                       {/* `bg-card` is what cuts the spine behind the date. */}
                       <span className="bg-card pr-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -281,7 +286,7 @@ export function StoryIntelligencePanel({ storyId, headless = false }: { storyId:
                 const shown = row.publishers.slice(0, GROUP_CHIP_LIMIT);
                 const overflow = row.publishers.length - shown.length;
                 return (
-                  <li key={`joins-${row.date}-${i}`} className={ROW}>
+                  <li key={`joins-${row.date}-${i}`} className={cn(ROW, revealed)}>
                     <TimelineNode icon={UserPlus} />
                     <div className={GRID}>
                       <Time iso={row.date} />
@@ -308,7 +313,7 @@ export function StoryIntelligencePanel({ storyId, headless = false }: { storyId:
                   ? LEAN_META[e.perspective]?.color
                   : undefined;
               return (
-                <li key={`${e.type}-${e.date}-${i}`} className={ROW}>
+                <li key={`${e.type}-${e.date}-${i}`} className={cn(ROW, revealed)}>
                   <TimelineNode icon={Icon} accent={accent} />
                   <div className={GRID}>
                     <Time iso={e.date} />
@@ -321,14 +326,23 @@ export function StoryIntelligencePanel({ storyId, headless = false }: { storyId:
             })}
           </ol>
 
-          {hiddenCount > 0 && (
+          {/* A TOGGLE, not a one-way door. It used to disappear the moment it was pressed, which on
+              a story with a long timeline left the panel expanded to its full height with nothing
+              anywhere to close it again. It now stays put and reverses, with the chevron carrying
+              the state the way every other disclosure in the product does. */}
+          {(hiddenCount > 0 || expanded) && (
             <button
               type="button"
-              onClick={() => setExpanded(true)}
+              aria-expanded={expanded}
+              aria-controls="story-intel-timeline"
+              onClick={() => setExpanded((v) => !v)}
               className="mt-3 inline-flex items-center gap-1 rounded text-xs font-medium text-primary transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
-              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-              {t("storyIntel.showAllEvents", { n: rows.length })}
+              <ChevronDown
+                className={cn("h-3.5 w-3.5 transition-transform duration-200", expanded && "rotate-180")}
+                aria-hidden
+              />
+              {expanded ? t("storyIntel.showFewerEvents") : t("storyIntel.showAllEvents", { n: rows.length })}
             </button>
           )}
         </div>

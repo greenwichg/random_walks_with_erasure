@@ -837,6 +837,7 @@
   "story.coverageMasthead": "Berichterstattung",
   "storyIntel.joinedGroup": "{n} Medien kamen zur Berichterstattung hinzu",
   "storyIntel.showAllEvents": "Alle {n} Ereignisse anzeigen",
+  "storyIntel.showFewerEvents": "Weniger Ereignisse anzeigen",
   "nav.section.insights": "Einblicke",
   "local.noArticles.body": "Artikel erhalten ein Land, sobald die Erfassung mit dem Location Resolver läuft. Schauen Sie bald wieder vorbei.",
   "local.scope.international": "International",

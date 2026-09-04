@@ -56,14 +56,26 @@ export function PageGrid({
     );
   }
   return (
+    // ONE COLUMN, NOT TWO ROWS. The lead and the rest of the lead column are a single flow inside
+    // one grid cell, beside the rail — because the earlier shape (lead in row 1, children in row 2,
+    // rail spanning both) let the RAIL decide how tall row 1 was. A tall rail — Story Intelligence
+    // with its timeline expanded is the case that surfaced it — stretched row 1 to fit itself and
+    // parked the lead at the top of it, opening a band of empty page between the hero and the
+    // section under it that grew with every timeline row revealed. Nothing can fill that band: it
+    // is a row's leftover height, not a gap between siblings.
+    //
+    // `contents` is what keeps the phone's order intact through that change. Below `lg` the wrapper
+    // dissolves, so lead, rail and the rest are three grid items again and `order` puts the rail
+    // between the first two — the reason `lead` exists as a prop at all. At `lg` the wrapper becomes
+    // an ordinary 8-column block and the two halves of the lead column close up.
     <div className={cn("grid grid-cols-12 items-start gap-x-8 gap-y-8", className)}>
-      <div className="col-span-12 lg:col-span-8 lg:row-start-1">{lead}</div>
-      <aside className="col-span-12 space-y-8 lg:col-span-4 lg:col-start-9 lg:row-span-2 lg:row-start-1">
+      <div className="contents lg:col-span-8 lg:col-start-1 lg:row-start-1 lg:block lg:space-y-8">
+        <div className="order-1 col-span-12 lg:order-none">{lead}</div>
+        <div className="order-3 col-span-12 space-y-8 lg:order-none">{children}</div>
+      </div>
+      <aside className="order-2 col-span-12 space-y-8 lg:order-none lg:col-span-4 lg:col-start-9 lg:row-start-1">
         {rail}
       </aside>
-      <div className="col-span-12 space-y-8 lg:col-span-8 lg:col-start-1 lg:row-start-2">
-        {children}
-      </div>
     </div>
   );
 }
