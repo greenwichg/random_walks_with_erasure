@@ -287,6 +287,13 @@ def phrases(text: str) -> list:
                 pending = []
                 run.append(w)
                 caps += 1
+                # A POSSESSIVE ENDS THE NAME. "Parton's Nashville home" is two entities and a
+                # noun, not one entity called "Parton Nashville" — and running through the
+                # apostrophe invented exactly that, along with "Ukraine Zelensky" and "Apple Tim
+                # Cook". The possessive is the strongest boundary marker a headline offers: what
+                # follows it belongs to the name, it is not part of it.
+                if _POSSESSIVE.search(low):
+                    flush()
             elif run and low in entity_spans._CONNECTORS:
                 pending.append(w)                  # held: kept only if a capital follows
             else:
@@ -406,6 +413,109 @@ def _canonicalise(votes: dict, canon: list) -> dict:
     return out
 
 
+def canonical_names(votes_by_story: dict) -> dict:
+    """``alias -> canonical name``, resolved across the WHOLE window.
+
+    THE PROBLEM. One subject reaches the extractors under several names — "Dolly Parton", "Parton",
+    "Dolly Parton Imagination Library" — and each becomes its own topic, its own row in the rail
+    and its own tag page, splitting the very stories a reader clicked a topic to gather. The
+    per-story fold in :func:`_canonicalise` cannot fix this: it only sees what one story's text
+    spells out, so the same subject still resolves differently on the story that wrote it long and
+    the story that wrote it short.
+
+    THE RULE, and it is evidence from the catalog rather than a synonym table:
+
+    * Two names are the SAME subject when one's words are a subset of the other's. Containment,
+      not shared tokens — "Iran War" and "Iran Politics" share a word and are two subjects, while
+      "Parton" and "Dolly Parton" are one written twice. Grouping on a shared token would merge the
+      first pair, which the reference product keeps apart.
+    * Groups are closed transitively, so "Parton" -> "Dolly Parton" -> "Dolly Parton Imagination
+      Library" is one subject however the chain was formed.
+    * The canonical form is the one the WINDOW attests most — the form most stories use. A person
+      mentioned across a news cycle outnumbers the charity named after them, so "Dolly Parton"
+      wins; a country whose full name and short name always appear together ties, and the tie
+      breaks toward the MORE SPECIFIC name, so "Democratic Republic of the Congo" wins over
+      "Congo". Frequency answers the first case and specificity the second, and neither needed a
+      list of names.
+
+    What this deliberately does NOT do is merge two names that merely look related. Nothing here
+    knows that "WHO" and "World Health Organization" are one organisation, because nothing in the
+    catalog says so — that needs a source of truth this deployment does not have, and guessing it
+    from initials would merge "WHO" with anything else spelled from the same letters.
+    """
+    df: dict = {}
+    for votes in votes_by_story.values():
+        for name in votes:
+            df[name] = df.get(name, 0) + 1
+    names = sorted(df)
+    words = {n: frozenset(n.split()) for n in names}
+
+    parent = {n: n for n in names}
+
+    def find(n: str) -> str:
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    # Containment, checked only against names that share a word — the whole-window name list is
+    # thousands of strings and an all-pairs subset test over it is quadratic for no reason.
+    by_word: dict = {}
+    for n in names:
+        for w in words[n]:
+            by_word.setdefault(w, []).append(n)
+    for n in names:
+        seen = set()
+        for w in words[n]:
+            for other in by_word.get(w, ()):
+                if other in seen or other == n:
+                    continue
+                seen.add(other)
+                if words[n] < words[other] or words[other] < words[n]:
+                    union(n, other)
+
+    groups: dict = {}
+    for n in names:
+        groups.setdefault(find(n), []).append(n)
+
+    alias: dict = {}
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        # WHICH OF THE GROUP IS THE SUBJECT. Containment alone does not say: "Congo" inside
+        # "Democratic Republic of the Congo" is the same country written short, while "Dolly
+        # Parton" inside "Dolly Parton Imagination Library" is a person a charity is named after.
+        # Reading the longer name the wrong way relabels every story about the person as a story
+        # about the library.
+        #
+        # English noun phrases are HEAD-FINAL, and that is the distinction. "Congo" is the head of
+        # the country's full name, so the two are one name; "library" is the head of the charity's
+        # and "Dolly Parton" is only its modifier, so the charity is DERIVED from the person and
+        # the person is the subject. No list of names is consulted, and the rule holds for any
+        # X-named-after-Y in any language that builds compounds this way.
+        derived = set()
+        for b in members:
+            head = b.split()[-1]
+            for a in members:
+                # …unless the derived name is the better attested one. A window where "Iran War"
+                # is everywhere and bare "Iran" is rare should keep the war, not dissolve it into
+                # the country; frequency is what says which name the coverage is actually about.
+                if a != b and words[a] < words[b] and head not in words[a] and df[a] >= df[b]:
+                    derived.add(b)
+                    break
+        candidates = [n for n in members if n not in derived] or members
+        best = max(candidates, key=lambda n: (df[n], len(words[n]), n))
+        for n in members:
+            if n != best:
+                alias[n] = best
+    return alias
+
+
 def _score(votes: int, members: int, df: int, total_stories: int) -> float:
     """Corroboration x specificity.
 
@@ -440,7 +550,6 @@ def extract_tags(stories: list, entities: dict, *, noise, cap: int = TAG_CAP) ->
     behind the score."""
     names = _case_profile(stories)
     votes_by_story = {}
-    df: dict = {}
     for story in stories:
         members = story.get("coverage") or []
         votes = direct_votes(members, entities, noise=noise)
@@ -451,23 +560,27 @@ def extract_tags(stories: list, entities: dict, *, noise, cap: int = TAG_CAP) ->
         # feed this dict, and a shape rule enforced in three of the four places is a rule that
         # holds until the fourth is edited — which is how a headline reached the rail.
         kept = {n: v for n, v in votes.items() if v >= TAG_MIN_MEMBERS and well_formed(n)}
-        # A longer name absorbs any shorter one built from its own words: "Congo" and "Democratic
-        # Republic" beside "Democratic Republic of the Congo" are the same tag three times, and
-        # the full one is what the reader means. Three extractors read the same headline, so this
-        # is the normalisation step that makes them one answer rather than three. Dropped here
-        # rather than at render, so the dedup holds for every consumer of the projection.
-        # A shorter name is absorbed by a longer one built from its own words ONLY when it has no
-        # independent support — that is, when it never appears anywhere the longer one does not.
-        # Vote counts say which: "Congo" and "Democratic Republic of the Congo" carried by the same
-        # members are one country written twice, while "Dolly Parton" carried by more members than
-        # "Dolly Parton Imagination Library" is a person who also happens to have a charity. The
-        # first version absorbed on subset alone and deleted the person.
-        words = {n: set(n.split()) for n in kept}
-        for name in list(kept):
-            if any(other != name and words[name] < words[other] and kept[name] <= kept[other]
-                   for other in kept):
-                kept.pop(name)
         votes_by_story[story["id"]] = kept
+
+    # ONE SUBJECT, ONE NAME, across the whole window — see :func:`canonical_names`. Applied after
+    # every story has voted and before anything is counted, so the document frequency that decides
+    # specificity belongs to the SUBJECT and not to one spelling of it: a name split three ways
+    # looks three times rarer than it is, and would outrank subjects it is genuinely smaller than.
+    #
+    # This replaces a per-story subset drop that stood here. That rule could only see one story's
+    # names, so the same subject still resolved differently on the story that wrote it long and the
+    # story that wrote it short — which is the split a reader sees as three separate topics.
+    alias = canonical_names(votes_by_story)
+    if alias:
+        for sid, kept in votes_by_story.items():
+            folded: dict = {}
+            for name, v in kept.items():
+                target = alias.get(name, name)
+                folded[target] = max(folded.get(target, 0), v)
+            votes_by_story[sid] = folded
+
+    df: dict = {}
+    for kept in votes_by_story.values():
         for name in kept:
             df[name] = df.get(name, 0) + 1
 

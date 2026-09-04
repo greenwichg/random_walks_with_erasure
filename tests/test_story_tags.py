@@ -545,3 +545,103 @@ def test_a_fragment_folds_onto_the_fullest_name_the_story_spells_out():
     assert "dolly parton imagination library" in names
     assert "nashville" in names
     assert all(stg.well_formed(n) for n in names)
+
+
+# --------------------------------------------------------------------------- #
+# One subject, one name — window-wide canonicalisation.
+# --------------------------------------------------------------------------- #
+def test_one_subject_resolves_to_one_canonical_name_across_the_window():
+    """The reported split: "Dolly Parton", "Parton" and "Dolly Parton Imagination Library" arrive
+    as three topics, three rows in the rail and three tag pages, dividing the very stories a reader
+    clicked a topic to gather.
+
+    The canonical form is the one the WINDOW attests most, which is why no list of names is needed:
+    a person written about across a news cycle outnumbers the charity named after them."""
+    votes = {
+        "s1": {"dolly parton": 3},
+        "s2": {"dolly parton": 2, "nashville": 2},
+        "s3": {"parton": 2},
+        "s4": {"dolly parton imagination library": 2},
+    }
+    alias = stg.canonical_names(votes)
+    assert alias["parton"] == "dolly parton"
+    assert alias["dolly parton imagination library"] == "dolly parton"
+    assert "nashville" not in alias                       # nothing to merge it with
+
+
+def test_a_short_form_resolves_to_the_full_name_but_a_derived_one_does_not():
+    """The distinction containment alone cannot make, and the reason the rule reads the HEAD.
+
+    "Congo" is the head of "Democratic Republic of the Congo", so the two are one country written
+    short and long, and the full name wins. "Library" is the head of "Dolly Parton Imagination
+    Library" and "Dolly Parton" is only its modifier, so the charity is DERIVED from the person —
+    and reading it the other way would relabel every story about the person as a story about the
+    library, which is what a plain longest-name rule did."""
+    assert stg.canonical_names({"s1": {"congo": 2, "democratic republic of the congo": 2}}) == \
+        {"congo": "democratic republic of the congo"}
+    assert stg.canonical_names({"s1": {"dolly parton": 3},
+                                "s2": {"dolly parton imagination library": 2}}) == \
+        {"dolly parton imagination library": "dolly parton"}
+
+
+def test_a_derived_name_the_coverage_is_actually_about_survives():
+    """Frequency has the last word. A window where "Iran War" is everywhere and bare "Iran" is
+    rare is a window about the war; dissolving it into the country would lose what it is about."""
+    votes = {"s1": {"iran war": 3}, "s2": {"iran war": 3}, "s3": {"iran war": 2}, "s4": {"iran": 2}}
+    assert stg.canonical_names(votes) == {"iran": "iran war"}
+
+
+def test_names_that_merely_share_a_word_are_not_merged():
+    """Containment, never shared tokens. "Iran War" and "Iran Politics" are two subjects that
+    share a word; merging them is exactly what a shared-token rule would do, and the reference
+    product keeps them apart."""
+    alias = stg.canonical_names({"s1": {"iran war": 3}, "s2": {"iran politics": 3},
+                                 "s3": {"bank of england": 2}, "s4": {"bank of the west": 2}})
+    assert alias == {}
+
+
+def test_canonicalisation_is_transitive():
+    """"Parton" -> "Dolly Parton" -> "Dolly Parton Imagination Library" is one subject however the
+    chain was formed, so every link lands on the same name."""
+    votes = {"s1": {"parton": 2}, "s2": {"dolly parton": 3},
+             "s3": {"dolly parton imagination library": 2}, "s4": {"dolly parton": 2}}
+    alias = stg.canonical_names(votes)
+    assert {alias.get(n, n) for n in
+            ("parton", "dolly parton", "dolly parton imagination library")} == {"dolly parton"}
+
+
+def test_a_possessive_ends_a_name_rather_than_joining_two():
+    """"Parton's Nashville home" is two entities and a noun. Running the reader through the
+    apostrophe invented "Parton Nashville" — and the same bug produced "Ukraine Zelensky" and
+    "Apple Tim Cook", so this is general rather than one bad headline."""
+    assert stg.phrases("Fans gather at Parton's Nashville home") == []
+    assert stg.phrases("Ukraine's Zelensky meets Trump in Washington") == []
+    # What follows the possessive is still read as its own name.
+    assert stg.phrases("Apple's Tim Cook visits Beijing") == ["tim cook"]
+
+
+def test_the_canonical_name_is_what_stories_are_indexed_under():
+    """The point of resolving names: a reader who clicks the topic gets every story about the
+    subject, not the subset that happened to spell it the same way."""
+    st = store_mod.Store("sqlite://")
+    body = ("The singer's foundation confirmed the news on Tuesday. Tributes continued through "
+            "the week.")
+    for cu, pub, lean, title in [
+        ("https://p1.example/a", "NPR", -1.0, "Dolly Parton cancels her remaining tour dates"),
+        ("https://p2.example/a", "BBC News", 0.0, "Dolly Parton cancels the rest of her tour dates"),
+        ("https://p3.example/a", "Reuters", 0.0, "Dolly Parton cancels remaining dates on her tour"),
+    ]:
+        _add(st, cu, pub, lean, title, body, category="Entertainment")
+    for cu, pub, lean, title in [
+        ("https://p4.example/b", "AP", 0.0,
+         "Dolly Parton Imagination Library reaches three million books"),
+        ("https://p5.example/b", "Sky News", 0.0,
+         "Dolly Parton Imagination Library passes three million books"),
+    ]:
+        _add(st, cu, pub, lean, title, body, category="Entertainment", hours=2)
+
+    stories = _stories(st)
+    names = {s["title"][:20]: {t["name"] for t in s["tags"]} for s in stories}
+    assert all("dolly parton" in v for v in names.values()), names
+    # …and the index gathers both stories under it.
+    assert ss.list_stories(st, tag="dolly parton", limit=50)["total"] == len(stories)
