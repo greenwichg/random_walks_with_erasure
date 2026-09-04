@@ -1,5 +1,4 @@
-import { execFileSync } from "node:child_process";
-import path from "node:path";
+import type { Page, Route } from "@playwright/test";
 import { test, expect } from "../fixtures";
 
 /**
@@ -13,104 +12,107 @@ import { test, expect } from "../fixtures";
  * correct behaviour, which is the question a silent gap always produces and can never answer.
  *
  * So the three outcomes now render differently, and this asserts the difference from the reader's
- * side. It is deliberately the ONLY assertion here: the ranking is measured in Python
+ * side. It is deliberately the ONLY thing asserted here: the ranking is measured in Python
  * (`tests/test_story_service.py`), the endpoint in `tests/test_api_fastapi.py`, and the proxy's
- * parameter forwarding in `lib/similar-params.test.ts`. What none of those can see is what the
- * page looks like when the answer is nothing.
+ * parameter forwarding in `lib/similar-params.test.ts`. What none of those can see is what the page
+ * looks like when the answer is nothing.
  *
- * The responses are INTERCEPTED rather than seeded. The specs share one `.e2e-tmp` catalog that
- * the real clusterer reads, so seeding a story with deliberately no relatives would mean seeding
- * something unlike everything else in that catalog — and then depending on the clusterer to keep
- * agreeing that it is unlike them, which is a second thing to break. Interception makes the
- * engine's answer the parameter of the test, which is exactly what is under test here.
+ * NOTHING IS SEEDED, and that is deliberate rather than lazy. The specs share ONE `.e2e-tmp`
+ * catalog that the engine's real clusterer reads, and `stories-filter-state` asserts absolute facet
+ * counts over it ("News carries 2"). The first version of this file seeded one library story with
+ * wording unlike any other fixture — and still broke that assertion, because the collision is
+ * arithmetic, not clustering: the full suite went from 20 pre-existing failures to 21, and the new
+ * one was that count reading 3. Distinctiveness cannot help with a total.
+ *
+ * So the story page is served entirely from interception: {@link STORY} below is the detail
+ * response, and each test supplies the rail's. The catalog is never written to and never read, so
+ * this file cannot perturb another spec and no other spec's data can change what it asserts —
+ * which is also what makes it runnable on its own.
  */
 
 /** The rail's own section, whatever it currently renders inside. */
 const RAIL = 'section[aria-labelledby="similar-stories-heading"]';
 
-const WEB_DIR = path.join(__dirname, "..", "..");
-const REPO_ROOT = path.join(WEB_DIR, "..");
-const DB = path.join(WEB_DIR, ".e2e-tmp", "engine.db");
-
-let seeded = false;
+/** Any id: nothing resolves it against the catalog. */
+const STORY_ID = "st_similarstatesfixture";
 
 /**
- * One event, so this spec has a story page to open when it runs alone.
+ * The story the page renders, in the engine's own response shape (`/api/stories/{id}`).
  *
- * Wording chosen to share nothing with any other spec's fixture — the specs write into ONE
- * `.e2e-tmp` catalog that the engine's real clusterer reads, and a near-duplicate headline joins
- * another spec's story and changes the counts that spec asserts on. Published relative to now,
- * because `story_service` clusters a 6-day window and a hardcoded date works until it ages out of
- * it and then fails forever.
- *
- * What is rendered inside the rail never depends on this fixture: the responses are intercepted.
- * It exists only so that a story page exists.
+ * Minimal but COMPLETE for the shape — the page derives publisher stats, the register split and
+ * the breakdown panel from `coverage`, so an omitted field shows up as a crashed page rather than
+ * as a missing section, and the rail under test would then never render at all.
  */
-function seedStory(): void {
-  if (seeded) return;
-  seeded = true;
-  const py = `
-import sys
-from datetime import datetime, timedelta, timezone
-sys.path.insert(0, ${JSON.stringify(path.join(REPO_ROOT, "examples"))})
-import ingest
-import store as store_mod
-
-st = store_mod.Store("sqlite:///" + ${JSON.stringify(DB)})
-now = datetime.now(timezone.utc)
-desc = "Trustees voted to extend weekend access at the three branch reading rooms. " * 3
-members = [
-    ("NPR", "City library trustees extend Sunday opening hours at three branches",
-     "https://npr-similar.example.com/e2e/library", -1.0, 3),
-    ("BBC News", "Library trustees extend Sunday opening hours across three branches",
-     "https://bbc-similar.example.com/e2e/library", 0.0, 2),
-]
-for pub, headline, url, lean, hours_ago in members:
-    st.upsert_feed_article(
-        canonical_url=ingest.canonical_url(url), url=url, publisher=pub, source_publisher=None,
-        title=headline, description=desc, body=None,
-        published_at=(now - timedelta(hours=hours_ago)).isoformat(), source_feed="e2e",
-        scored={"article_id": url, "outlet": pub, "category": "Politics",
-                "topic": "Politics", "lean": lean, "political": True})
-`;
-  execFileSync("python", ["-c", py], { cwd: REPO_ROOT, stdio: "pipe" });
-}
+const NOW = new Date();
+const HOURS_AGO = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
+const STORY = {
+  id: STORY_ID,
+  title: "City library trustees extend Sunday opening hours at three branches",
+  summary: "Trustees voted to extend weekend access at the three branch reading rooms.",
+  topic: "Politics",
+  updatedAt: HOURS_AGO(2),
+  totalCoverage: 2,
+  publisherCount: 2,
+  publishers: ["NPR", "BBC News"],
+  publisherDiversity: 1,
+  distribution: { left: 0.5, center: 0.5, right: 0 },
+  earliest: HOURS_AGO(3),
+  latest: HOURS_AGO(2),
+  firstPublished: HOURS_AGO(3),
+  latestUpdate: HOURS_AGO(2),
+  newest: HOURS_AGO(2),
+  oldest: HOURS_AGO(3),
+  timeSpanHours: 1,
+  lowCredibilityPublishers: [],
+  coverage: [
+    {
+      publisher: "NPR",
+      headline: "City library trustees extend Sunday opening hours at three branches",
+      url: "https://npr-similar.example.com/e2e/library",
+      lean: -1,
+      leanBucket: "left",
+      publishedAt: HOURS_AGO(3),
+      publisherLogo: null,
+      publisherLogoFallbacks: [],
+    },
+    {
+      publisher: "BBC News",
+      headline: "Library trustees extend Sunday opening hours across three branches",
+      url: "https://bbc-similar.example.com/e2e/library",
+      lean: 0,
+      leanBucket: "center",
+      publishedAt: HOURS_AGO(2),
+      publisherLogo: null,
+      publisherLogoFallbacks: [],
+    },
+  ],
+  timeline: [{ date: HOURS_AGO(3), label: "First reported" }],
+};
 
 /**
- * A story id to open — ANY story, not this spec's own.
+ * Open the fixture story with the rail's response under the test's control.
  *
- * Polled rather than read once, because the engine serves a stale build while it rebuilds behind
- * the reader (`story_service._cached_build`): the request right after a seed can legitimately
- * answer from the pre-seed catalog. Waiting for the rebuild is the contract, not a workaround.
+ * `**\/api/stories/*` and `**\/api/stories/*\/similar*` are disjoint — a Playwright `*` does not
+ * cross a `/` — so the detail route never swallows the rail's request.
  */
-async function openAStory(page: import("@playwright/test").Page): Promise<string> {
-  seedStory();
-  await page.goto("/stories", { waitUntil: "networkidle" });
-  let id: string | null = null;
-  for (let attempt = 0; attempt < 12 && id === null; attempt++) {
-    id = await page.evaluate(async () => {
-      const res = await fetch("/api/stories?limit=200", { cache: "no-store" });
-      const body = (await res.json()) as { stories?: { id: string }[] };
-      return body.stories?.[0]?.id ?? null;
-    });
-    if (id === null) await page.waitForTimeout(1000);
-  }
-  expect(id, "the catalog must hold at least one story to open a story page").not.toBeNull();
-  return id as string;
+async function openStory(page: Page, similar: (route: Route) => unknown): Promise<void> {
+  await page.route("**/api/stories/*/similar*", similar);
+  await page.route("**/api/stories/*", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(STORY) }),
+  );
+  await page.goto(`/stories/${STORY_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("h1", { timeout: 20_000 });
 }
 
 test.describe("Similar Stories: an empty rail says which kind of empty it is", () => {
   test("no matches renders a stated absence, not a missing section", async ({ authedPage }) => {
-    const id = await openAStory(authedPage);
-    await authedPage.route("**/api/stories/*/similar*", (route) =>
+    await openStory(authedPage, (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ stories: [], total: 0 }),
       }),
     );
-
-    await authedPage.goto(`/stories/${id}`, { waitUntil: "networkidle" });
     const rail = authedPage.locator(RAIL);
 
     await expect(rail, "the section stays on the page").toBeVisible();
@@ -120,16 +122,13 @@ test.describe("Similar Stories: an empty rail says which kind of empty it is", (
   });
 
   test("a failed request offers a retry and never claims nothing is similar", async ({ authedPage }) => {
-    const id = await openAStory(authedPage);
-    await authedPage.route("**/api/stories/*/similar*", (route) =>
+    await openStory(authedPage, (route) =>
       route.fulfill({
         status: 503,
         contentType: "application/json",
         body: JSON.stringify({ error: { code: "engine_unavailable", message: "down" } }),
       }),
     );
-
-    await authedPage.goto(`/stories/${id}`, { waitUntil: "domcontentloaded" });
     const rail = authedPage.locator(RAIL);
 
     // The query retries a 5xx with backoff, so the failure surfaces after several seconds — and
@@ -143,12 +142,11 @@ test.describe("Similar Stories: an empty rail says which kind of empty it is", (
   });
 
   test("while the request is in flight it shows neither cards nor the empty line", async ({ authedPage }) => {
-    const id = await openAStory(authedPage);
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await authedPage.route("**/api/stories/*/similar*", async (route) => {
+    await openStory(authedPage, async (route) => {
       await held;
       await route.fulfill({
         status: 200,
@@ -156,9 +154,8 @@ test.describe("Similar Stories: an empty rail says which kind of empty it is", (
         body: JSON.stringify({ stories: [], total: 0 }),
       });
     });
-
-    await authedPage.goto(`/stories/${id}`, { waitUntil: "domcontentloaded" });
     const rail = authedPage.locator(RAIL);
+
     await expect(rail).toBeVisible();
     await expect(
       rail,
