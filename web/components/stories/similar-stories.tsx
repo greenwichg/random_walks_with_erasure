@@ -68,6 +68,7 @@ export function SimilarStories({
   isLoading = false,
   isError = false,
   onRetry,
+  headless = false,
 }: {
   stories: Story[];
   /** The rail's query is in flight. Renders the skeleton row, never the empty line. */
@@ -75,10 +76,51 @@ export function SimilarStories({
   /** The rail's query failed. Renders the retry notice, never the empty line. */
   isError?: boolean;
   onRetry?: () => void;
+  /** Rendered inside the mobile page's collapsible panel, which supplies the heading, the
+   *  description and the collapse — so this drops its own accordion and renders the rail alone.
+   *  The three states are unchanged: they are the content, not the chrome. */
+  headless?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(true);
   const shown = stories.slice(0, MAX_CARDS);
+
+  const body = isLoading ? (
+    <RailSkeleton />
+  ) : isError ? (
+    <RailNotice text={t("story.similar.error")}>
+      {onRetry && (
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw className="h-4 w-4" aria-hidden /> {t("common.tryAgain")}
+        </Button>
+      )}
+    </RailNotice>
+  ) : shown.length === 0 ? (
+    <RailNotice text={t("story.similar.none")} />
+  ) : (
+    <ul
+      // Edge-to-edge on a phone: the negative margin and matching padding let the first card
+      // sit flush with the page gutter and the last one scroll past it, which is what makes
+      // the next card PEEK instead of being clipped against a hard container edge.
+      //
+      // `scroll-px-4` is load-bearing, not decoration. A snapport is the padding box inset by
+      // scroll-padding — NOT the content box — so with mandatory snapping and no scroll-padding
+      // the browser snaps the first card's edge to the padding box and swallows the gutter on
+      // load: measured cardLeft 0 against a heading at 16. Matching scroll-padding to the
+      // padding is what keeps every snap position on the page's own gutter.
+      className={cn(
+        "-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 scroll-px-4",
+        "sm:mx-0 sm:scroll-px-0 sm:px-0",
+        "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+      )}
+    >
+      {shown.map((story) => (
+        <SimilarStoryCard key={story.id} story={story} />
+      ))}
+    </ul>
+  );
+
+  if (headless) return body;
 
   return (
     <section aria-labelledby="similar-stories-heading" className="border-t pt-2">
@@ -108,44 +150,7 @@ export function SimilarStories({
         </button>
       </h2>
 
-      {open && (
-        <div id="similar-stories-rail">
-          {isLoading ? (
-            <RailSkeleton />
-          ) : isError ? (
-            <RailNotice text={t("story.similar.error")}>
-              {onRetry && (
-                <Button variant="outline" size="sm" onClick={onRetry}>
-                  <RefreshCw className="h-4 w-4" aria-hidden /> {t("common.tryAgain")}
-                </Button>
-              )}
-            </RailNotice>
-          ) : shown.length === 0 ? (
-            <RailNotice text={t("story.similar.none")} />
-          ) : (
-            <ul
-              // Edge-to-edge on a phone: the negative margin and matching padding let the first card
-              // sit flush with the page gutter and the last one scroll past it, which is what makes
-              // the next card PEEK instead of being clipped against a hard container edge.
-              //
-              // `scroll-px-4` is load-bearing, not decoration. A snapport is the padding box inset by
-              // scroll-padding — NOT the content box — so with mandatory snapping and no scroll-padding
-              // the browser snaps the first card's edge to the padding box and swallows the gutter on
-              // load: measured cardLeft 0 against a heading at 16. Matching scroll-padding to the
-              // padding is what keeps every snap position on the page's own gutter.
-              className={cn(
-                "-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 scroll-px-4",
-                "sm:mx-0 sm:scroll-px-0 sm:px-0",
-                "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-              )}
-            >
-              {shown.map((story) => (
-                <SimilarStoryCard key={story.id} story={story} />
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      {open && <div id="similar-stories-rail">{body}</div>}
     </section>
   );
 }

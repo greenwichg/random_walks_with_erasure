@@ -123,7 +123,11 @@ function Stat({ label, value }: { label: string; value: string }) {
  * beside the article list rather than interrupting it. Everything the hero already states — the
  * freshness badge, the article count, the last-coverage time — is deliberately absent here.
  */
-export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
+export function StoryIntelligencePanel({ storyId, headless = false }: { storyId: string;
+  /** Rendered inside the mobile page's collapsible panel, which supplies the heading and the
+   *  surface — so this drops its own and renders content only. */
+  headless?: boolean;
+}) {
   const { t, timeAgo } = useTranslation();
   const { data, isLoading } = useStoryIntelligence(storyId);
   const [expanded, setExpanded] = React.useState(false);
@@ -145,12 +149,16 @@ export function StoryIntelligencePanel({ storyId }: { storyId: string }) {
   const MoIcon = mo.icon;
 
   return (
-    <section className="rounded-lg border bg-card p-4 shadow-soft">
+    <section className={headless ? undefined : "rounded-lg border bg-card p-4 shadow-soft"}>
       {/* `font-sans`: a tracked-uppercase kicker, not a headline — it opts out of the h1–h3
-          display-face default so it matches every other kicker on the page. */}
-      <h2 className="inline-flex items-center gap-1.5 font-sans text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        <Activity className="h-4 w-4" /> {t("storyIntel.title")}
-      </h2>
+          display-face default so it matches every other kicker on the page.
+          `headless`: the collapsible panel that wraps this on a phone already carries the name and
+          the surface, so the kicker and the card chrome would be the same thing said twice. */}
+      {!headless && (
+        <h2 className="inline-flex items-center gap-1.5 font-sans text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          <Activity className="h-4 w-4" /> {t("storyIntel.title")}
+        </h2>
+      )}
 
       {/* Status: lifecycle + momentum. The freshness badge lives in the hero — repeating it here
           said "Breaking" twice whenever the band and the lifecycle stage coincided, which for a

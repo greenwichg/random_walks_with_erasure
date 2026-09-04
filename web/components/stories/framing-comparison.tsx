@@ -22,18 +22,24 @@ import { useTranslation } from "@/lib/i18n";
  * meaning never depends on colour alone. Reads recorded here go through the same ReadArticleButton
  * pipeline as every other surface.
  */
-export function FramingComparison({ coverage }: { coverage: StoryCoverage[] }) {
+export function FramingComparison({ coverage, headless = false }: { coverage: StoryCoverage[];
+  /** Rendered inside the mobile page's collapsible panel, which supplies the heading and the
+   *  surface — so this drops its own and renders content only. */
+  headless?: boolean;
+}) {
   const { t, timeAgo } = useTranslation();
   const sides = framingComparison(coverage);
   if (!sides) return null;
 
   return (
-    <section aria-labelledby="framing-heading">
-      <SectionHeader
-        id="framing-heading"
-        title={t("stories.framing.title")}
-        eyebrow={t("stories.framing.eyebrow")}
-      />
+    <section aria-labelledby={headless ? undefined : "framing-heading"}>
+      {!headless && (
+        <SectionHeader
+          id="framing-heading"
+          title={t("stories.framing.title")}
+          eyebrow={t("stories.framing.eyebrow")}
+        />
+      )}
       <ul className={`grid gap-3 sm:grid-cols-2 ${sides.length === 3 ? "lg:grid-cols-3" : ""}`}>
         {sides.map(({ side, row, count }) => {
           const meta = LEAN_META[side];

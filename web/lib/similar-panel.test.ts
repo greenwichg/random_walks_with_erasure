@@ -56,11 +56,15 @@ test("the story page shows it instead of Picked for you — on desktop", () => {
   // The swap was specified for the desktop story view, so it is made by mounting one composition
   // or the other — not by a CSS class that hides a mounted tree, which would run both queries.
   assert.ok(PAGE.includes("useIsDesktop"), "the page does not choose a composition by viewport");
-  assert.ok(/desktop && \(\s*(?:<>\s*)?<SimilarStoriesPanel/.test(PAGE), "the card is not gated to desktop");
-  // …and the desktop rail reads stories first, then the topics that open onto more of them.
+  // The card sits inside the page's desktop-gated branch, above the mobile stack that follows it.
+  const gate = PAGE.indexOf("desktop ? (");
   const card = PAGE.indexOf("<SimilarStoriesPanel");
+  const stack = PAGE.indexOf("<StorySections>");
+  assert.ok(gate > -1 && card > gate, "the card is not inside a desktop-gated branch");
+  assert.ok(stack > card, "the mobile stack must come after the desktop rail's card");
+  // …and the desktop rail reads stories first, then the topics that open onto more of them.
   const topics = PAGE.indexOf("<StoryTopics", card);
-  assert.ok(card > -1 && topics > card, "Similar news topics must follow the card on desktop");
+  assert.ok(topics > card && topics < stack, "Related Topics must follow the card on desktop");
 });
 
 test("below `lg`, the horizontal rail is the Similar Stories surface", () => {
@@ -68,18 +72,43 @@ test("below `lg`, the horizontal rail is the Similar Stories surface", () => {
     "the horizontal rail is mobile's Similar Stories surface and must still exist");
   // `SimilarStoriesPanel` shares the prefix, so match the element name exactly.
   assert.ok(/<SimilarStories(?![A-Za-z])/.test(PAGE), "the rail is no longer rendered anywhere");
-  assert.ok(/desktop === false && \(\s*<SimilarStories(?![A-Za-z])/.test(PAGE),
-    "the rail must render below `lg` only — on desktop it would repeat the card");
-  // …and below `lg` the topics sit in the flow between the coverage list and that rail, so the
-  // phone reads coverage → what this is about → what else covers it.
-  const list = PAGE.indexOf("<CoverageList");
-  const topics = PAGE.indexOf("{desktop === false && <StoryTopics", list);
-  const rail = PAGE.indexOf("desktop === false && (", list);
-  assert.ok(topics > list && rail > topics,
-    "below `lg`, Similar news topics belongs between the coverage list and the Similar Stories rail");
-  // One mount per viewport — the section must never render twice on the same page.
-  assert.equal(PAGE.split("<StoryTopics").length - 1, 2,
-    "exactly two gated instances: one per composition");
+  // It lives in the mobile stack, which is the page's other branch — never beside the card.
+  const stack = PAGE.indexOf("<StorySections>");
+  const rail = PAGE.search(/<SimilarStories(?![A-Za-z])/);
+  assert.ok(stack > -1 && rail > stack,
+    "the rail must render inside the mobile stack — on desktop it would repeat the card");
+  // …and below `lg` the sections read coverage → what this is about → what else covers it.
+  const at = (needle: string) => PAGE.indexOf(needle, stack);
+  assert.ok(at('id="story-coverage"') < at('id="story-topics"'), "coverage comes before topics");
+  assert.ok(at('id="story-topics"') < at('id="story-similar"'), "topics come before similar stories");
+  // One mount per viewport — no module may render twice on the same page.
+  assert.equal(PAGE.split("<StoryTopics").length - 1, 2, "one StoryTopics per composition");
+  assert.equal(PAGE.split("<CoverageList").length - 1, 2, "one CoverageList per composition");
+});
+
+test("every mobile section is a collapsible panel over a headless module", () => {
+  const stack = PAGE.indexOf("<StorySections>");
+  assert.ok(stack > -1, "the mobile stack is gone");
+  // A panel supplies the heading, the description and the collapse; the module inside it must
+  // therefore drop its own heading, or the section says its name twice.
+  const tail = PAGE.slice(stack);
+  for (const el of [
+    "<StoryIntelligencePanel",
+    "<StoryBreakdown",
+    "<FramingComparison",
+    "<CoverageList",
+    "<StoryTopics",
+    "<SimilarStories",
+  ]) {
+    const i = tail.indexOf(el);
+    assert.ok(i > -1, `${el} is not in the mobile stack`);
+    assert.ok(/headless/.test(tail.slice(i, i + 260)), `${el} must render headless in a panel`);
+  }
+  // Every panel carries a description — the line that makes a collapsed section legible.
+  const SECTION = readFileSync(join(WEB, "components", "stories", "story-section.tsx"), "utf8");
+  assert.ok(/description: string;/.test(SECTION), "the description must be required, not optional");
+  assert.equal((PAGE.match(/description=\{t\("story\.section\./g) ?? []).length, 6,
+    "all six sections must describe themselves");
 });
 
 test("the story page carries no personalised feed on either viewport", () => {

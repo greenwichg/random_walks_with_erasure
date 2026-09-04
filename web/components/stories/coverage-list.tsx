@@ -54,7 +54,11 @@ const STEP = 15;
  * filters at rest — an attached row carries no lean, so a lean chip that surfaced it would be
  * fabricating the very fact the row honestly lacks.
  */
-export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
+export function CoverageList({ coverage, headless = false }: { coverage: StoryCoverage[];
+  /** Rendered inside the mobile page's collapsible panel, which supplies the heading and the
+   *  surface — so this drops its own and renders content only. */
+  headless?: boolean;
+}) {
   const { t, timeAgo, formatCompact } = useTranslation();
   const [lean, setLean] = React.useState<"all" | LeanBucket>("all");
   const [register, setRegister] = React.useState<"all" | Register>("all");
@@ -124,8 +128,8 @@ export function CoverageList({ coverage }: { coverage: StoryCoverage[] }) {
   };
 
   return (
-    <section aria-labelledby="coverage-list-heading">
-      <SectionHeader id="coverage-list-heading" title={t("stories.coverageAcross")} />
+    <section aria-labelledby={headless ? undefined : "coverage-list-heading"}>
+      {!headless && <SectionHeader id="coverage-list-heading" title={t("stories.coverageAcross")} />}
 
       <div
         role="toolbar"

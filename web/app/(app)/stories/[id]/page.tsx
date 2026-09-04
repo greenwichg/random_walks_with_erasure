@@ -21,8 +21,10 @@ import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
 import { StoryTopics } from "@/components/stories/story-topics";
 import { MAX_CARDS, SimilarStoriesPanel } from "@/components/stories/similar-stories-panel";
 import { SimilarStories } from "@/components/stories/similar-stories";
+import { StorySection, StorySections } from "@/components/stories/story-section";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
+import { framingComparison } from "@ih/core/logic/framing";
 import { track, urlHost } from "@/lib/analytics";
 import { useTranslation } from "@/lib/i18n";
 import { useIsDesktop } from "@/lib/use-is-desktop";
@@ -170,6 +172,11 @@ export default function StoryDetailPage() {
   // the register split or framing would undo engine-side containment one .map() at a time. The
   // full list — members THEN the labeled addenda — belongs to CoverageList alone.
   const { panel: panelCoverage } = splitCoverage(story.coverage);
+  // Asked here because the mobile stack draws a section's chrome BEFORE its module runs: both of
+  // these modules return null on their own when they have nothing, which inside a panel would
+  // leave a heading and a description describing an empty box.
+  const hasFraming = framingComparison(panelCoverage) !== null;
+  const hasTopics = (story.tags ?? []).length > 0;
   const publisherCount = story.publisherCount ?? new Set(panelCoverage.map((c) => c.publisher)).size;
   const showHero = Boolean(story.image) && !heroFailed;
 
@@ -183,10 +190,12 @@ export default function StoryDetailPage() {
 
       <PageGrid
         rail={
-          /* Companion rail: how is this story MOVING, how balanced is it, who's on it, what next
-             for YOU. Story Intelligence leads because "is this still developing?" is the question a
-             reader asks before "is the coverage balanced?" — and because it was previously below a
-             40-row article list, at a scroll depth almost nobody reached. */
+          /* DESKTOP's companion rail: how is this story MOVING, how balanced is it, what next.
+             Story Intelligence leads because "is this still developing?" is the question a reader
+             asks before "is the coverage balanced?".
+             BELOW `lg` there is no rail at all — the same modules are the collapsible stack in the
+             flow below, so passing the rail here too would mount every one of them twice. */
+          desktop ? (
           <>
             <StoryIntelligencePanel storyId={story.id} />
             {/* ONE breakdown card, three tabs (Bias · Factuality · Ownership) — this instance IS
@@ -205,24 +214,19 @@ export default function StoryDetailPage() {
                 similar-stories surface, so the deleted rail's three-state discipline (loading,
                 failure, stated absence) lives here with the query state it needs. Below `lg` the
                 horizontal rail at the foot of the page answers the same question. */}
-            {desktop && (
-              <>
-                <SimilarStoriesPanel
-                  story={story}
-                  similar={related}
-                  isLoading={similar.isLoading}
-                  isError={similar.isError}
-                  onRetry={() => similar.refetch()}
-                />
-                {/* What this story is ABOUT — the engine's ranked tags, each one a way into the
-                    other stories carrying it (story-topics.tsx). Under the card, because stories a
-                    reader can open are the direct answer and topics are the wider way out of the
-                    event. Below `lg` this section is in the flow instead, between the coverage
-                    list and the Similar Stories rail — SAME component, mounted once either way. */}
-                <StoryTopics story={story} />
-              </>
-            )}
+            <SimilarStoriesPanel
+              story={story}
+              similar={related}
+              isLoading={similar.isLoading}
+              isError={similar.isError}
+              onRetry={() => similar.refetch()}
+            />
+            {/* What this story is ABOUT — the engine's ranked tags, each one a way into the other
+                stories carrying it (story-topics.tsx). Under the card, because stories a reader can
+                open are the direct answer and topics are the wider way out of the event. */}
+            <StoryTopics story={story} />
           </>
+          ) : undefined
         }
         lead={
           /* The hero is the grid's `lead` rather than the first of `children`, which is what lets
@@ -318,31 +322,85 @@ export default function StoryDetailPage() {
           </>
         }
       >
-          {/* Same event, side by side — the juxtaposition the filterable list below can never show.
-              Renders nothing unless at least two rated sides actually wrote (lib/framing.ts). */}
-          <FramingComparison coverage={panelCoverage} />
+          {desktop ? (
+            <>
+              {/* Same event, side by side — the juxtaposition the filterable list below can never
+                  show. Renders nothing unless at least two rated sides actually wrote. */}
+              <FramingComparison coverage={panelCoverage} />
 
-          {/* How is it covered — every article, filterable by the facets the data really has. */}
-          <CoverageList coverage={story.coverage} />
+              {/* How is it covered — every article, filterable by the facets the data really has. */}
+              <CoverageList coverage={story.coverage} />
+            </>
+          ) : (
+            /* THE PHONE'S WHOLE STORY PAGE, as a stack of collapsible sections (story-section.tsx).
+               Same six modules, same data, same interactions — each now behind a title and a line
+               saying what it holds, so the page opens as a table of contents for itself instead of
+               a scroll in which the publisher list is forty rows below the fold.
+               Each module renders `headless`: the panel owns the heading and the surface, so the
+               module contributes content only and cannot say its own name twice.
+               A section whose module would render nothing is not offered at all — a title and a
+               description promising a comparison that does not exist is worse than a shorter page,
+               and the modules that self-hide (framing, topics) are exactly the ones this must ask
+               about before drawing their chrome. */
+            <StorySections>
+              <StorySection
+                id="story-intel"
+                title={t("storyIntel.title")}
+                description={t("story.section.intel")}
+              >
+                <StoryIntelligencePanel storyId={story.id} headless />
+              </StorySection>
 
-          {/* BELOW `lg` only: the topics sit in the flow rather than the rail, so the phone reads
-              coverage → what this is about → what else covers it. Desktop keeps them in the
-              companion column under the card; the gate is what stops the section rendering twice. */}
-          {desktop === false && <StoryTopics story={story} />}
+              <StorySection
+                id="story-breakdown"
+                title={t("story.breakdown")}
+                description={t("story.section.breakdown")}
+              >
+                <StoryBreakdown story={story} headless />
+              </StorySection>
 
-          {/* What to read next, BELOW `lg` only — the engine's ranked same-event selection as a
-              collapsible rail (similar-stories.tsx). It states an empty result instead of
-              disappearing, so a story with genuinely nothing related reads as a decision rather
-              than as a broken section. On desktop the rail card above IS this answer, and a second
-              copy of it at the foot of the page would show the reader the same four stories
-              twice. */}
-          {desktop === false && (
-            <SimilarStories
-              stories={related}
-              isLoading={similar.isLoading}
-              isError={similar.isError}
-              onRetry={() => similar.refetch()}
-            />
+              {hasFraming && (
+                <StorySection
+                  id="story-framing"
+                  title={t("stories.framing.title")}
+                  description={t("story.section.framing")}
+                >
+                  <FramingComparison coverage={panelCoverage} headless />
+                </StorySection>
+              )}
+
+              <StorySection
+                id="story-coverage"
+                title={t("stories.coverageAcross")}
+                description={t("story.section.coverage")}
+              >
+                <CoverageList coverage={story.coverage} headless />
+              </StorySection>
+
+              {hasTopics && (
+                <StorySection
+                  id="story-topics"
+                  title={t("story.topics")}
+                  description={t("story.section.topics")}
+                >
+                  <StoryTopics story={story} headless />
+                </StorySection>
+              )}
+
+              <StorySection
+                id="story-similar"
+                title={t("story.related")}
+                description={t("story.section.similar")}
+              >
+                <SimilarStories
+                  stories={related}
+                  isLoading={similar.isLoading}
+                  isError={similar.isError}
+                  onRetry={() => similar.refetch()}
+                  headless
+                />
+              </StorySection>
+            </StorySections>
           )}
       </PageGrid>
     </PageContainer>

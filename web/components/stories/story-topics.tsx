@@ -29,7 +29,11 @@ import { useTranslation } from "@/lib/i18n";
  *  carry the specific entities without the category tail that ranks below them. */
 export const INITIAL_TOPICS = 6;
 
-export function StoryTopics({ story }: { story: Story }) {
+export function StoryTopics({ story, headless = false }: { story: Story;
+  /** Rendered inside the mobile page's collapsible panel, which supplies the heading and the
+   *  surface — so this drops its own and renders content only. */
+  headless?: boolean;
+}) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
   const tags = story.tags ?? [];
@@ -44,12 +48,14 @@ export function StoryTopics({ story }: { story: Story }) {
 
   const shown = expanded ? tags : tags.slice(0, INITIAL_TOPICS);
   return (
-    <section aria-labelledby="story-topics-heading">
-      <h2 id="story-topics-heading" className="text-[22px] font-bold leading-tight tracking-tight sm:text-2xl">
-        {t("story.topics")}
-      </h2>
+    <section aria-labelledby={headless ? undefined : "story-topics-heading"}>
+      {!headless && (
+        <h2 id="story-topics-heading" className="text-[22px] font-bold leading-tight tracking-tight sm:text-2xl">
+          {t("story.topics")}
+        </h2>
+      )}
       <TopicList
-        labelledBy="story-topics-heading"
+        labelledBy={headless ? undefined : "story-topics-heading"}
         items={shown.map((tag) => ({
           value: tag.name,
           label: tag.label,

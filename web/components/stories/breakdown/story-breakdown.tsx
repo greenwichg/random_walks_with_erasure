@@ -44,17 +44,32 @@ const TAB_META: Record<Tab, { labelKey: string; infoKey: string }> = {
   ownership: { labelKey: "story.ownership", infoKey: "story.ownershipInfo" },
 };
 
-export function StoryBreakdown({ story }: { story: Story }) {
+export function StoryBreakdown({ story, headless = false }: { story: Story;
+  /** Rendered inside the mobile page's collapsible panel, which supplies the heading and the
+   *  surface — so this drops its own and renders content only. */
+  headless?: boolean;
+}) {
   const { t } = useTranslation();
   const [tab, setTab] = React.useState<Tab>("bias");
   const coverage = React.useMemo(() => splitCoverage(story.coverage).panel, [story.coverage]);
 
   return (
-    <section aria-labelledby="story-breakdown-heading" className="rounded-lg border bg-card p-4">
-      <div className="mb-3 flex items-center gap-1.5">
-        <SectionHeader id="story-breakdown-heading" title={t("story.breakdown")} className="mb-0" />
-        <InfoTooltip text={t(TAB_META[tab].infoKey)} />
-      </div>
+    <section
+      aria-labelledby={headless ? undefined : "story-breakdown-heading"}
+      className={headless ? undefined : "rounded-lg border bg-card p-4"}
+    >
+      {/* `headless`: the mobile panel supplies the heading and the surface. The tab's own
+          explanation is not chrome, so it stays — it moves in beside the tablist. */}
+      {headless ? (
+        <div className="mb-3 flex justify-end">
+          <InfoTooltip text={t(TAB_META[tab].infoKey)} />
+        </div>
+      ) : (
+        <div className="mb-3 flex items-center gap-1.5">
+          <SectionHeader id="story-breakdown-heading" title={t("story.breakdown")} className="mb-0" />
+          <InfoTooltip text={t(TAB_META[tab].infoKey)} />
+        </div>
+      )}
 
       {/* Roving-free tablist: three targets, arrow keys move between them, and the panel below is
           labelled by the active tab so a screen reader hears which breakdown it is reading. */}
