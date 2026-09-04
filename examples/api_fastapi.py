@@ -3041,6 +3041,11 @@ def story_similar(
         description="override the similarity floor for THIS request — a probe for choosing the "
                     "deployment's RWE_STORY_SIMILAR_MIN against real titles",
     ),
+    debug: bool = Query(
+        False,
+        description="return the score distribution with NO floor applied, instead of cards — the "
+                    "numbers a floor has to be chosen against on THIS catalog",
+    ),
 ) -> dict:
     """Similarity, not adjacency. Scored with the clusterer's own measure — IDF-weighted Jaccard
     over each story's whole profile (title, summary and every coverage headline) — and floored at
@@ -3057,6 +3062,11 @@ def story_similar(
     admits, and set ``RWE_STORY_SIMILAR_MIN`` from evidence. Read-only and per-request — it changes
     nothing for anyone else."""
     st = _require_store()
+    if debug:
+        diag = story_service.similar_diagnostics(st, story_id)
+        if diag is None:
+            raise HTTPException(status_code=404, detail="Story not found.")
+        return {"stories": [], "total": 0, "debug": diag}
     found = story_service.similar_stories(st, story_id, limit=limit, min_score=minScore)
     if found is None:
         raise HTTPException(status_code=404, detail="Story not found.")

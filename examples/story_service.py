@@ -4053,6 +4053,68 @@ def similar_stories(store_, story_id: str, *, limit: int = 10, min_score: Option
     return [s for _, s in scored[:max(0, limit)]]
 
 
+def similar_diagnostics(store_, story_id: str, *, top: int = 8, max_scan: int = None,
+                        min_articles: int = 2, min_publishers: int = 2) -> Optional[dict]:
+    """The score distribution behind :func:`similar_stories`, with NO floor applied. ``None`` if the
+    id is gone.
+
+    Exists because an absolute similarity floor does not transfer between catalogs, and shipping
+    one that did not was this feature's second bug. Weighted Jaccard is ``w / (Ta + Tb - w)``: both
+    totals grow with how many coverage headlines a story carries, and the IDF weight
+    ``log(1 + N/df)`` grows with catalog size, so the same relationship scores 0.32-0.77 across nine
+    short demo profiles and an order of magnitude lower across sixty production ones. A floor
+    calibrated on the first is meaningless on the second — which is what emptied the rail.
+
+    So this reports the numbers a floor has to be chosen against: profile sizes, and the top pairs
+    ranked with the floors ignored. Runs in the SERVING process against the warm cached build, so
+    it costs no clustering — the reason it is an endpoint rather than a `docker exec` snippet,
+    which would start cold and force a full rebuild on the request path."""
+    stories = _cached_build(store_, topic=None, date_from=None, date_to=None, max_scan=max_scan,
+                            min_articles=min_articles, min_publishers=min_publishers)
+    target = None
+    for s in stories:
+        if s["id"] == story_id:
+            target = s
+            break
+    if target is None:
+        return None
+    others = [s for s in stories if s["id"] != story_id]
+    tp = _similar_profile(target)
+    profiles = [_similar_profile(s) for s in others]
+    weights = clustering.idf_weights([tp] + profiles)
+    tt = sum(weights.get(t, 1.0) for t in tp)
+
+    rows = []
+    for s, p in zip(others, profiles):
+        inter = tp & p
+        w = sum(weights.get(t, 1.0) for t in inter)
+        den = tt + sum(weights.get(t, 1.0) for t in p) - w
+        rows.append(((w / den) if den else 0.0, len(inter), len(p), s))
+    rows.sort(key=lambda r: -r[0])
+    sizes = sorted(len(p) for p in profiles) or [0]
+    scores = sorted((r[0] for r in rows), reverse=True) or [0.0]
+
+    def at(frac: float) -> float:
+        return round(scores[min(len(scores) - 1, int(frac * (len(scores) - 1)))], 4)
+
+    return {
+        "candidates": len(others),
+        "targetProfileTokens": len(tp),
+        "targetTotalWeight": round(tt, 2),
+        "candidateProfileTokens": {"min": sizes[0], "median": sizes[len(sizes) // 2], "max": sizes[-1]},
+        "floorInEffect": similar_min_score(),
+        "minSharedInEffect": clustering.MIN_SHARED_TOKENS,
+        # The shape a floor must be chosen against: best first, then where the mass sits.
+        "scoreQuantiles": {"max": at(0.0), "p90": at(0.1), "p50": at(0.5), "min": round(scores[-1], 4)},
+        "top": [
+            {"score": round(sc, 4), "shared": sh, "profileTokens": pt,
+             "title": (s.get("title") or "")[:90], "topic": s.get("topic"),
+             "coverage": s.get("totalCoverage")}
+            for sc, sh, pt, s in rows[:max(0, top)]
+        ],
+    }
+
+
 def _diagnostics(stories: list, cluster_ms: float) -> dict:
     sizes = sorted((s["totalCoverage"] for s in stories), reverse=True)
     dist: dict = {}
