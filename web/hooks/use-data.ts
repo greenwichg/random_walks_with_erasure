@@ -158,17 +158,10 @@ export function useAnalyzeUrl() {
   });
 }
 
-/**
- * The reader's ranked feed. `enabled` exists for the surfaces that render it on ONE viewport only —
- * the story page shows "Picked for you" below `lg` and the Similar Stories card above it, and a
- * hook cannot be called conditionally, so the query is switched off rather than skipped. A desktop
- * reader then never pays for a feed that page does not render.
- */
-export const useRecommendations = (strategy?: Recommendation["strategy"], enabled = true) =>
+export const useRecommendations = (strategy?: Recommendation["strategy"]) =>
   useQuery({
     queryKey: queryKeys.recommendations(strategy),
     queryFn: () => services.recommendations(strategy),
-    enabled,
   });
 
 /** The evidence behind the card's "Why?" drawer (21a.2). Lazy by design (D1): fetched only when

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, EyeOff, Newspaper, Users } from "lucide-react";
-import { useRecommendations, useSimilarStories, useStory } from "@/hooks/use-data";
+import { useSimilarStories, useStory } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageGrid } from "@/components/layout/page-grid";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
@@ -21,7 +21,6 @@ import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
 import { StoryTopics } from "@/components/stories/story-topics";
 import { MAX_CARDS, SimilarStoriesPanel } from "@/components/stories/similar-stories-panel";
 import { SimilarStories } from "@/components/stories/similar-stories";
-import { RecommendationPanel } from "@/components/home/recommendation-panel";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
 import { track, urlHost } from "@/lib/analytics";
@@ -40,11 +39,17 @@ const fmtDate = (iso?: string) =>
  * zero-side callouts), and what to read next (the engine's ranked similar stories).
  *
  * TWO COMPOSITIONS, ONE PAGE. The Similar Stories card in the companion rail is the DESKTOP story
- * view's answer to "what else covers this", and was specified for that view alone; below `lg` the
- * page is unchanged — "Picked for you" keeps the rail slot and the horizontal Similar Stories rail
- * still closes the page. `useIsDesktop` mounts exactly one of the two, the same way the home page
- * picks between its desktop and mobile compositions, so neither viewport pays for the other's
- * components or the other's queries.
+ * view's answer to "what else covers this", and was specified for that view alone; below `lg` that
+ * question is answered by the horizontal rail (similar-stories.tsx) which still closes the page.
+ * `useIsDesktop` decides, the same way the home page picks between its desktop and mobile
+ * compositions, so neither viewport mounts the other's components.
+ *
+ * NEITHER viewport carries a personalised feed any more. "Picked for you" held the rail slot on
+ * both; the card replaced it on desktop, and on mobile it was removed outright rather than
+ * replaced. That is a deliberate narrowing of what a STORY page is for: everything left on it is
+ * about this event — how it is covered, what it is about, what else covers it — and the reader's
+ * own feed has its own surface to be on. The query went with the card, so no viewport fetches a
+ * feed it does not render.
  *
  * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the Similar
  * Stories surfaces — ONE ranked query that returns at most MAX_CARDS stories. This page still does not
@@ -72,9 +77,6 @@ export default function StoryDetailPage() {
   // "Trump". Re-ranking cannot repair a candidate pool chosen that way, and widening the pool here
   // would mean fetching the 60-story list this page deliberately does not fetch.
   const similar = useSimilarStories(id, MAX_CARDS);
-  // Mobile only, and switched off elsewhere rather than skipped: the desktop rail shows Similar
-  // Stories in this slot, and must not fetch a feed it will not render.
-  const recommendations = useRecommendations(undefined, desktop === false);
   // A hero that errors mid-load hands the slot to the coverage masthead, exactly like absence —
   // but counted separately (story_hero_error), because the engine never downloads images and a
   // dead or hotlink-protected URL is only observable here. Reset if a refetch changes the URL.
@@ -197,34 +199,27 @@ export default function StoryDetailPage() {
             {/* No per-publisher tally here: the coverage list below names every publisher with its
                 own headline and lean, and the breakdown above already carries the aggregate shape.
                 A ranked repeat of the same names said nothing the page had not said twice. */}
-            {/* The tail of the rail is where the two viewports differ, ORDER INCLUDED.
-                DESKTOP: "Similar Stories" in the shell "Picked for you" established — it takes that
-                card's place, because on a story page "what else covers this" is the story's own
-                question where a personalised feed is about the reader and has its own surface — and
-                it is this viewport's ONLY similar-stories surface, so the removed rail's three-state
-                discipline (loading, failure, stated absence) lives here with the query state it
-                needs. "Similar news topics" then follows it: stories first, then the topics that
-                open onto more of them, which is the narrower way in.
-                BELOW `lg`: unchanged — topics keep their place above the reader's own feed. */}
-            {desktop ? (
-              <>
-                <SimilarStoriesPanel
-                  story={story}
-                  similar={related}
-                  isLoading={similar.isLoading}
-                  isError={similar.isError}
-                  onRetry={() => similar.refetch()}
-                />
-                {/* What this story is ABOUT — the engine's ranked tags, each one a way into the
-                    other stories carrying it (story-topics.tsx). */}
-                <StoryTopics story={story} />
-              </>
-            ) : (
-              <>
-                <StoryTopics story={story} />
-                {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
-              </>
+            {/* DESKTOP ONLY: "Similar Stories" in the shell "Picked for you" established — it took
+                that card's place, because on a story page "what else covers this" is the story's own
+                question where a personalised feed is about the reader. It is this viewport's ONLY
+                similar-stories surface, so the deleted rail's three-state discipline (loading,
+                failure, stated absence) lives here with the query state it needs. Below `lg` the
+                horizontal rail at the foot of the page answers the same question. */}
+            {desktop && (
+              <SimilarStoriesPanel
+                story={story}
+                similar={related}
+                isLoading={similar.isLoading}
+                isError={similar.isError}
+                onRetry={() => similar.refetch()}
+              />
             )}
+            {/* What this story is ABOUT — the engine's ranked tags, each one a way into the other
+                stories carrying it (story-topics.tsx). It closes the rail on both viewports: on
+                desktop under the card, because stories a reader can open are the direct answer and
+                topics are the wider way out of the event; below `lg` it is simply the last thing
+                in the rail, where "Picked for you" used to follow it. */}
+            <StoryTopics story={story} />
           </>
         }
         lead={
