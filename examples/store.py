@@ -1177,6 +1177,41 @@ class StoryMember(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
+class StoryTag(Base):
+    """story id -> a topic/entity that story is about, with provenance and confidence.
+
+    The story-level projection of :class:`ArticleEntity`, computed by ``story_tags`` from the same
+    corroborated, identity-denoised names the entity channel already reads per article. Nothing
+    here is a new extraction: a tag exists because >= 2 of a story's members carried the name, or
+    because a strongly-related story carried it and this story's own text corroborates it.
+
+    **The same contract as :class:`StoryMember`, deliberately.** Rewritten wholesale on each build
+    from the CURRENT window, which prunes it for free — a story outside the window is not being
+    served, so its tags are not worth keeping. No foreign key, and no influence on clustering,
+    membership, ids, ranking or any trust signal: this table is read to ANSWER questions about
+    stories, never to decide what a story is. A build that cannot write it serves tags from memory
+    exactly as before; the table is the durable copy, not the source of truth.
+
+    Denormalised on purpose. ``label`` is the display form and ``source``/``score`` the evidence,
+    all three already computed at build time — storing them costs a few bytes per row and saves
+    every reader of this table (a tag page, the API, a future recommender) from re-deriving them
+    and disagreeing about the answer.
+    """
+
+    __tablename__ = "story_tag"
+
+    story_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    #: Normalised name — lower-cased and whitespace-collapsed, the ``ArticleEntity.name`` form, so
+    #: a join against the article rows needs no re-normalization.
+    tag: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+    label: Mapped[str] = mapped_column(String(255))
+    #: ``direct`` (this story's own members corroborated it), ``inherited`` (a strongly-related
+    #: story carried it and this story's text corroborates it), or ``topic`` (the category).
+    source: Mapped[str] = mapped_column(String(16), index=True)
+    score: Mapped[float] = mapped_column(default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
 class AnalyticsEvent(Base):
     """A single product-analytics event (PA1) — the raw material for the activation funnel + metrics.
 
@@ -2853,6 +2888,66 @@ class Store:
                 s.bulk_save_objects([StoryMember(url=u, story_id=sid, updated_at=now)
                                      for u, sid in mapping.items()])
         return len(mapping)
+
+    def replace_story_tags(self, tags_by_story: dict) -> int:
+        """Replace the whole story -> tags map with the current build's; returns rows written.
+
+        Wholesale and in one transaction, for :meth:`replace_story_members`' reasons exactly: a
+        story outside the current window is not being served, so keeping its tags would grow the
+        table without bound, and a torn write would leave some stories described by this build and
+        others by the last one.
+
+        ``tags_by_story`` is ``{story_id: [{name, label, source, score}, …]}`` — the shape
+        ``story_tags`` produces, consumed as-is so the two cannot drift."""
+        rows = []
+        now = _utcnow()
+        for sid, tags in (tags_by_story or {}).items():
+            for tag in tags:
+                name = (tag.get("name") or "").strip()
+                if not sid or not name:
+                    continue
+                rows.append(StoryTag(story_id=sid, tag=name[:255],
+                                     label=(tag.get("label") or name)[:255],
+                                     source=(tag.get("source") or "direct")[:16],
+                                     score=float(tag.get("score") or 0.0), updated_at=now))
+        with self.session() as s:
+            s.execute(delete(StoryTag))
+            if rows:
+                s.bulk_save_objects(rows)
+        return len(rows)
+
+    def story_tags(self, story_ids=None) -> dict:
+        """``story_id -> [{name, label, source, score}]``, best first.
+
+        The whole table by default: it is bounded by the clustering window for the same reason
+        :meth:`story_member_ids` loads all of its own, and a caller that wants one story's tags is
+        usually about to want its neighbours' too."""
+        q = select(StoryTag.story_id, StoryTag.tag, StoryTag.label, StoryTag.source, StoryTag.score)
+        if story_ids is not None:
+            ids = [i for i in story_ids if i]
+            if not ids:
+                return {}
+            q = q.where(StoryTag.story_id.in_(ids))
+        out: dict = {}
+        with self.session() as s:
+            for sid, name, label, source, score in s.execute(q).all():
+                out.setdefault(sid, []).append(
+                    {"name": name, "label": label, "source": source, "score": float(score or 0.0)})
+        for rows in out.values():
+            rows.sort(key=lambda r: (-r["score"], r["name"]))
+        return out
+
+    def stories_for_tag(self, tag: str, *, limit: int = 200) -> list:
+        """Story ids carrying ``tag``, strongest association first — the retrieval half of the
+        projection, so "other stories about this" is an indexed lookup rather than a scan over
+        every story's tag list."""
+        name = (tag or "").strip().lower()
+        if not name:
+            return []
+        with self.session() as s:
+            return [sid for sid, in s.execute(
+                select(StoryTag.story_id).where(StoryTag.tag == name)
+                .order_by(StoryTag.score.desc(), StoryTag.story_id).limit(max(0, limit))).all()]
 
     def catalog_publishers(self, *, limit: "int | None" = None) -> list:
         """Distinct publisher names in the catalog, most-published first — the enrichment worklist.

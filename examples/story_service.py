@@ -37,6 +37,7 @@ import media                      # centralised hero-image selection (additive; 
 import obs_metrics                # OBS1 counters (stdlib-only leaf) — stale serves land in /api/metrics
 import outlet_registry            # curated source identity — supplies the wire/news distinction
 import publisher_identity         # one outlet, one identity, whatever form the feed used
+import story_tags                 # the story-level projection of article_entities (topics/tags)
 from pagination import OffsetPagination
 
 SORTS = ("top", "latest", "oldest", "publishers")
@@ -1322,6 +1323,27 @@ def entity_noise(name: str) -> bool:
     return outlet_registry.resolve(name) is not None
 
 
+def tag_noise(name: str) -> bool:
+    """:func:`entity_noise`, MINUS the geography test — the noise contract for TOPICS/TAGS.
+
+    Same first two rules: a platform name and an outlet name are about the page or the press, not
+    about the event, and that is true whatever the name is being used for.
+
+    The third rule is not. ``entity_noise`` drops anything that resolves to a country because
+    geography is a SEPARATE clustering channel (``_geo_closures``) — a place arriving through the
+    entity channel there is a duplicate vote with none of the geo channel's guards, which is why
+    "united states" at df 638 had to go. A tag has no second channel and no vote to duplicate: the
+    place a story happens in is one of the most useful things to know about it, and dropping it
+    would delete "Democratic Republic of the Congo" from an outbreak story — the single most
+    specific tag it has.
+
+    Kept as a separate function rather than a parameter on the original because the two rules are
+    genuinely different, and a shared one with a flag would invite the next caller to guess."""
+    if name in ENTITY_NOISE_PLATFORMS:
+        return True
+    return outlet_registry.resolve(name) is not None
+
+
 def _located_consensus(members: list) -> "tuple[frozenset, int]":
     """``(top-vote countries, winning vote count)`` over MEMBER DICTS — the dup-merge pass's
     counterpart of the index-based closure in ``_geo_closures``, same vote semantics (one vote
@@ -2087,6 +2109,144 @@ def stabilize_ids(store_, stories: list) -> list:
     except Exception:
         pass
     return stories
+
+
+def story_tags_enabled() -> bool:
+    """Whether a served story carries its topics/tags. ON — ``RWE_STORY_TAGS=0`` turns it off.
+
+    On by default because a story without them is not wrong, it is silent: the Similar News Topics
+    rail simply has nothing to show, and every consumer of the projection (tag retrieval, the
+    ``tag`` filter, its facets) degrades to empty rather than to something misleading. The switch
+    exists so an operator can take the cost — one batched entity query and a wholesale table
+    rewrite per build — out of the path without a deploy."""
+    return os.environ.get("RWE_STORY_TAGS", "").strip().lower() not in {"0", "false", "no", "off"}
+
+
+#: Entity provenances a TAG may be built from: every kind the table holds, span rows included and
+#: unconditionally — which is a deliberate departure from :func:`entity_kinds`, so the reason is
+#: recorded here rather than inferred.
+#:
+#: ``entity_kinds`` gates spans behind :func:`entity_spans` because they feed CLUSTERING, where a
+#: weaker provenance can move an article between stories, change a story's id, or weld two events
+#: together. None of that is reachable from here: tags are computed after the build is finished and
+#: after identity, read by presentation and retrieval, and cannot alter a single membership. What
+#: they would lose to that gate is most of their evidence — the provider covers 17% of the window
+#: against the span reader's 65% — so a deployment with the clustering switch off would get tags on
+#: one story in six and no signal that the rest are simply unextracted.
+TAG_ENTITY_KINDS = ("person", "org", "span")
+
+#: Direct tags two stories must share before their relation is even scored for INHERITANCE. A
+#: blocking rule, not a quality bar: an all-pairs similarity over the window is quadratic (2,852
+#: production stories is four million pairs of set intersections, on every build), and two stories
+#: sharing no corroborated name are not going to clear the relation threshold anyway. Two rather
+#: than one for ``_merge_by_entities``' reason — one shared name can be a type-level responder
+#: agency, two independent ones is the signature of a shared subject.
+TAG_RELATION_MIN_SHARED = 2
+
+#: Relation strength a pair needs before any tag crosses it. Deliberately ABOVE the Similar
+#: Stories rail's own cut: showing a reader a card is a suggestion they can dismiss, and copying a
+#: tag asserts that a story is ABOUT something. The stricter bar is what keeps a tag from
+#: spreading outward through a chain of merely-plausible relations.
+TAG_RELATION_MIN_SCORE = 0.30
+
+
+def _tag_relations(stories: list, direct: dict) -> dict:
+    """``story id -> [(related id, strength)]`` for tag inheritance only.
+
+    Scored with the SAME measure the Similar Stories rail uses — IDF-weighted Jaccard over each
+    story's whole profile — so "strongly related" means one thing in this codebase and not two.
+    What differs is the candidate set and the bar: candidates are blocked on
+    :data:`TAG_RELATION_MIN_SHARED` shared direct tags, and the bar is
+    :data:`TAG_RELATION_MIN_SCORE` rather than the rail's relative cut, because a tag is an
+    assertion where a card is a suggestion."""
+    by_tag: dict = {}
+    for sid, tags in direct.items():
+        for tag in tags:
+            if tag["source"] == story_tags.SOURCE_DIRECT:
+                by_tag.setdefault(tag["name"], []).append(sid)
+
+    shared: dict = {}
+    for sids in by_tag.values():
+        # A name in a great many stories proposes nothing: it would make every pair a candidate
+        # and hand the quadratic cost straight back. `extract_tags` has already dropped the
+        # window's background names, so this only catches the next tier down.
+        if len(sids) > 40:
+            continue
+        for i in range(len(sids)):
+            for j in range(i + 1, len(sids)):
+                key = (sids[i], sids[j]) if sids[i] < sids[j] else (sids[j], sids[i])
+                shared[key] = shared.get(key, 0) + 1
+
+    candidates = [k for k, n in shared.items() if n >= TAG_RELATION_MIN_SHARED]
+    if not candidates:
+        return {}
+    by_id = {s["id"]: s for s in stories}
+    profiles = {sid: _similar_profile(by_id[sid]) for sid in by_id}
+    weights = clustering.idf_weights(list(profiles.values()))
+    totals = {sid: sum(weights.get(t, 1.0) for t in p) for sid, p in profiles.items()}
+
+    out: dict = {}
+    for a, b in candidates:
+        pa, pb = profiles.get(a), profiles.get(b)
+        if pa is None or pb is None:
+            continue
+        inter = pa & pb
+        w = sum(weights.get(t, 1.0) for t in inter)
+        den = totals[a] + totals[b] - w
+        score = (w / den) if den else 0.0
+        if score < TAG_RELATION_MIN_SCORE:
+            continue
+        out.setdefault(a, []).append((b, score))
+        out.setdefault(b, []).append((a, score))
+    return out
+
+
+def attach_tags(store_, stories: list) -> list:
+    """Attach each story's ranked topics/tags, and record the story -> tag map.
+
+    Applied HERE rather than inside ``build_stories`` for that function's stated reason: it is
+    pure, the whole suite depends on it staying so, and a tag is a property of the SERVED window
+    (its story frequencies, its relations) rather than of the input rows.
+
+    Ordered after :func:`stabilize_ids` on purpose — tags are keyed on the id a reader will see,
+    so computing them before identity would file them under an id nothing links to.
+
+    Fails soft in the two ways it can. Without ``article_entities`` (or with the query failing) a
+    story keeps only its category tag, which is the honest degradation: no evidence, no claims.
+    Without a writable table it still SERVES tags and simply does not persist them — the table is
+    the durable copy for callers outside a build, never the source of truth."""
+    if not stories or not story_tags_enabled():
+        return stories
+    entities = {}
+    try:
+        urls = [c.get("url") for s in stories for c in (s.get("coverage") or [])]
+        entities = store_.entities_for_urls(urls, kinds=TAG_ENTITY_KINDS) or {}
+    except Exception:
+        entities = {}
+    direct = story_tags.extract_tags(stories, entities, noise=tag_noise)
+    tags = story_tags.inherit_tags(stories, direct, _tag_relations(stories, direct))
+    try:
+        store_.replace_story_tags(tags)
+    except Exception:
+        pass
+    return [dict(s, tags=tags.get(s["id"], [])) for s in stories]
+
+
+def attach_tags_readonly(store_, stories: list) -> list:
+    """Tags for a FILTERED view, read from the table the unfiltered build wrote.
+
+    The identity split, for the identity reason. A filtered build sees a subset of the window, and
+    both halves of the ranking are properties of the whole: story frequency decides what counts as
+    background and how specific a name is. Recomputing over the subset would give the same story
+    different tags on the Technology page than on the front page — so a filtered view reports what
+    the full build concluded, or nothing."""
+    if not stories or not story_tags_enabled():
+        return stories
+    try:
+        stored = store_.story_tags([s["id"] for s in stories])
+    except Exception:
+        return stories
+    return [dict(s, tags=stored.get(s["id"], [])) for s in stories]
 
 
 def _profile(members: list) -> frozenset:
@@ -3596,6 +3756,15 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
                 stories = stabilize_ids(store_, stories)
             else:
                 stories = stabilize_ids_readonly(store_, stories)
+        # Topics/tags, on the same split and for the same reason: only the UNFILTERED build knows
+        # the window's story frequencies, which decide both what counts as a background name and
+        # how specific each one is, so only it computes and writes. A filtered view reports what
+        # the full build concluded rather than recomputing over its subset and describing the same
+        # story two different ways on two pages.
+        if topic is None and date_from is None and date_to is None:
+            stories = attach_tags(store_, stories)
+        else:
+            stories = attach_tags_readonly(store_, stories)
         # Tier B attachment (M4) runs LAST, in the parent, after identity: `stabilize_ids` has
         # already synced the member table from the pre-attachment coverage, so an attached row can
         # never become a "member" downstream — the ordering IS the containment proof. Parent-side
