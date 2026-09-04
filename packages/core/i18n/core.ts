@@ -1,12 +1,16 @@
 /**
  * i18n core (Commit 20) — the pure, dependency-free half of the localization system.
  *
- * No React, no DOM, no imports: everything here is a pure function of its arguments, so it is trivially
+ * No React, no DOM: everything here is a pure function of its arguments, so it is trivially
  * unit-testable (`node --test packages/core/i18n/core.test.ts`) and shared by the React `LanguageProvider`
  * (web/lib/i18n.tsx) and, later, the Expo app. Business logic never lives in translations — catalogs are strings only; this
  * module just looks them up, interpolates `{params}`, and maps the recommendation resolver's
  * structured explanation `type` to a localized sentence.
+ *
+ * Its one import is the message format next door, which is plain JavaScript for a reason the
+ * plural note below spells out.
  */
+import { expandPlurals } from "./message-format.js";
 
 export const SUPPORTED = ["en", "es", "fr", "de", "pt"] as const;
 export type Lang = (typeof SUPPORTED)[number];
@@ -32,164 +36,18 @@ export function normalizeLang(value: unknown): Lang {
 /* ------------------------------------------------------------------------ plural selection */
 
 /**
- * PLURALS — a minimal ICU `plural` subset, because English "1 stories" was showing in production
- * and the flat `{n}` substitution had no way to fix it.
+ * PLURALS live next door in `message-format.js`, as plain ESM JavaScript rather than TypeScript.
  *
- * A catalog value may write:
+ * Not a style choice: the same parser has to run in the web bundler, in Metro, AND in
+ * `web/scripts/check-i18n.mjs`, a bare Node script the Docker image build runs before Next is
+ * invoked. That image is Node 20, which cannot strip types, so importing a `.ts` from that script
+ * fails the build outright. Plain ESM is what lets the build gate and the runtime share ONE
+ * implementation — and the two hand-rolled parsers that preceded it had already drifted, both
+ * reading `other {are}` as an argument named `are`.
  *
- *     "{stories, plural, one {# story} other {# stories}}"
- *
- * `#` renders the count. Branch labels are the CLDR categories (`zero one two few many other`) or
- * an exact `=N` match, which wins over the category. A missing category falls back to `other`.
- *
- * Why a real message format and not `key.one` / `key.other` suffixes: several strings count TWO
- * things at once — "{stories} stories across {publishers} publishers" is the one that prompted
- * this — and a per-key suffix can only agree with one of them. Selection has to happen per
- * argument, inside the string, which is exactly what ICU's syntax is for. Nothing else from ICU is
- * supported (no `select`, no nested plurals, no number skeletons); those would be a parser, and
- * this catalog does not need one.
+ * `messageArgs` is re-exported here so callers have one import site for the i18n core.
  */
-
-/** `Intl.PluralRules` is not free to construct, and `t` runs on every render. */
-const RULES = new Map<string, Intl.PluralRules>();
-function rulesFor(lang: string): Intl.PluralRules | null {
-  const hit = RULES.get(lang);
-  if (hit) return hit;
-  try {
-    const made = new Intl.PluralRules(lang);
-    RULES.set(lang, made);
-    return made;
-  } catch {
-    return null; // an environment without the locale data: everything reads as `other`
-  }
-}
-
-/**
- * The count an argument carries, or NaN when it isn't one.
- *
- * A call site may pass a number (preferred — `t("storyCard.sources", { n: 4 })`) or a string a
- * caller already formatted. A formatted string only fails to parse once it has been compacted
- * ("1.2K"), and every count large enough to compact is `other` in all five supported languages,
- * which is where NaN lands anyway.
- */
-function countOf(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string" && value.trim() !== "") return Number(value);
-  return Number.NaN;
-}
-
-const PLURAL_HEAD = /^\{\s*(\w+)\s*,\s*plural\s*,/;
-const BRANCH_LABEL = /(=\d+|zero|one|two|few|many|other)\s*\{/g;
-
-/** Index of the `}` closing a `{` that opened just before `from`, or -1 if the braces never balance. */
-function closeBrace(str: string, from: number): number {
-  let depth = 1;
-  for (let j = from; j < str.length; j++) {
-    if (str[j] === "{") depth++;
-    else if (str[j] === "}" && --depth === 0) return j;
-  }
-  return -1;
-}
-
-/** Split a plural body into its `label {text}` branches, honouring braces inside a branch. */
-function branchesOf(body: string): Map<string, string> {
-  const out = new Map<string, string>();
-  BRANCH_LABEL.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = BRANCH_LABEL.exec(body))) {
-    const end = closeBrace(body, BRANCH_LABEL.lastIndex);
-    if (end === -1) break; // unbalanced — stop rather than invent a branch
-    out.set(m[1]!, body.slice(BRANCH_LABEL.lastIndex, end));
-    BRANCH_LABEL.lastIndex = end + 1;
-  }
-  return out;
-}
-
-/**
- * The argument names a message needs: its plain `{name}` placeholders, plus the argument each
- * plural block selects on.
- *
- * Exported because the build gate (web/scripts/check-i18n.mjs) and the catalog unit test both
- * check that the five languages agree on this set, and a message format deserves ONE parser. The
- * two hand-rolled regexes that came before this both read `other {are}` as an argument named
- * `are`, which is what a branch body looks like to something that isn't actually parsing.
- */
-export function messageArgs(template: string): Set<string> {
-  const out = new Set<string>();
-  const scan = (str: string) => {
-    let plain = "";
-    let i = 0;
-    while (i < str.length) {
-      const open = str.indexOf("{", i);
-      if (open === -1) {
-        plain += str.slice(i);
-        break;
-      }
-      const head = PLURAL_HEAD.exec(str.slice(open));
-      if (!head) {
-        plain += str.slice(i, open + 1);
-        i = open + 1;
-        continue;
-      }
-      out.add(head[1]!);
-      const bodyStart = open + head[0].length;
-      const end = closeBrace(str, bodyStart);
-      if (end === -1) break;
-      for (const branch of branchesOf(str.slice(bodyStart, end)).values()) scan(branch);
-      plain += str.slice(i, open);
-      i = end + 1;
-    }
-    for (const m of plain.matchAll(/\{(\w+)\}/g)) out.add(m[1]!);
-  };
-  scan(template);
-  return out;
-}
-
-/**
- * Expand every `{arg, plural, …}` block against `params`. Anything that is not a plural block —
- * including ordinary `{name}` placeholders and stray braces — is copied through untouched for the
- * substitution pass that follows.
- */
-function expandPlurals(
-  template: string,
-  params: Record<string, unknown>,
-  lang: string,
-  formatNumber: (n: number) => string,
-): string {
-  if (!template.includes(", plural,") && !template.includes(",plural,")) return template;
-  let out = "";
-  let i = 0;
-  while (i < template.length) {
-    const open = template.indexOf("{", i);
-    if (open === -1) {
-      out += template.slice(i);
-      break;
-    }
-    const head = PLURAL_HEAD.exec(template.slice(open));
-    if (!head) {
-      out += template.slice(i, open + 1);
-      i = open + 1;
-      continue;
-    }
-    const j = closeBrace(template, open + head[0].length);
-    if (j === -1) {
-      // Unbalanced braces: leave the rest verbatim so the damage is visible and greppable
-      // rather than silently swallowed.
-      out += template.slice(i);
-      break;
-    }
-    const arg = head[1]!;
-    const branches = branchesOf(template.slice(open + head[0].length, j));
-    const n = countOf(params[arg]);
-    const category = Number.isNaN(n) ? "other" : (rulesFor(lang)?.select(n) ?? "other");
-    const chosen =
-      branches.get(`=${n}`) ?? branches.get(category) ?? branches.get("other") ?? template.slice(open, j + 1);
-    const shown = Number.isNaN(n) ? String(params[arg] ?? "") : formatNumber(n);
-    out += template.slice(i, open) + chosen.replace(/#/g, shown);
-    i = j + 1;
-  }
-  return out;
-}
+export { messageArgs } from "./message-format.js";
 
 /**
  * Expand plural blocks, then replace `{name}` placeholders from `params` (missing params are left

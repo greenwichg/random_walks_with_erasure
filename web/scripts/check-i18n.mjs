@@ -21,7 +21,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { messageArgs } from "../../packages/core/i18n/core.ts";
+// Plain ESM, not the .ts module next to it: this script runs on bare Node inside the Docker
+// image build (Node 20, no type stripping), where a .ts import fails the build outright.
+import { messageArgs } from "../../packages/core/i18n/message-format.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.resolve(__dirname, "..");
