@@ -817,6 +817,7 @@
   "story.similar.followTopic": "Follow {topic}",
   "story.similar.unfollowTopic": "Unfollow {topic}",
   "story.similar.none": "Nothing else in the catalog covers this event yet — we'd rather leave this empty than fill it with stories that only share a topic or a name.",
+  "story.similar.alsoAbout": "Also about {topics}",
   "story.similar.error": "We couldn't load related coverage.",
   "story.registerSplit": "{reporting} reporting · {opinion} opinion",
   "story.noCoverage": "No {side} coverage yet",

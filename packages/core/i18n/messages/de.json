@@ -817,6 +817,7 @@
   "story.similar.followTopic": "{topic} folgen",
   "story.similar.unfollowTopic": "{topic} nicht mehr folgen",
   "story.similar.none": "Bisher berichtet nichts anderes im Katalog über dieses Ereignis – wir lassen den Bereich lieber leer, als ihn mit Storys zu füllen, die nur ein Thema oder einen Namen gemeinsam haben.",
+  "story.similar.alsoAbout": "Auch über {topics}",
   "story.similar.error": "Wir konnten die verwandte Berichterstattung nicht laden.",
   "story.registerSplit": "{reporting} Bericht · {opinion} Meinung",
   "story.noCoverage": "Noch keine Berichterstattung von {side}",

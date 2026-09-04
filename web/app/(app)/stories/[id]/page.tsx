@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, EyeOff, Newspaper, Users } from "lucide-react";
-import { useRecommendations, useSimilarStories, useStory } from "@/hooks/use-data";
+import { useSimilarStories, useStory } from "@/hooks/use-data";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageGrid } from "@/components/layout/page-grid";
 import { SpectrumBar } from "@/components/shared/spectrum-bar";
@@ -20,7 +20,7 @@ import { FramingComparison } from "@/components/stories/framing-comparison";
 import { StoryBreakdown } from "@/components/stories/breakdown/story-breakdown";
 import { MAX_CARDS, SimilarStories } from "@/components/stories/similar-stories";
 import { StoryTopics } from "@/components/stories/story-topics";
-import { RecommendationPanel } from "@/components/home/recommendation-panel";
+import { SimilarStoriesPanel } from "@/components/stories/similar-stories-panel";
 import { LEAN_META } from "@ih/core/logic/metrics";
 import { splitCoverage } from "@ih/core/logic/story-attached";
 import { track, urlHost } from "@/lib/analytics";
@@ -35,7 +35,7 @@ const fmtDate = (iso?: string) =>
  * Story Details — the same editorial system as the home page, answering the reader's questions in
  * order: what happened (hero + the cluster's real summary as the standfirst), how it's covered
  * (filterable coverage list + the intelligence timeline), where coverage is thin (breakdown panel's
- * zero-side callouts), and what to read next (related stories + the reader's own feed).
+ * zero-side callouts), and what to read next (the engine's ranked similar stories).
  *
  * Queries: the story, its intelligence (inside StoryIntelligencePanel), and — for the Similar
  * Stories rail — ONE ranked query that returns at most MAX_CARDS stories. This page still does not
@@ -43,8 +43,9 @@ const fmtDate = (iso?: string) =>
  * of this page's entire API transfer, all to pick a handful of cards, and on the entry paths that
  * matter most (a shared link, a notification tap) nothing has warmed the cache, so every such
  * visitor paid it. Scoring similarity where the catalog already lives is what lets the rail see the
- * whole catalog while the wire carries ten cards. The reader's recommendations reuse their existing
- * cached feed.
+ * whole catalog while the wire carries ten cards. That ONE query feeds both surfaces the page has
+ * for it — the rail card and the full list at the foot — so they can never disagree about what is
+ * similar or in what order.
  */
 export default function StoryDetailPage() {
   const { t, timeAgo } = useTranslation();
@@ -60,7 +61,6 @@ export default function StoryDetailPage() {
   // "Trump". Re-ranking cannot repair a candidate pool chosen that way, and widening the pool here
   // would mean fetching the 60-story list this page deliberately does not fetch.
   const similar = useSimilarStories(id, MAX_CARDS);
-  const recommendations = useRecommendations();
   // A hero that errors mid-load hands the slot to the coverage masthead, exactly like absence —
   // but counted separately (story_hero_error), because the engine never downloads images and a
   // dead or hotlink-protected URL is only observable here. Reset if a refetch changes the URL.
@@ -188,7 +188,12 @@ export default function StoryDetailPage() {
                 it belongs to the story: it answers "what is this" where the panel below answers
                 "what else is for me". */}
             <StoryTopics story={story} />
-            {recommendations.data && <RecommendationPanel recs={recommendations.data} />}
+            {/* "Similar Stories" in the shell "Picked for you" established, fed by the SAME ranked
+                answer the rail below renders — one request, one ordering, no second opinion about
+                what similar means. It takes that card's place in the rail: on a story page the
+                question "what else covers this" is the story's own, where a personalised feed is
+                about the reader and has its own surface. */}
+            <SimilarStoriesPanel story={story} similar={related} />
           </>
         }
         lead={
