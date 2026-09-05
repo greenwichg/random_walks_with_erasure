@@ -140,6 +140,35 @@ resumable (111,645 rows remained), the entity backfill can be skipped with
 `PLATFORM_GKG_HOURS=0` (its rows stand), and the first served build after the deploy records the
 story history in full.
 
+## Second production run (2026-09-05, release `4e27045`)
+
+**86 PASS, 4 WARN, 1 FAIL, 0 SKIP.** Three of the four findings closed on the live catalogue:
+every article and coverage row carries its ids and licence (the backfill finished), `/v1/health`
+answered in 463 ms (from 3,555), and `https://hidden-view.com/v1/*` reached the engine (200 on
+health, the unauthenticated envelope without a key, the consumer site untouched). The catalogue
+bars held: 2,885 trusted stories, largest 6%, ≤2.9 articles per publisher, ≥12 publishers per
+first-page story, 110 of 110 requests metered, 53 restricted rows seen by the developer key and
+none delivered.
+
+The one FAIL was the same one: `history answers` — a 404, `story_builds` advancing, `stories`
+empty. Chunking the write had not been the cause; the write failed on its FIRST insert. Two
+served stories carried the same id. The id ledger gives a prior id to the one story holding most
+of its coverage (`reassign_ids`), but a story that claims nothing keeps its DERIVED id — and a
+split leaves the smaller piece holding the anchor article the bigger piece's id was derived
+from. Both pieces are served under one id: a dead link for one of them on the consumer site, and
+a duplicate primary key on `stories` for the recorder, on every build, forever.
+
+| finding | cause | fix |
+|---|---|---|
+| history 404 on every story; `story_builds` advancing | two served stories under one id (a split's anchor piece re-deriving the ledger id given to the bigger piece); the first `stories` insert failed on the key | `story_service.unique_ids` after reassignment: the claiming story keeps the id, the other is re-anchored on its id plus a counter, deterministically, and the ledger records it; `record_build` drops a duplicate rather than failing the build |
+| the recorder failed soft, and silently | the reason lived in one `story_history failed:` warning line | `/v1/health` carries `history`: row counts, the last completed build's counters, the last error since start; the battery reads it and names the error |
+| the battery could not see the duplicate | it sampled one page of 50 | it walks every page of the listing once (`stories.walk`) and requires every served id unique; the walk also proves the cursor reaches the announced total |
+
+Still WARN, still a product call: provider entities 13.2% and event geography 11.7% of the last
+seven days. New WARN to act on before an external key: the publisher profile of a 6,471-article
+outlet answered in 3.0 s (`/v1/publishers/{id}` computes topics and hosts over every row of the
+publisher on the request path; a cached or bounded profile is the next improvement).
+
 ## Production run
 
 ```bash

@@ -231,6 +231,15 @@ class Battery:
         enr = (d.get("enrichment") or {}).get("recent") or {}
         self.check("enrichment coverage published", bool(enr) and "entityCoverage" in enr,
                    f"last {enr.get('days')}d: entities {enr.get('entityCoverage')} spans {enr.get('spanCoverage')} geo {enr.get('geoCoverage')} over {enr.get('articles')} articles")
+        # The story recorder fails soft; health carries its last outcome so a build that served
+        # but never recorded is diagnosed here, with the error, not inferred from an empty history.
+        h = d.get("history") or {}
+        self.check("story recorder healthy (no failed write since start)", "history" in d and not h.get("lastError"),
+                   f"stories={h.get('stories')} snapshots={h.get('story_snapshots')} membership={h.get('story_membership')} "
+                   f"errors={h.get('errors')} lastError={h.get('lastError')}")
+        self.check("story history holds rows", int(h.get("stories") or 0) > 0,
+                   f"stories={h.get('stories')} lastOk={h.get('lastOk')}", warn=True)
+        self.metrics["historyRecorder"] = h
         self.check("provider entities reach ≥20% of recent articles", (enr.get("entityCoverage") or 0) >= 0.2,
                    f"{enr.get('entityCoverage')}", warn=True)
         self.check("event geography reaches ≥20% of recent articles", (enr.get("geoCoverage") or 0) >= 0.2,
@@ -331,6 +340,30 @@ class Battery:
         self.check("tags present", with_tags / n >= 0.5, _pct(with_tags / n), warn=True)
         self.check("event countries present", with_countries / n >= 0.3, _pct(with_countries / n), warn=True)
         self.check("no story lost its title to withholding", withheld_title == 0, f"{withheld_title} withheld", warn=True)
+        # Every served id, once, over the WHOLE listing (the largest page the API allows, at most
+        # 100 pages). A duplicate id is a dead link for one of the two stories — and it failed the
+        # history record on every production build until 2026-09-05. Walking the pages also
+        # proves the cursor reaches the total the first page announced.
+        ids: list = []
+        cursor = None
+        pages = 0
+        while pages < 100:
+            params = {"limit": 100}
+            if cursor:
+                params["cursor"] = cursor
+            rw = self.get("stories.walk", "/v1/stories", params)
+            rows = self.data(rw) or []
+            ids.extend(s.get("storyId") for s in rows)
+            pages += 1
+            cursor = (((rw.json or {}).get("meta") or {}).get("page") or {}).get("nextCursor")
+            if not rows or not cursor:
+                break
+        dup = len(ids) - len(set(ids))
+        self.check("every served story id is unique", dup == 0,
+                   f"{len(ids)} ids over {pages} page(s), {dup} duplicated")
+        self.check("pagination walks the whole listing", len(ids) == (page.get("total") or 0),
+                   f"walked {len(ids)} vs total {page.get('total')}", warn=True)
+        self.metrics["stories"].update(idsWalked=len(ids), duplicateIds=dup, pagesWalked=pages)
         top = items[0]
         self.sample("story.listing[0]", top)
         return top["storyId"], top

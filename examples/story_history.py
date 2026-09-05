@@ -95,18 +95,39 @@ def _representative_url(story: dict) -> str:
     return oldest.get("url") or ""
 
 
+def _one_per_id(stories: list) -> list:
+    """The served list with one story per id — a guard, not the fix. ``story_service`` keeps
+    served ids unique (``unique_ids``); should a caller hand over duplicates anyway, the first is
+    the story and the rest are left out of the record and counted in the log, rather than the
+    duplicate key failing the whole build's write (the 2026-09-05 production symptom: builds
+    advancing, ``stories`` empty)."""
+    seen: set = set()
+    out: list = []
+    dropped = 0
+    for s in stories:
+        if s["id"] in seen:
+            dropped += 1
+            continue
+        seen.add(s["id"])
+        out.append(s)
+    if dropped:
+        log.warning(json.dumps({"event": "story_history_duplicate_ids", "dropped": dropped}))
+    return out
+
+
 def record_build(store_, stories: list, *, build_version: str, config_hash: str,
                  registry_version: "str | None" = None, built_at: "str | None" = None,
                  resolve_ids=None) -> Optional[dict]:
     """Record one served unfiltered build. Returns the build's counters, or ``None`` when off.
 
-    Pure bookkeeping over the served list: it never changes a story, an id, or the order. Every
-    write lands in one transaction (``store.apply_story_history``), so a crash mid-build leaves
-    the previous history intact rather than a half-recorded build."""
+    Pure bookkeeping over the served list: it never changes a story, an id, or the order. The
+    writes land in chunked transactions (``store.apply_story_history``), each step idempotent on
+    a re-run, with the build's counters written last as the completion marker."""
     if not enabled():
         return None
     t0 = time.perf_counter()
     built_at = built_at or _now_iso()
+    stories = _one_per_id(stories)
 
     # -- the current membership, keyed exactly as the id ledger keys it (coverage url) -------- #
     current: dict = {}

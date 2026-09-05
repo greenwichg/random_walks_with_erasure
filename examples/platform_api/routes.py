@@ -377,7 +377,9 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                             "`enrichment` is how much of the catalogue carries provider "
                             "entities and event geography (what `/v1/entities`, `/v1/countries` "
                             "and the comparison's geography can answer over), whole catalogue and "
-                            "the last seven days; `lastBuildAt` is the newest recorded story build.")
+                            "the last seven days; `lastBuildAt` is the newest recorded story build; "
+                            "`history` is the story recorder's state — row counts, the last "
+                            "completed build's counters, and the last error since start.")
     def health(request: Request) -> dict:
         st = get_store()
         try:
@@ -388,8 +390,13 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
             index = st.search_index_status()
         except Exception:                    # noqa: BLE001
             index = None
+        try:
+            history = dict(st.story_history_stats(), **story_service.history_status())
+        except Exception:                    # noqa: BLE001
+            history = None
         return shape.envelope({"status": "ok", "enrichment": _enrichment(st),
                                "lastBuildAt": builds[0]["builtAt"] if builds else None,
+                               "history": history,
                                "searchIndex": index}, request_id=rid(request))
 
     _schema: dict = {}

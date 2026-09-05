@@ -277,3 +277,74 @@ def test_platform_builds_rather_than_serving_an_empty_recorded_build(monkeypatch
     r = c.get("/v1/stories", headers=h).json()
     assert r["meta"]["page"]["total"] == 1 and r["meta"]["stale"] is False and spawned == []
     assert c.get(f"/v1/stories/{r['data'][0]['storyId']}", headers=h).status_code == 200
+
+
+# ---- 5. served ids are unique, so the history record lands (second production run) ------------- #
+
+def _cov(*urls, **extra):
+    return dict({"coverage": [{"url": u, "publisher": f"P{u}", "publishedAt": "2026-09-01T00:00:00+00:00"}
+                              for u in urls]}, **extra)
+
+
+def test_a_split_never_serves_two_stories_under_one_id():
+    """The production shape: the ledger hands `st_one` to the piece holding most of the old
+    coverage, while the piece that kept the ANCHOR article derives `st_one` again. The claim
+    keeps the id; the other piece is re-anchored, deterministically, and never collides."""
+    class Ledger:
+        def story_member_ids(self):
+            return {u: "st_one" for u in "abcd"}
+    stories = [_cov("a", "b", "c", id="st_bigpiece_derived"), _cov("d", id="st_one")]
+    out = story_service.stabilize_ids_readonly(Ledger(), stories)
+    assert out[0]["id"] == "st_one", "the piece holding most of the coverage claims the ledger id"
+    assert out[1]["id"] != "st_one" and out[1]["id"].startswith("st_") and len(out[1]["id"]) == 19
+    assert len({s["id"] for s in out}) == 2
+    again = story_service.stabilize_ids_readonly(Ledger(), [_cov("a", "b", "c", id="st_bigpiece_derived"),
+                                                            _cov("d", id="st_one")])
+    assert [s["id"] for s in again] == [s["id"] for s in out], "deterministic across builds"
+
+
+def test_unique_ids_keeps_claims_and_rehashes_the_rest():
+    stories = [{"id": "st_x", "coverage": []}, {"id": "st_x", "coverage": []}, {"id": "st_y", "coverage": []},
+               {"id": "st_x", "coverage": []}]
+    out = story_service.unique_ids(stories, keep={1})
+    assert out[1]["id"] == "st_x", "the claiming story keeps its id wherever it sits in the list"
+    assert out[0]["id"] != "st_x" and out[3]["id"] not in {"st_x", out[0]["id"]} and out[2]["id"] == "st_y"
+    assert len({s["id"] for s in out}) == 4
+    assert story_service.unique_ids(stories, keep={1}) == out
+    same = [{"id": "st_a", "coverage": []}, {"id": "st_b", "coverage": []}]
+    assert story_service.unique_ids(same) is same, "nothing to do: the list is handed back as it is"
+
+
+def test_record_build_survives_a_duplicate_id_and_records_the_first(caplog):
+    st = _seed()
+    dup = [_cov("https://x.example/1", id="st_dup", title="A"), _cov("https://x.example/2", id="st_dup", title="B")]
+    with caplog.at_level("WARNING", logger="story_history"):
+        out = story_history.record_build(st, dup, build_version="1", config_hash="x")
+    assert out["stories"] == 1 and out["new_stories"] == 1
+    assert st.story_history("st_dup")["story"]["title"] == "A"
+    assert any("story_history_duplicate_ids" in r.getMessage() for r in caplog.records)
+
+
+def test_health_carries_the_recorders_last_error_and_its_counts(monkeypatch):
+    st = _seed()
+    monkeypatch.setattr(story_service, "_HISTORY_STATUS",
+                        {"lastOk": None, "lastError": None, "lastErrorAt": None, "errors": 0})
+    st.platform_create_tenant("t", "T", kind="internal")
+    secret, _ = st.platform_mint_key(tenant_id="t", plan="internal")
+    h = {"Authorization": f"Bearer {secret}"}
+    c = TestClient(platform_app.create_app(st))
+    real = st.apply_story_history
+
+    def boom(**kw):
+        raise RuntimeError("UNIQUE constraint failed: stories.story_id")
+    monkeypatch.setattr(st, "apply_story_history", boom)
+    assert c.get("/v1/stories", headers=h).status_code == 200      # served exactly as before
+    hist = c.get("/v1/health").json()["data"]["history"]
+    assert hist["errors"] == 1 and hist["lastError"].startswith("RuntimeError: UNIQUE constraint")
+    assert hist["stories"] == 0 and hist["lastErrorAt"]
+    monkeypatch.setattr(st, "apply_story_history", real)
+    story_service.clear_cache()
+    assert c.get("/v1/stories", headers=h).status_code == 200
+    hist = c.get("/v1/health").json()["data"]["history"]
+    assert hist["stories"] == 1 and hist["story_snapshots"] == 1 and hist["lastOk"]["stories"] == 1
+    assert hist["errors"] == 1 and hist["lastError"], "the error since start stays visible"

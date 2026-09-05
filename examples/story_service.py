@@ -1815,20 +1815,42 @@ def build_config_hash() -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
+#: What the last history write did — read by ``/v1/health``, so a recorder that fails SOFT is
+#: not a recorder that fails SILENTLY. The first two production runs showed builds advancing
+#: while the story tables stayed empty; the reason (a duplicate id) sat in a warning line nobody
+#: had read, and the enable script could only report "snapshots=0".
+_HISTORY_STATUS: dict = {"lastOk": None, "lastError": None, "lastErrorAt": None, "errors": 0}
+_HISTORY_STATUS_LOCK = threading.Lock()
+
+
+def history_status() -> dict:
+    """A copy of the recorder's last outcome since this process started: ``lastOk`` (the last
+    completed build's counters), ``lastError`` (``Type: message``), ``lastErrorAt``, ``errors``."""
+    with _HISTORY_STATUS_LOCK:
+        return dict(_HISTORY_STATUS)
+
+
 def _record_history(store_, stories: list) -> None:
     """Record the served unfiltered build as history (story_history). Fail-soft: a history fault
-    is counted and logged, and the build is served exactly as it would have been."""
+    is counted, logged and kept for ``/v1/health``, and the build is served exactly as it would
+    have been."""
     if not story_history.enabled():
         return
     try:
-        story_history.record_build(store_, stories, build_version=BUILD_VERSION,
-                                   config_hash=build_config_hash(),
-                                   registry_version=identity.registry_version(),
-                                   resolve_ids=store_.article_ids_for_urls)
+        out = story_history.record_build(store_, stories, build_version=BUILD_VERSION,
+                                         config_hash=build_config_hash(),
+                                         registry_version=identity.registry_version(),
+                                         resolve_ids=store_.article_ids_for_urls)
+        with _HISTORY_STATUS_LOCK:
+            _HISTORY_STATUS["lastOk"] = out
     except Exception as exc:                 # noqa: BLE001 — never let bookkeeping break serving
         obs_metrics.incr("story_history_errors_total")
         logging.getLogger("story_service").warning(
             "story_history failed: %s: %s", type(exc).__name__, exc)
+        with _HISTORY_STATUS_LOCK:
+            _HISTORY_STATUS["errors"] += 1
+            _HISTORY_STATUS["lastError"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+            _HISTORY_STATUS["lastErrorAt"] = datetime.now(timezone.utc).isoformat()
 
 
 def stable_ids() -> bool:
@@ -2128,9 +2150,54 @@ def stabilize_ids_readonly(store_, stories: list) -> list:
         prior = store_.story_member_ids()
     except Exception:
         return stories
-    for i, pid in reassign_ids(prior, stories).items():
+    claims = reassign_ids(prior, stories)
+    for i, pid in claims.items():
         stories[i] = dict(stories[i], id=pid)
-    return stories
+    return unique_ids(stories, keep=set(claims))
+
+
+def unique_ids(stories: list, *, keep: "set | None" = None) -> list:
+    """One id per served story — the invariant every reader of the list assumes.
+
+    A claim from the ledger can coincide with another story's DERIVED id, and the split case
+    makes it routinely: the ledger hands the prior id to the piece holding most of the coverage,
+    while the piece that kept the ANCHOR article derives that same id again from it. Two stories
+    under one id is a dead link for one of them — and, measured in production (2026-09-05), a
+    duplicate primary key on the first history insert of every build: 2,885 stories served,
+    none recorded, every ``/v1/stories/{id}/history`` a 404.
+
+    The story that CLAIMED an id keeps it (``keep`` holds those indexes — that is what the ledger
+    means); any other story colliding with a kept id, or with an earlier story's id, is
+    re-anchored on its own id plus a counter. Deterministic, so the new id is stable across
+    builds; and the ledger records it for the story's urls at the end of this build, so the next
+    build claims it outright."""
+    keep = keep or set()
+    reserved = {stories[i].get("id") for i in keep if i < len(stories)}
+    seen: set = set()
+    out = stories
+    for i, s in enumerate(stories):
+        sid = s.get("id")
+        if not sid:
+            continue
+        if i in keep:
+            seen.add(sid)
+            continue
+        if sid in reserved or sid in seen:
+            n = 1
+            alt = _rehash_id(sid, n)
+            while alt in reserved or alt in seen:
+                n += 1
+                alt = _rehash_id(sid, n)
+            if out is stories:
+                out = list(stories)
+            out[i] = dict(s, id=alt)
+            sid = alt
+        seen.add(sid)
+    return out
+
+
+def _rehash_id(story_id: str, n: int) -> str:
+    return "st_" + hashlib.sha1(f"{story_id}#{n}".encode("utf-8")).hexdigest()[:16]
 
 
 def stabilize_ids(store_, stories: list) -> list:

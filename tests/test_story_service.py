@@ -1693,6 +1693,23 @@ def test_a_split_gives_the_id_to_the_piece_holding_most_of_the_coverage():
     assert out == {0: "st_one"}, "the 3-article piece keeps it; the 1-article piece is new"
 
 
+def test_a_split_never_serves_both_pieces_under_the_ledger_id():
+    """The piece that KEPT the anchor article derives the very id the ledger hands the bigger
+    piece (production, 2026-09-05: two of 2,885 served stories shared an id; the history record
+    failed on its first insert every build). After stabilization the claim keeps the id and the
+    anchor piece is re-anchored — deterministically, so its new id is stable too."""
+    class Ledger:
+        def story_member_ids(self):
+            return {u: "st_one" for u in "abcd"}
+    served = ss.stabilize_ids_readonly(Ledger(), [dict(_cov("a", "b", "c"), id="st_derived_big"),
+                                                  dict(_cov("d"), id="st_one")])
+    assert served[0]["id"] == "st_one" and served[1]["id"] != "st_one"
+    assert len({s["id"] for s in served}) == 2
+    again = ss.stabilize_ids_readonly(Ledger(), [dict(_cov("a", "b", "c"), id="st_derived_big"),
+                                                 dict(_cov("d"), id="st_one")])
+    assert [s["id"] for s in again] == [s["id"] for s in served]
+
+
 def test_a_minority_overlap_does_not_inherit():
     """Below a majority two clusters could each have a claim, and which won would depend on
     ordering rather than on the data."""
