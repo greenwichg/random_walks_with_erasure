@@ -78,15 +78,15 @@ both public.
 
 | endpoint | scope | what it answers |
 |---|---|---|
-| `GET /v1/health` | — | liveness + the versions in force |
-| `GET /v1/me` | any key | the key's tenant, plan, scopes, licence classes, limits, month-to-date |
+| `GET /v1/health` | — | liveness, the versions in force, enrichment coverage (entities / spans / event geography over the catalogue and the last 7 days), `lastBuildAt`, search-index status |
+| `GET /v1/me` | any key | the key's tenant, plan, scopes, licence classes, limits, month-to-date, the key's own label / prefix / expiry |
 | `GET /v1/articles?q=&publisher_id=&publisher=&topic=&country=&from=&to=&sort=&limit=&cursor=` | `articles:read` | catalogue term search + filters; with `q` the default `sort` is `relevance` (else `newest`; `oldest`, `publisher`); provisional rows excluded in SQL |
 | `GET /v1/articles/{article_id}` · `GET /v1/articles/by-url?url=` | `articles:read` | one article, its current `storyId`, its provenance channels |
 | `GET /v1/articles/{article_id}/entities?kind=` | `articles:read` | provider-extracted `person` / `org` names (GDELT attribution), `kind=span` for our headline spans |
 | `GET /v1/entities?name=&kind=&limit=&cursor=` | `articles:read` | the articles an entity was extracted on, newest first |
 | `GET /v1/countries` | `articles:read` | per-country article + publisher counts over EVENT geography |
-| `GET /v1/stories?q=&topic=&publisher_id=&country=&tag=&type=&lean=&blindspot=&from=&to=&sort=top&limit=&cursor=` | `stories:read` | the served story build, paged; `q` keeps the events whose member articles match the words, best-matched first under `sort=top` (`lean`/`blindspot` only where ratings are published) |
-| `GET /v1/stories/{story_id}` | `stories:read` | one story with its coverage |
+| `GET /v1/stories?q=&topic=&publisher_id=&country=&tag=&type=&lean=&blindspot=&from=&to=&min_trust=ok&sort=top&limit=&cursor=` | `stories:read` | the served story build, paged; `q` keeps the events whose member articles match the words, best-matched first under `sort=top`; `min_trust` = `ok` (default) / `unverified` / `any` (`lean`/`blindspot` only where ratings are published) |
+| `GET /v1/stories/{story_id}?coverage_per_publisher=` | `stories:read` | one story with its coverage, at most N rows per outlet (deployment default 3; `0` = all), `coverageOmitted` counting the rest; `ETag` |
 | `GET /v1/stories/{story_id}/similar?limit=` | `stories:read` | stories about the same / a related event |
 | `GET /v1/stories/{story_id}/intelligence` | `stories:read` | freshness, momentum, lifecycle, alerts |
 | `GET /v1/stories/{story_id}/coverage-comparison?article_id=` (or `url=`) | `stories:read` | one member against the rest of its coverage: other outlets, event geography, register mix, timing, uniqueness (counted facts, never text) |
@@ -100,6 +100,7 @@ both public.
 | `GET /v1/publishers/{publisher_id}/stories?q=&topic=&country=&from=&to=&sort=&limit=&cursor=` | `stories:read` | stories with coverage from the publisher |
 | `GET /v1/outlets/search?q=&count=` | `publishers:read` | the outlet index (Wikidata, Wikipedia, Common Crawl, observed feeds): outlets by place, language or name — internal index only, no paid upstream |
 | `GET /v1/usage?month=YYYY-MM` | `usage:read` | the tenant's meter, per day / key / endpoint |
+| `GET /v1/usage/requests?key_id=&from=&to=&status=&limit=&cursor=` | `usage:read` | the tenant's per-request log, newest first (time, key, endpoint, units, status, request id, latency; never query text) |
 
 Every response is `{"data": …, "meta": {...}}`. `meta` carries `requestId`, `asOf`, `versions`
 (`scorer`, `build`, `buildConfig`, `registry`, `publisherIdScheme`), `ratingsPublished`, and
@@ -113,6 +114,46 @@ Every response is `{"data": …, "meta": {...}}`. `meta` carries `requestId`, `a
 A keyed `/v1` request is exempt from the engine's per-IP limiter (the platform meters per key);
 a keyless one is throttled at the engine's `auth` rate (30/min in production) — a request with no
 key can only be guessing. `/v1/openapi.json` and `/v1/docs` are public and never metered.
+
+### Freshness, trust, caching, keys
+
+**`meta.asOf` and `meta.stale`.** Every story answer names the build it came from. A servable
+cached build answers with `stale: false`. When the cache is cold (a restart, an expired window)
+the engine answers from the durable record of the last build — `stories`, `story_snapshots`,
+`story_membership`, joined back to the catalogue rows — with `stale: true` and that build's
+`asOf`, and queues one background build; the next request finds the cache warm. No `/v1` story
+request clusters on the request thread. Before the first build was ever recorded (a first boot)
+the answer is an honest empty, stale page with `asOf: null`. `/similar` still needs the live
+build and pays for it when cold.
+
+**Trust as a filter.** `min_trust=ok` (default on `/v1/stories`, `/v1/tags/{tag}` and
+`/v1/publishers/{id}/stories`) serves only stories the independent geography signal corroborates
+or that are too small to chain. `unverified` also keeps the big unchecked clusters; `any` keeps
+`low` (the located members disagree about where the event happened). `clusterTrust` is on every
+story either way.
+
+**Coverage per publisher.** A story lists at most `RWE_PLATFORM_COVERAGE_PER_PUBLISHER` (3)
+coverage rows per outlet, newest first; `coverageOmitted` and `coveragePerPublisher` say what was
+left out, so `len(coverage) + coverageOmitted == totalCoverage`. `?coverage_per_publisher=0`
+lists everything.
+
+**ETags.** `/v1/stories/{id}`, `/v1/articles/{id}`, `/v1/articles/by-url` and
+`/v1/publishers/{id}` carry a weak `ETag` over the object and `Cache-Control: private,
+must-revalidate`; `If-None-Match` answers `304` with no body — recorded as a request, never as a
+unit.
+
+**Retry-After.** `rate_limited` says when the per-minute bucket refills; `quota_exceeded` says
+how many seconds remain in the UTC calendar month.
+
+**Key rotation.** `platform_keys.py rotate key_… [--grace-hours 24]` mints a successor with the
+same tenant, plan, scopes, classes, limits and label, prints it once, and gives the old key the
+grace period (`0` revokes it now; an earlier expiry is never extended). `/v1/me` shows the key's
+own `expiresAt` so a client can see the countdown.
+
+**Entities.** `person` / `org` are provider-extracted (GDELT GKG) and are the default kinds on
+`/v1/entities` and `/v1/articles/{id}/entities`; `span` — the capitalised headline spans our own
+extractor finds — stays opt-in (`kind=span`): untyped and extracted by us, it is a different
+promise. `/v1/health` reports both coverages separately.
 
 ### How `q` matches
 

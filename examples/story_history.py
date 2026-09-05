@@ -220,4 +220,75 @@ def history_for(store_, story_id: str, *, limit: int = 200) -> Optional[dict]:
     return store_.story_history(story_id, limit=limit)
 
 
-__all__ = ["MERGE_SHARE", "enabled", "snapshot_of", "fingerprint", "record_build", "history_for"]
+def _hours_between(earliest: str, latest: str) -> Optional[float]:
+    try:
+        a = datetime.fromisoformat(str(earliest).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(latest).replace("Z", "+00:00"))
+        return round(abs((b - a).total_seconds()) / 3600.0, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def persisted_view(store_) -> "tuple[list, str | None]":
+    """The last recorded build, re-materialised as served stories — ``(stories, builtAt)``.
+
+    Every ACTIVE story row, its latest snapshot (title, summary, topic, spectrum, trust, geography,
+    tags, image, time span) and its OPEN membership, joined back to the catalogue rows the members
+    are (bodies never loaded) and serialised by the one Article serializer the consumer path uses
+    (``discover.feed_article_to_article``), so a coverage row here is the same shape a built story
+    carries. What a snapshot does not hold (``publisherDiversity``, tag scores) is absent, never
+    invented. Members whose catalogue row is gone (retention) are dropped and the counts recomputed
+    over what is left, so the story is consistent with itself."""
+    import discover
+    import ingest
+    import story_tags
+    rows = store_.persisted_story_view_rows()
+    if not rows:
+        return [], None
+    members = rows["membership"]
+    canon_of = {}
+    for ms in members.values():
+        for m in ms:
+            canon_of[m["url"]] = ingest.canonical_url(m["url"])
+    articles = store_.feed_rows_for_urls(canon_of.values())
+    stories = []
+    for snap in rows["stories"]:
+        coverage = []
+        for m in members.get(snap["storyId"], ()):
+            row = articles.get(canon_of.get(m["url"]))
+            if row is None:
+                continue
+            a = discover.feed_article_to_article(row)
+            a["url"] = m["url"] or a.get("url")
+            if m.get("attached"):
+                a["tierB"] = True
+            coverage.append(a)
+        if not coverage:
+            continue
+        coverage.sort(key=lambda c: (c.get("publishedAt") or "", c.get("url") or ""), reverse=True)
+        publishers = sorted({c.get("publisher") for c in coverage if c.get("publisher")})
+        times = [c.get("publishedAt") for c in coverage if c.get("publishedAt")]
+        earliest = min(times) if times else (snap.get("earliest") or None)
+        latest = max(times) if times else (snap.get("latest") or None)
+        stories.append({
+            "id": snap["storyId"], "title": snap.get("title") or "", "summary": snap.get("summary") or "",
+            "topic": snap.get("topic") or "", "coverage": coverage,
+            "totalCoverage": len(coverage), "publisherCount": len(publishers), "publishers": publishers,
+            "attachedCoverage": sum(1 for c in coverage if c.get("tierB")),
+            "distribution": snap.get("distribution") or {}, "blindspotSide": snap.get("blindspotSide"),
+            "blindspotWithheld": bool(snap.get("blindspotWithheld")),
+            "clusterTrust": snap.get("clusterTrust"), "geoCoherence": snap.get("geoCoherence"),
+            "countries": list(snap.get("countries") or []), "primaryCountry": snap.get("primaryCountry"),
+            "earliest": earliest, "latest": latest, "updatedAt": latest,
+            "timeSpanHours": _hours_between(earliest, latest) if earliest and latest else None,
+            "image": snap.get("image"),
+            "tags": [{"name": t, "label": story_tags.label_for(t)} for t in (snap.get("tags") or []) if t],
+            "persisted": True,
+        })
+    # The build's own order is not recorded; biggest and freshest first is what it serves.
+    stories.sort(key=lambda s: (s["publisherCount"], s["totalCoverage"], s.get("latest") or ""), reverse=True)
+    return stories, rows.get("builtAt")
+
+
+__all__ = ["MERGE_SHARE", "enabled", "snapshot_of", "fingerprint", "record_build", "history_for",
+           "persisted_view"]

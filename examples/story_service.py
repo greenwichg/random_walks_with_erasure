@@ -26,6 +26,7 @@ import os
 import re
 import threading
 import weakref
+from datetime import datetime, timezone
 import time as _time
 from concurrent.futures import ProcessPoolExecutor
 from typing import Optional
@@ -91,6 +92,9 @@ DEFAULT_UNVERIFIED_SIZE = 50
 TRUST_OK = "ok"                     # corroborated, or too small to chain
 TRUST_LOW = "low"                   # scored, and the score says the members disagree
 TRUST_UNVERIFIED = "unverified"     # big enough to be a chain, with nothing to check it against
+#: The verdicts as a floor for ``list_stories(min_trust=…)``: ``ok`` keeps only corroborated (or
+#: unchainable) stories, ``unverified`` also keeps the unchecked big ones, ``low`` keeps all.
+TRUST_ORDER = {TRUST_LOW: 0, TRUST_UNVERIFIED: 1, TRUST_OK: 2}
 
 #: Distinct RATED publishers required before a story may assert a coverage gap.
 #:
@@ -4043,8 +4047,9 @@ def default_story_view(store_, *, build_inline: bool = False) -> list:
     return []
 
 
-def _peek_default_view(store_) -> "list | None":
-    """The cached default build if servable, else ``None`` — a LOOK, never a build.
+def _peek_default_entry(store_) -> "tuple[list | None, float | None]":
+    """The cached default build if servable — ``(stories, built_at epoch)`` — else ``(None, None)``.
+    A LOOK, never a build.
 
     Mirrors ``_cached_build``'s lookup semantics for the default key, including the serve-stale
     contract: a stale-within-TTL entry is served AND a background refresh is requested, so a
@@ -4053,27 +4058,78 @@ def _peek_default_view(store_) -> "list | None":
     and the caller decides what a miss means (``default_story_view``: a read-only inline build)."""
     ttl = cache_ttl()
     if ttl <= 0:
-        return None
+        return None, None
     try:
         fingerprint = store_.catalog_fingerprint()
     except Exception:
-        return None
+        return None, None
     logical = _DEFAULT_LOGICAL
     with _CACHE_LOCK:
         entries = _CACHE.get(store_)
         hit = entries.get(logical) if entries else None
     if hit is None:
-        return None
+        return None, None
     built_at, built_fp, stories = hit
     if (_time.time() - built_at) >= ttl:
-        return None
+        return None, None
     if built_fp == fingerprint:
-        return stories
+        return stories, built_at
     if not serve_stale():
-        return None
+        return None, None
     _request_stale_refresh(store_, logical)
     obs_metrics.incr("story_stale_served_total")
-    return stories
+    return stories, built_at
+
+
+def _peek_default_view(store_) -> "list | None":
+    """:func:`_peek_default_entry` without the timestamp."""
+    return _peek_default_entry(store_)[0]
+
+
+def default_view_state(store_) -> "tuple[list | None, str | None]":
+    """``(stories, asOf)`` for the cached default build when it is servable, else ``(None, None)``
+    — the platform's question before it decides whether to answer from the durable record."""
+    stories, built_at = _peek_default_entry(store_)
+    if stories is None:
+        return None, None
+    return stories, datetime.fromtimestamp(built_at, tz=timezone.utc).isoformat()
+
+
+def request_default_refresh(store_) -> bool:
+    """Queue one background build of the default view (single-flighted; a no-op while one is in
+    flight). Non-blocking: what makes a cold cache warm without a caller paying for it."""
+    return _request_stale_refresh(store_, _DEFAULT_LOGICAL)
+
+
+_PERSISTED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_PERSISTED_LOCK = threading.Lock()
+
+
+def persisted_default_view(store_) -> "tuple[list, str | None]":
+    """The LAST RECORDED build as servable stories — ``(stories, asOf)`` — read from the durable
+    story record (``story_history.persisted_view``) rather than clustered.
+
+    This is what the platform serves while the cache is cold and a fresh build runs in the
+    background: a complete answer as of the last build, never a request-thread clustering (2 s at
+    121 articles, tens of seconds at production size) and never an empty page. Memoised per
+    build id, so a burst of cold requests reads the record once. Empty when nothing was ever
+    recorded (a first boot) — the caller then reports an empty, stale page and the refresh it
+    queued fills the cache."""
+    try:
+        latest = store_.story_builds(limit=1)
+    except Exception:
+        latest = []
+    build_id = latest[0]["id"] if latest else None
+    if build_id is None:
+        return [], None
+    with _PERSISTED_LOCK:
+        hit = _PERSISTED.get(store_)
+    if hit is not None and hit[0] == build_id:
+        return hit[1], hit[2]
+    stories, as_of = story_history.persisted_view(store_)
+    with _PERSISTED_LOCK:
+        _PERSISTED[store_] = (build_id, stories, as_of)
+    return stories, as_of
 
 
 def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2,
@@ -4100,7 +4156,8 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
                  story_type=None, tag=None, exclude_story=None, date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
                  min_publishers: int = 2, max_scan: int = None, debug: bool = False,
-                 query: "str | None" = None) -> dict:
+                 query: "str | None" = None, stories: "list | None" = None,
+                 min_trust: "str | None" = None) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets,
     blindspotFacets, typeFacets}`` (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are
@@ -4132,7 +4189,11 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
     # date range still gets its own (read-only-stabilized) build: it is the one filter whose rows
     # can lie outside the default window, and no UI surface sends it.
     topic_filter = (topic or "").strip().lower()
-    if date_from or date_to:
+    if stories is not None:
+        # A caller-supplied universe (the platform serving the durable record while the cache
+        # rebuilds): every filter below applies to it exactly as to a built one; no build runs.
+        stories = list(stories)
+    elif date_from or date_to:
         stories = _cached_build(store_, topic=topic, date_from=date_from, date_to=date_to,
                                 max_scan=max_scan, min_articles=min_articles,
                                 min_publishers=min_publishers)
@@ -4150,6 +4211,12 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         stories = [s for s in stories if want in {p.lower() for p in s["publishers"]}]
     if lean in ("left", "center", "right"):
         stories = [s for s in stories if s["distribution"][lean] > 0.0]
+    if min_trust in TRUST_ORDER:
+        # Cluster trust as a FILTER, not only a demotion: the platform's default is "ok" — a
+        # story the independent geography signal doubts (low), or one too big to trust with no
+        # signal to check it (unverified), is not served to a customer who did not ask for it.
+        floor = TRUST_ORDER[min_trust]
+        stories = [s for s in stories if TRUST_ORDER.get(s.get("clusterTrust") or TRUST_OK, 0) >= floor]
     # Story-level country + blindspot + type facets: counted after topic/publisher/lean narrowed
     # the set, before their own filters (standard faceting — a picker must not collapse to the
     # current selection) and before pagination.

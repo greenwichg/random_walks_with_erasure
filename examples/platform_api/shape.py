@@ -62,8 +62,13 @@ def versions() -> dict:
 
 
 def envelope(data, *, request_id: "str | None" = None, **extra) -> dict:
+    """``{"data", "meta"}``. ``meta.asOf`` is the answer's time; a caller that knows the BUILD
+    the answer came from passes ``asOf`` explicitly (``None`` = no build recorded yet, and the
+    null is kept — an unknown must not read as "now")."""
     meta = {"requestId": request_id, "asOf": datetime.now(timezone.utc).isoformat(),
             "versions": versions(), "ratingsPublished": publish_ratings()}
+    if "asOf" in extra:
+        meta["asOf"] = extra.pop("asOf")
     meta.update({k: v for k, v in extra.items() if v is not None})
     return {"data": data, "meta": meta}
 
@@ -135,7 +140,34 @@ def _coverage_row(c: dict, meta: dict, allowed) -> "dict | None":
     return _drop_none(row)
 
 
-def story(s: dict, meta_by_url: dict, allowed, *, with_coverage: bool = True) -> dict:
+def coverage_per_publisher() -> int:
+    """How many coverage rows one publisher may occupy in a served story (newest first); 0 = all.
+    ``RWE_PLATFORM_COVERAGE_PER_PUBLISHER`` (default 3): a wire that files the same event forty
+    times is one outlet's coverage, not forty rows a customer pages through."""
+    try:
+        return max(0, int(os.environ.get("RWE_PLATFORM_COVERAGE_PER_PUBLISHER", "3")))
+    except ValueError:
+        return 3
+
+
+def _cap_by_publisher(rows: list, cap: int) -> "tuple[list, int]":
+    """Keep the first ``cap`` rows per publisher (rows arrive newest first); return the kept rows
+    and how many were left out."""
+    if cap <= 0:
+        return rows, 0
+    seen: dict = {}
+    kept = []
+    for r in rows:
+        key = (r.get("publisher") or "").strip().lower()
+        n = seen.get(key, 0)
+        if n < cap:
+            kept.append(r)
+        seen[key] = n + 1
+    return kept, len(rows) - len(kept)
+
+
+def story(s: dict, meta_by_url: dict, allowed, *, with_coverage: bool = True,
+          per_publisher: "int | None" = None) -> dict:
     """One built Story dict -> its ``/v1`` shape. The title and summary are a MEMBER's words
     (the representative's headline and dek), so they follow that member's licence class: when the
     representative is outside the plan, the title comes from the earliest member that is inside
@@ -202,7 +234,14 @@ def story(s: dict, meta_by_url: dict, allowed, *, with_coverage: bool = True) ->
         withheld.update(("distribution", "blindspotSide", "lowCredibilityPublishers"))
     if with_coverage:
         rows = [_coverage_row(c, meta_by_url.get(c.get("url")) or {}, allowed) for c in cov]
-        out["coverage"] = [r for r in rows if r is not None]
+        rows = [r for r in rows if r is not None]
+        cap = coverage_per_publisher() if per_publisher is None else max(0, int(per_publisher))
+        # Newest first per publisher (the build's order), at most `cap` rows each; what the cap
+        # left out is counted, so `len(coverage) + coverageOmitted == totalCoverage` always.
+        out["coverage"], omitted = _cap_by_publisher(rows, cap)
+        if omitted:
+            out["coverageOmitted"] = omitted
+            out["coveragePerPublisher"] = cap
     if withheld:
         out["withheld"] = sorted(withheld)
     return _drop_none(out)
@@ -307,5 +346,5 @@ def outlet(row: dict, publisher_id: "str | None") -> dict:
 
 
 __all__ = ["DESCRIPTION_MAX", "publish_ratings", "publish_wikipedia", "clamp", "versions",
-           "envelope", "article", "hidden", "visible_coverage", "story", "publisher",
-           "evidence_row", "comparison", "outlet"]
+           "envelope", "article", "hidden", "visible_coverage", "coverage_per_publisher", "story",
+           "publisher", "evidence_row", "comparison", "outlet"]

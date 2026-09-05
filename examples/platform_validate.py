@@ -215,11 +215,25 @@ class Battery:
         self.log("-- health --")
         r = self.get("health", "/v1/health", headers={})
         v = ((r.json or {}).get("meta") or {}).get("versions") or {}
-        self.check("health answers without a key", r.status == 200 and self.data(r) == {"status": "ok"},
+        self.check("health answers without a key", r.status == 200 and (self.data(r) or {}).get("status") == "ok",
                    f"http {r.status}")
         self.check("versions stamped", bool(v.get("scorer") and v.get("build") and v.get("registry")),
                    json.dumps(v))
         self.metrics["versions"] = v
+        d = self.data(r) or {}
+        enr = (d.get("enrichment") or {}).get("recent") or {}
+        self.check("enrichment coverage published", bool(enr) and "entityCoverage" in enr,
+                   f"last {enr.get('days')}d: entities {enr.get('entityCoverage')} spans {enr.get('spanCoverage')} geo {enr.get('geoCoverage')} over {enr.get('articles')} articles")
+        self.check("provider entities reach ≥20% of recent articles", (enr.get("entityCoverage") or 0) >= 0.2,
+                   f"{enr.get('entityCoverage')}", warn=True)
+        self.check("event geography reaches ≥20% of recent articles", (enr.get("geoCoverage") or 0) >= 0.2,
+                   f"{enr.get('geoCoverage')}", warn=True)
+        self.check("a story build is recorded", bool(d.get("lastBuildAt")), f"lastBuildAt={d.get('lastBuildAt')}", warn=True)
+        self.check("search index ready and in step", bool((d.get("searchIndex") or {}).get("ready"))
+                   and (d.get("searchIndex") or {}).get("indexed") == (d.get("searchIndex") or {}).get("catalogue"),
+                   json.dumps(d.get("searchIndex")))
+        self.metrics["enrichment"] = d.get("enrichment")
+        self.metrics["lastBuildAt"] = d.get("lastBuildAt")
         # documentation, not data: kept out of the exposure sweep (its `description` keys are prose)
         d = self.get("docs", "/v1/openapi.json", headers={}, record=False)
         self.check("openapi schema served", d.status == 200 and isinstance(d.json, dict)
@@ -250,12 +264,23 @@ class Battery:
         self.log("-- stories (the served build) --")
         r = self.get("stories", "/v1/stories", {"limit": 50})
         items = self.data(r) or []
-        page = ((r.json or {}).get("meta") or {}).get("page") or {}
+        meta = (r.json or {}).get("meta") or {}
+        page = meta.get("page") or {}
         self.check("stories list answers", r.status == 200 and isinstance(items, list),
                    f"{len(items)} on page, total={page.get('total')}")
+        self.check("build time stamped (meta.asOf) and served fresh", bool(meta.get("asOf")) and meta.get("stale") is False,
+                   f"asOf={meta.get('asOf')} stale={meta.get('stale')}", warn=True)
+        self.metrics["view"] = {"asOf": meta.get("asOf"), "stale": meta.get("stale")}
         if not items:
             self.check("catalogue holds clustered stories", False, "no stories — an empty or single-source catalogue")
             return None, None
+        self.check("default listing serves only trusted clusters", all((s.get("clusterTrust") or "ok") == "ok" for s in items),
+                   f"minTrust={meta.get('minTrust')} trusts={sorted({str(s.get('clusterTrust')) for s in items})}")
+        r_any = self.get("stories", "/v1/stories", {"limit": 50, "min_trust": "any"})
+        any_total = (((r_any.json or {}).get("meta") or {}).get("page") or {}).get("total") or 0
+        self.check("min_trust=any widens the listing or equals it", any_total >= (page.get("total") or 0),
+                   f"any={any_total} ok={page.get('total')}")
+        self.metrics["trustFilter"] = {"ok": page.get("total"), "any": any_total}
         n = len(items)
         pubs = [int(s.get("publisherCount") or 0) for s in items]
         with_summary = sum(1 for s in items if s.get("summary"))
@@ -309,8 +334,20 @@ class Battery:
         d = self.data(r) or {}
         cov = d.get("coverage") or []
         self.check("story detail answers", r.status == 200 and d.get("storyId") == sid, f"{len(cov)} coverage rows")
-        self.check("coverage count equals totalCoverage", len(cov) == d.get("totalCoverage"),
-                   f"{len(cov)} vs {d.get('totalCoverage')}")
+        omitted = int(d.get("coverageOmitted") or 0)
+        self.check("coverage + coverageOmitted equals totalCoverage", len(cov) + omitted == d.get("totalCoverage"),
+                   f"{len(cov)} listed + {omitted} omitted vs {d.get('totalCoverage')} (cap {d.get('coveragePerPublisher', 'none hit')})")
+        per_pub: dict = {}
+        for c in cov:
+            per_pub[c.get("publisher")] = per_pub.get(c.get("publisher"), 0) + 1
+        cap = d.get("coveragePerPublisher")
+        self.check("no publisher exceeds the coverage cap", cap is None or max(per_pub.values()) <= cap,
+                   f"max per publisher {max(per_pub.values()) if per_pub else 0}")
+        etag = r.headers.get("etag")
+        r304 = self.get("story", f"/v1/stories/{sid}", headers=dict(self.h_int, **{"If-None-Match": etag or ""}), record=False)
+        self.sent["int"] += 1
+        self.check("story carries an ETag and honours If-None-Match", bool(etag) and r304.status == 304,
+                   f"ETag={etag} revalidation -> {r304.status}")
         self.check("publishers equal coverage publishers",
                    sorted(set(c.get("publisher") for c in cov if c.get("publisher"))) == sorted(d.get("publishers") or []),
                    f"{len(d.get('publishers') or [])} publishers")
@@ -711,6 +748,13 @@ class Battery:
         self.metrics["metering"] = {"units": d.get("units"), "requests": d.get("requests"),
                                     "sentThisRun": sent, "meteredThisRun": seen,
                                     "endpointsMetered": len({x.get("endpoint") for x in (d.get("daily") or [])})}
+        rl = self.get("usage.requests", "/v1/usage/requests", {"limit": 5}, record=False)
+        rows = self.data(rl) or []
+        self.check("per-request log answers", rl.status == 200 and rows
+                   and all(x.get("endpoint") and x.get("status") and x.get("ts") for x in rows),
+                   f"{len(rows)} newest rows, e.g. {rows[0].get('endpoint') if rows else None} -> {rows[0].get('status') if rows else None}")
+        self.check("a 304 is logged as a request with no unit", any(x.get("status") == 304 and not x.get("units") for x in rows)
+                   or not any(x.get("status") == 304 for x in rows), "304 rows carry units=0" if rows else "")
 
     # -- report ---------------------------------------------------------------------------- #
     def report(self) -> dict:

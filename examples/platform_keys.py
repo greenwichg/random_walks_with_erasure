@@ -9,6 +9,7 @@
                                           [--rate 60] [--quota 10000] [--expires 2027-01-01T00:00:00+00:00]
     python examples/platform_keys.py list [--tenant acme]
     python examples/platform_keys.py revoke key_…
+    python examples/platform_keys.py rotate key_… [--grace-hours 24]   # successor printed once; old key expires
     python examples/platform_keys.py usage acme [--month 2026-09]
 
 ``mint`` prints the plaintext key ONCE, on its own line, and nothing else stores it: the database
@@ -68,6 +69,10 @@ def main(argv=None) -> int:
     ls = sub.add_parser("list")
     ls.add_argument("--tenant", default=None)
     sub.add_parser("revoke").add_argument("key_id")
+    ro = sub.add_parser("rotate", help="mint a successor with the same plan/scopes/limits; "
+                                       "the old key expires after --grace-hours (0 = now)")
+    ro.add_argument("key_id")
+    ro.add_argument("--grace-hours", type=float, default=24.0)
     u = sub.add_parser("usage")
     u.add_argument("tenant_id")
     u.add_argument("--month", default=None)
@@ -114,6 +119,17 @@ def main(argv=None) -> int:
         ok = st.platform_revoke_key(args.key_id)
         print(json.dumps({"keyId": args.key_id, "revoked": ok}))
         return 0 if ok else 1
+    if args.cmd == "rotate":
+        try:
+            secret, new, old = st.platform_rotate_key(args.key_id,
+                                                      grace_seconds=int(max(0.0, args.grace_hours) * 3600))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps({"new": new, "old": {"keyId": old["keyId"], "expiresAt": old["expiresAt"],
+                                               "revokedAt": old["revokedAt"]}}, indent=1), file=sys.stderr)
+        print(secret)                       # once, like mint
+        return 0
     if args.cmd == "usage":
         month = args.month or metering.month_of()
         print(json.dumps({"tenantId": args.tenant_id, "month": month,

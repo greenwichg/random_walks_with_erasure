@@ -2895,6 +2895,90 @@ class Store:
                 "joinedBuild": m.joined_build, "joinedAt": m.joined_at,
                 "leftBuild": m.left_build, "leftAt": m.left_at}
 
+    def persisted_story_view_rows(self) -> "dict | None":
+        """The last recorded build as data: every ACTIVE story with its latest snapshot and its
+        open membership — what the platform serves while a cold cache rebuilds. ``None`` when no
+        build was ever recorded."""
+        with self.session() as s:
+            build = s.scalars(select(StoryBuild).order_by(StoryBuild.id.desc()).limit(1)).first()
+            if build is None:
+                return None
+            latest = (select(StorySnapshot.story_id, func.max(StorySnapshot.id).label("sid"))
+                      .group_by(StorySnapshot.story_id).subquery())
+            snaps = s.execute(select(StorySnapshot).join(latest, StorySnapshot.id == latest.c.sid)
+                              .join(StoryRecord, StoryRecord.story_id == StorySnapshot.story_id)
+                              .where(StoryRecord.status == "active")).scalars().all()
+            stories = [dict(self._snapshot_row(x), storyId=x.story_id) for x in snaps]
+            members: dict = {}
+            for m in s.scalars(select(StoryMembership).where(StoryMembership.left_build.is_(None))
+                               .order_by(StoryMembership.id)).all():
+                members.setdefault(m.story_id, []).append(self._membership_row(m))
+        return {"buildId": build.id, "builtAt": build.built_at, "stories": stories,
+                "membership": members}
+
+    def feed_rows_for_urls(self, canonical_urls) -> dict:
+        """``{canonical_url: feed row}`` for a set of catalogue rows, WITHOUT bodies — the
+        serializer's input for a story rebuilt from the durable record. Batched like the other
+        ``*_for_urls`` lookups; unknown urls are absent."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        cols = (FeedArticle.canonical_url, FeedArticle.url, FeedArticle.publisher,
+                FeedArticle.source_publisher, FeedArticle.title, FeedArticle.description,
+                FeedArticle.published_at, FeedArticle.source_feed, FeedArticle.scored,
+                FeedArticle.image, FeedArticle.image_width, FeedArticle.image_height,
+                FeedArticle.image_mime, FeedArticle.image_source, FeedArticle.image_attribution,
+                FeedArticle.source_type, FeedArticle.source_provider, FeedArticle.external_id,
+                FeedArticle.article_state, FeedArticle.country, FeedArticle.language,
+                FeedArticle.article_id, FeedArticle.publisher_id, FeedArticle.licence_class,
+                FeedArticle.scorer_version, FeedArticle.fetched_at, FeedArticle.created_at)
+        keys = ("canonicalUrl", "url", "publisher", "sourcePublisher", "title", "description",
+                "publishedAt", "sourceFeed", "scored", "image", "imageWidth", "imageHeight",
+                "imageMimeType", "imageSource", "imageAttribution", "sourceType", "sourceProvider",
+                "externalId", "articleState", "country", "language", "articleId", "publisherId",
+                "licenceClass", "scorerVersion", "fetchedAt", "createdAt")
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                for rec in s.execute(select(*cols).where(FeedArticle.canonical_url.in_(urls[i:i + 500]))).all():
+                    row = dict(zip(keys, rec))
+                    try:
+                        row["scored"] = dict(json.loads(row.get("scored") or "{}"))
+                    except (TypeError, ValueError):
+                        row["scored"] = {}
+                    for k in ("fetchedAt", "createdAt"):
+                        v = row.get(k)
+                        row[k] = v.isoformat() if hasattr(v, "isoformat") else v
+                    row["body"] = None
+                    out[row["canonicalUrl"]] = row
+        return out
+
+    def enrichment_coverage(self, *, recent_days: int = 7) -> dict:
+        """How much of the catalogue the provider enrichment reaches — the number a customer of
+        ``/v1/entities`` and ``/v1/countries`` is really buying. Over non-provisional rows: the
+        share with provider entities (person / org), with our headline spans, and with event
+        locations; whole catalogue and the last ``recent_days`` of publication."""
+        cutoff = (_utcnow() - timedelta(days=recent_days)).isoformat()
+        live = or_(FeedArticle.article_state.is_(None), FeedArticle.article_state != "provisional")
+
+        def share(s, cond):
+            total = int(s.scalar(select(func.count()).select_from(FeedArticle).where(live, cond)) or 0)
+            def covered(model, extra=None):
+                sub = select(model.canonical_url).distinct()
+                if extra is not None:
+                    sub = sub.where(extra)
+                return int(s.scalar(select(func.count()).select_from(FeedArticle)
+                                    .where(live, cond, FeedArticle.canonical_url.in_(sub))) or 0)
+            ents = covered(ArticleEntity, ArticleEntity.kind.in_(PROVIDER_ENTITY_KINDS))
+            spans = covered(ArticleEntity, ArticleEntity.kind == "span")
+            geo = covered(ArticleEventLocation)
+            pct = lambda n: round(n / total, 3) if total else None   # noqa: E731
+            return {"articles": total, "withEntities": ents, "entityCoverage": pct(ents),
+                    "withSpans": spans, "spanCoverage": pct(spans),
+                    "withEventCountries": geo, "geoCoverage": pct(geo)}
+
+        with self.session() as s:
+            return {"catalogue": share(s, text("1 = 1")),
+                    "recent": dict(share(s, FeedArticle.published_at >= cutoff), days=recent_days)}
+
     def story_builds(self, *, limit: int = 50) -> list:
         with self.session() as s:
             rows = s.scalars(select(StoryBuild).order_by(StoryBuild.id.desc()).limit(limit)).all()
@@ -3061,6 +3145,62 @@ class Store:
         with self.session() as s:
             return [self._key_row(r) for r in s.scalars(q).all()]
 
+    def platform_key(self, key_id: str) -> "dict | None":
+        with self.session() as s:
+            r = s.get(PlatformKey, key_id)
+            return self._key_row(r) if r is not None else None
+
+    def platform_rotate_key(self, key_id: str, *, grace_seconds: int = 86400) -> "tuple[str, dict, dict]":
+        """Mint a successor with the same tenant, plan, scopes, classes, limits and label, and give
+        the old key ``grace_seconds`` to live (0 = revoked now). Returns ``(secret, new, old)`` —
+        the secret exists in plaintext exactly once, here."""
+        with self.session() as s:
+            old = s.get(PlatformKey, key_id)
+            if old is None or old.revoked_at:
+                raise ValueError(f"unknown or revoked key {key_id!r}")
+            old_row = self._key_row(old)
+        secret, new = self.platform_mint_key(
+            tenant_id=old_row["tenantId"], plan=old_row["plan"], label=old_row["label"],
+            scopes=old_row["scopes"], licence_classes=old_row["licenceClasses"],
+            rate_per_min=old_row["ratePerMin"], quota_month=old_row["quotaMonth"],
+            expires_at=old_row["expiresAt"])
+        now = _utcnow()
+        with self.session() as s:
+            old = s.get(PlatformKey, key_id)
+            if int(grace_seconds) <= 0:
+                old.revoked_at = now.isoformat()
+            else:
+                until = (now + timedelta(seconds=int(grace_seconds))).isoformat()
+                # never EXTEND a key by rotating it: an earlier expiry stands
+                if not old.expires_at or str(old.expires_at) > until:
+                    old.expires_at = until
+            s.flush()
+            old_row = self._key_row(old)
+        return secret, new, old_row
+
+    def platform_usage_events(self, tenant_id: str, *, key_id: "str | None" = None,
+                              since: "str | None" = None, until: "str | None" = None,
+                              status: "int | None" = None, limit: int = 100,
+                              before_id: "int | None" = None) -> list:
+        """The tenant's per-request log, newest first, keyset-paged by event id. No query text is
+        stored, so a row is endpoint + status + latency + request id — never what was searched."""
+        q = select(PlatformUsageEvent).where(PlatformUsageEvent.tenant_id == tenant_id)
+        if key_id:
+            q = q.where(PlatformUsageEvent.key_id == key_id)
+        if since:
+            q = q.where(PlatformUsageEvent.ts >= since)
+        if until:
+            q = q.where(PlatformUsageEvent.ts <= until)
+        if status is not None:
+            q = q.where(PlatformUsageEvent.status == int(status))
+        if before_id is not None:
+            q = q.where(PlatformUsageEvent.id < int(before_id))
+        q = q.order_by(PlatformUsageEvent.id.desc()).limit(max(1, int(limit)))
+        with self.session() as s:
+            return [{"id": e.id, "ts": e.ts, "keyId": e.key_id, "endpoint": e.endpoint,
+                     "units": e.units, "status": e.status, "requestId": e.request_id,
+                     "latencyMs": e.latency_ms} for e in s.scalars(q).all()]
+
     def platform_revoke_key(self, key_id: str) -> bool:
         with self.session() as s:
             r = s.get(PlatformKey, key_id)
@@ -3084,13 +3224,16 @@ class Store:
                                          endpoint=endpoint)
                 s.add(row)
             row.requests = int(row.requests or 0) + 1
-            if 200 <= int(status) < 400:
+            # A 304 (the caller's cached copy still stands) is a request on the record and a unit
+            # the customer does not pay: nothing was delivered.
+            if 200 <= int(status) < 300:
                 row.units = int(row.units or 0) + int(units)
-            else:
+            elif int(status) >= 400:
                 row.errors = int(row.errors or 0) + 1
             if events:
                 s.add(PlatformUsageEvent(ts=ts, tenant_id=tenant_id, key_id=key_id,
-                                         endpoint=endpoint[:64], units=int(units),
+                                         endpoint=endpoint[:64],
+                                         units=int(units) if 200 <= int(status) < 300 else 0,
                                          status=int(status), request_id=request_id,
                                          latency_ms=latency_ms))
 

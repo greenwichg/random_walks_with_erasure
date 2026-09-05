@@ -32,8 +32,11 @@ Surface (scope in brackets; ``/health``, ``/openapi.json`` and ``/docs`` need no
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import time
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -115,6 +118,19 @@ def _query_terms(q: str) -> list:
     return [t.strip('"') for t in expr.split(" ") if t]
 
 
+def _etag_of(data) -> str:
+    """A weak validator over the OBJECT (never the envelope's request id or timestamps)."""
+    raw = json.dumps(data, sort_keys=True, default=str, ensure_ascii=False).encode("utf-8")
+    return 'W/"' + hashlib.sha1(raw).hexdigest()[:24] + '"'
+
+
+def _seconds_to_next_month(now: "datetime | None" = None) -> int:
+    """Seconds until the quota month (UTC calendar month) rolls over — the honest Retry-After."""
+    now = now or datetime.now(timezone.utc)
+    end = datetime(now.year + (now.month // 12), now.month % 12 + 1, 1, tzinfo=timezone.utc)
+    return max(1, int((end - now).total_seconds()) + 1)
+
+
 def _page_meta(limit: int, offset: int, total: Optional[int], has_more: Optional[bool] = None) -> dict:
     more = has_more if has_more is not None else (total is not None and offset + limit < total)
     return {"limit": limit, "cursor": str(offset), "nextCursor": str(offset + limit) if more else None,
@@ -178,8 +194,10 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         usage = metering.check_quota(st, p)
         request.state.platform_usage = usage
         if usage["exceeded"]:
+            # The quota is a calendar month (UTC): the honest Retry-After is the time to its end.
             raise PlatformError(429, "quota_exceeded",
-                                f"Monthly quota of {usage['limit']} units reached.")
+                                f"Monthly quota of {usage['limit']} units reached.",
+                                headers={"Retry-After": str(_seconds_to_next_month())})
         return p
 
     def scoped(scope: str):
@@ -249,11 +267,66 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                               page=_page_meta(limit, offset, res.get("total"), res.get("hasMore")),
                               **extra)
 
-    def _story_or_404(st, story_id: str) -> dict:
-        s = story_service.get_story(st, story_id)
+    def _universe(st) -> "tuple[list | None, dict]":
+        """The story universe to answer from and how fresh it is.
+
+        A servable cached build -> ``(None, {asOf, stale: False})``: the callers let
+        ``story_service`` read the same cache (no second build). A cold cache -> the durable record
+        of the last build, ``(stories, {asOf, stale: True})``, with one background build queued so
+        the next request finds the cache warm. Never a clustering on the request thread."""
+        live, as_of = story_service.default_view_state(st)
+        if live is not None:
+            return None, {"asOf": as_of, "stale": False}
+        persisted, as_of = story_service.persisted_default_view(st)
+        if as_of is None:
+            # Nothing was ever recorded (a first boot): the only answer is the build itself, as
+            # before this path existed — once, and the cache holds it from then on.
+            return None, None
+        story_service.request_default_refresh(st)
+        return persisted, {"asOf": as_of, "stale": True}
+
+    def _fresh_view(st, view: "dict | None") -> dict:
+        """The freshness meta for an answer the cache produced (``view`` None = the request built
+        the cache itself): the entry's own build time, never stale."""
+        if view is not None:
+            return view
+        _, as_of = story_service.default_view_state(st)
+        return {"asOf": as_of, "stale": False}
+
+    def _story_or_404(st, story_id: str) -> "tuple[dict, dict]":
+        """One story + the freshness meta it was read under — from the cache, or from the durable
+        record while the cache is cold (the same rule as the listing)."""
+        universe, view = _universe(st)
+        if universe is None:
+            s = story_service.get_story(st, story_id)
+            view = _fresh_view(st, view)
+        else:
+            s = next((x for x in universe if x.get("id") == story_id), None)
         if s is None:
             raise PlatformError(404, "not_found", "No live story has that id.")
-        return s
+        return s, view
+
+    def _object_response(request: Request, envelope: dict, *, status: int = 200) -> Response:
+        """An object with a weak ETag; ``If-None-Match`` that matches answers 304 with no body —
+        recorded as a request, never as a unit (nothing was delivered)."""
+        etag = _etag_of(envelope.get("data"))
+        if etag in {t.strip() for t in (request.headers.get("if-none-match") or "").split(",")}:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, must-revalidate"})
+        return JSONResponse(envelope, status_code=status,
+                            headers={"ETag": etag, "Cache-Control": "private, must-revalidate"})
+
+    _health_cache: dict = {}
+
+    def _enrichment(st) -> "dict | None":
+        now = time.time()
+        if _health_cache.get("at", 0) > now - 60:
+            return _health_cache.get("value")
+        try:
+            value = st.enrichment_coverage()
+        except Exception:                    # noqa: BLE001 — health never fails on a count
+            value = None
+        _health_cache.update(at=now, value=value)
+        return value
 
     def _row_or_404(st, ref: str) -> dict:
         row = st.resolve_article(ref)
@@ -268,11 +341,26 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                                 "lean / blindspot filters are unavailable.")
 
     # ---- public: liveness + documentation ------------------------------------------------ #
-    @router.get("/health", summary="Platform liveness + the versions in force",
+    @router.get("/health", summary="Platform liveness, versions, enrichment coverage",
                 description="No key needed. `meta.versions` names the scorer, build, build "
-                            "configuration and registry snapshot every other answer reflects.")
+                            "configuration and registry snapshot every other answer reflects. "
+                            "`enrichment` is how much of the catalogue carries provider "
+                            "entities and event geography (what `/v1/entities`, `/v1/countries` "
+                            "and the comparison's geography can answer over), whole catalogue and "
+                            "the last seven days; `lastBuildAt` is the newest recorded story build.")
     def health(request: Request) -> dict:
-        return shape.envelope({"status": "ok"}, request_id=rid(request))
+        st = get_store()
+        try:
+            builds = st.story_builds(limit=1)
+        except Exception:                    # noqa: BLE001
+            builds = []
+        try:
+            index = st.search_index_status()
+        except Exception:                    # noqa: BLE001
+            index = None
+        return shape.envelope({"status": "ok", "enrichment": _enrichment(st),
+                               "lastBuildAt": builds[0]["builtAt"] if builds else None,
+                               "searchIndex": index}, request_id=rid(request))
 
     _schema: dict = {}
 
@@ -309,11 +397,14 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
     def me(request: Request, p: Principal = Depends(principal_dep)) -> dict:
         st = get_store()
         tenant = st.platform_tenant(p.tenant_id) or {}
+        key = st.platform_key(p.key_id) or {}
         month = metering.month_of()
         totals = st.platform_usage_month(p.tenant_id, month)
         return shape.envelope({
             "tenantId": p.tenant_id, "tenantName": tenant.get("name"), "tenantKind": p.tenant_kind,
             "keyId": p.key_id, "plan": p.plan, "scopes": sorted(p.scopes),
+            "key": {"label": key.get("label"), "prefix": key.get("prefix"),
+                    "createdAt": key.get("createdAt"), "expiresAt": key.get("expiresAt")},
             "licenceClasses": sorted(p.licence_classes),
             "limits": {"ratePerMin": p.rate_per_min, "quotaMonth": p.quota_month},
             "usage": {"month": month, "units": totals["units"], "requests": totals["requests"]},
@@ -350,9 +441,10 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         return _article_page(request, st, res, p, limit=limit, offset=offset, q=q)
 
     @router.get("/articles/by-url", summary="One article by any URL form ever observed",
-                description="Resolves the raw, canonical or any aliased URL form to the article.")
+                description="Resolves the raw, canonical or any aliased URL form to the article. "
+                            "Carries an `ETag`; `If-None-Match` answers 304 (a request, not a unit).")
     def article_by_url(request: Request, url: str = Query(..., max_length=2048),
-                       p: Principal = Depends(scoped("articles:read"))) -> dict:
+                       p: Principal = Depends(scoped("articles:read"))) -> Response:
         return _one_article(request, url, p)
 
     @router.get("/articles/{article_id}/entities", summary="Named entities on one article",
@@ -376,12 +468,13 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
 
     @router.get("/articles/{ref:path}", summary="One article by id",
                 description="`ar_…` id (or a URL). Carries the story it sits in now and the "
-                            "channels it was observed through.")
+                            "channels it was observed through. Carries an `ETag`; `If-None-Match` "
+                            "answers 304 (a request, not a unit).")
     def article_by_id(request: Request, ref: str,
-                      p: Principal = Depends(scoped("articles:read"))) -> dict:
+                      p: Principal = Depends(scoped("articles:read"))) -> Response:
         return _one_article(request, ref, p)
 
-    def _one_article(request: Request, ref: str, p: Principal) -> dict:
+    def _one_article(request: Request, ref: str, p: Principal) -> Response:
         st = get_store()
         row = st.resolve_article(ref)
         if row is None:
@@ -408,7 +501,7 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         out["provenance"] = [{"channel": x["channel"], "firstObservedAt": x["firstObservedAt"],
                               "lastObservedAt": x["lastObservedAt"],
                               "licenceClass": x["licenceClass"]} for x in prov]
-        return shape.envelope(out, request_id=rid(request))
+        return _object_response(request, shape.envelope(out, request_id=rid(request)))
 
     @router.get("/entities", summary="Articles carrying a named entity",
                 description="The catalogue rows on which `name` was extracted as a `person` or "
@@ -440,11 +533,21 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         return shape.envelope(items, request_id=rid(request), total=len(items))
 
     # ---- stories ---------------------------------------------------------------------- #
+    TRUST_PATTERN = "^(ok|unverified|any)$"
+
+    def _trust_floor(min_trust: str) -> Optional[str]:
+        return None if min_trust == "any" else min_trust
+
     @router.get("/stories", summary="News events, clustered — filtered and paged",
                 description="The served story build: one row per event with its publishers, "
                             "countries, freshness, lifecycle and tags. `q` finds the events whose "
                             "member articles match the words (any order, all required, stemmed); "
                             "under the default `sort=top` the best-matched events lead. "
+                            "`min_trust` (default `ok`) keeps only events whose clustering the "
+                            "independent geography signal corroborates or cannot chain; "
+                            "`unverified` also keeps big unchecked ones, `any` keeps all. "
+                            "`meta.asOf` is the build served; `meta.stale: true` means the durable "
+                            "record of the last build answered while a fresh one runs. "
                             "`lean` / `blindspot` filters exist only where ratings are published.")
     def stories(request: Request, p: Principal = Depends(scoped("stories:read")),
                 q: Optional[str] = Query(None, max_length=200),
@@ -453,30 +556,40 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                 tag: Optional[str] = None, type: Optional[str] = None,
                 lean: Optional[str] = None, blindspot: Optional[str] = None,
                 from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
+                min_trust: str = Query("ok", pattern=TRUST_PATTERN),
                 sort: str = "top", limit: int = Query(30, ge=1, le=MAX_LIMIT),
                 cursor: Optional[str] = None) -> dict:
         st = get_store()
         _ratings_or_403(lean, blindspot)
         offset = _cursor(cursor)
+        universe, view = _universe(st) if not (from_ or to) else (None, {"asOf": None, "stale": False})
         res = story_service.list_stories(st, topic=topic,
                                          publisher=publisher_name(st, publisher_id, publisher),
                                          lean=lean, country=country, blindspot=blindspot,
                                          story_type=type, tag=tag, date_from=from_, date_to=to,
-                                         sort=sort, limit=limit, offset=offset, query=q)
+                                         sort=sort, limit=limit, offset=offset, query=q,
+                                         stories=universe, min_trust=_trust_floor(min_trust))
         extra = {"query": {"q": q, "terms": _query_terms(q)}} if q else {}
-        return _story_page(request, st, res, p, limit=limit, offset=offset, **extra)
+        return _story_page(request, st, res, p, limit=limit, offset=offset, minTrust=min_trust,
+                           **_fresh_view(st, view), **extra)
 
     @router.get("/stories/{story_id}", summary="One story with its coverage",
-                description="The event, every member article (identity, publisher, time, "
+                description="The event, its member articles (identity, publisher, time, "
                             "attachment) and — for members inside the plan's licence classes — "
-                            "their headline and link.")
+                            "their headline and link. Coverage lists at most "
+                            "`coverage_per_publisher` rows per outlet (newest first; deployment "
+                            "default 3, `0` = all); `coverageOmitted` counts the rest, so "
+                            "`coverage + coverageOmitted = totalCoverage`. Carries an `ETag`; "
+                            "`If-None-Match` answers 304 (a request, not a unit).")
     def story(request: Request, story_id: str,
-              p: Principal = Depends(scoped("stories:read"))) -> dict:
+              coverage_per_publisher: Optional[int] = Query(None, ge=0, le=100),
+              p: Principal = Depends(scoped("stories:read"))) -> Response:
         st = get_store()
-        s = _story_or_404(st, story_id)
+        s, view = _story_or_404(st, story_id)
         s = dict(s, **story_intelligence.compute_summary(s))
         metas = meta_for(st, [c.get("url") for c in (s.get("coverage") or ())])
-        return shape.envelope(shape.story(s, metas, p.licence_classes), request_id=rid(request))
+        body = shape.story(s, metas, p.licence_classes, per_publisher=coverage_per_publisher)
+        return _object_response(request, shape.envelope(body, request_id=rid(request), **view))
 
     @router.get("/stories/{story_id}/similar", summary="Stories about the same or a related event")
     def similar(request: Request, story_id: str, limit: int = Query(10, ge=1, le=25),
@@ -493,10 +606,10 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
     def intelligence(request: Request, story_id: str,
                      p: Principal = Depends(scoped("stories:read"))) -> dict:
         st = get_store()
-        s = _story_or_404(st, story_id)
+        s, view = _story_or_404(st, story_id)
         intel = story_intelligence.compute_intelligence(s, reads=None)
         intel.pop("newSinceLastVisit", None)              # reader-relative: not on the platform
-        return shape.envelope(intel, request_id=rid(request))
+        return shape.envelope(intel, request_id=rid(request), **view)
 
     @router.get("/stories/{story_id}/coverage-comparison",
                 summary="One member article against the rest of its story's coverage",
@@ -514,7 +627,7 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         if not ref:
             raise PlatformError(400, "invalid_request",
                                 "Name the member article: article_id= or url=.")
-        s = _story_or_404(st, story_id)
+        s, view = _story_or_404(st, story_id)
         row = _row_or_404(st, ref)
         canon = row["canonicalUrl"]
         # The comparison runs over the coverage the platform serves: a hidden member (reader-
@@ -540,7 +653,7 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
             target_countries=countries_, member=member)
         out = shape.comparison(result or {}, metas, p.licence_classes)
         out["storyId"], out["articleId"] = story_id, row.get("articleId")
-        return shape.envelope(out, request_id=rid(request))
+        return shape.envelope(out, request_id=rid(request), **view)
 
     @router.get("/stories/{story_id}/history", summary="How the story was served over time",
                 description="The persisted record: every snapshot the served build changed, and "
@@ -603,19 +716,28 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                             "association first, as `/v1/stories` rows. 404 when no live story "
                             "carries it.")
     def tag_stories(request: Request, tag: str,
+                    min_trust: str = Query("ok", pattern=TRUST_PATTERN),
                     limit: int = Query(30, ge=1, le=MAX_LIMIT), cursor: Optional[str] = None,
                     p: Principal = Depends(scoped("stories:read"))) -> dict:
         st = get_store()
         offset = _cursor(cursor)
         name = " ".join(tag.strip().lower().split())
-        story_service.list_stories(st, limit=1)           # same warm as /v1/tags
+        universe, view = _universe(st)
+        if universe is None:
+            story_service.list_stories(st, limit=1)       # the cache holds the build after this
+            universe = story_service.default_story_view(st)
+            view = _fresh_view(st, view)
+        by_id = {s.get("id"): s for s in universe}
         ids = st.stories_for_tag(name, limit=1000)
-        found = [s for s in (story_service.get_story(st, sid) for sid in ids) if s is not None]
+        floor = story_service.TRUST_ORDER.get(_trust_floor(min_trust) or "", 0)
+        found = [s for s in (by_id.get(sid) for sid in ids) if s is not None
+                 and story_service.TRUST_ORDER.get(s.get("clusterTrust") or "ok", 0) >= floor]
         if not found:
             raise PlatformError(404, "not_found", "No live story carries that tag.")
         res = {"stories": found[offset:offset + limit], "total": len(found),
                "hasMore": offset + limit < len(found)}
-        return _story_page(request, st, res, p, limit=limit, offset=offset, tag=name)
+        return _story_page(request, st, res, p, limit=limit, offset=offset, tag=name,
+                           minTrust=min_trust, **view)
 
     # ---- publishers ------------------------------------------------------------------- #
     @router.get("/publishers", summary="Find publishers: by name, host, place, kind — or the busiest",
@@ -665,7 +787,7 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                             "counts, and the counted profile (topics, languages, event "
                             "countries, co-coverage).")
     def publisher(request: Request, publisher_id: str,
-                  p: Principal = Depends(scoped("publishers:read"))) -> dict:
+                  p: Principal = Depends(scoped("publishers:read"))) -> Response:
         st = get_store()
         row = _publisher_or_404(st, publisher_id)
         profile = None
@@ -673,8 +795,8 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
             profile = publisher_service.get_publisher(st, row["name"], recent_limit=0)
         except Exception:                    # noqa: BLE001 — the curated row stands alone
             profile = None
-        return shape.envelope(shape.publisher(row, st.publisher_hosts(publisher_id), profile),
-                              request_id=rid(request))
+        return _object_response(request, shape.envelope(
+            shape.publisher(row, st.publisher_hosts(publisher_id), profile), request_id=rid(request)))
 
     @router.get("/publishers/{publisher_id}/articles", summary="One publisher's articles",
                 description="`/v1/articles` scoped to the publisher.")
@@ -700,17 +822,21 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                           q: Optional[str] = Query(None, max_length=200), topic: Optional[str] = None,
                           country: Optional[str] = None,
                           from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
+                          min_trust: str = Query("ok", pattern=TRUST_PATTERN),
                           sort: str = "top", limit: int = Query(30, ge=1, le=MAX_LIMIT),
                           cursor: Optional[str] = None,
                           p: Principal = Depends(scoped("stories:read"))) -> dict:
         st = get_store()
         row = _publisher_or_404(st, publisher_id)
         offset = _cursor(cursor)
+        universe, view = _universe(st) if not (from_ or to) else (None, {"asOf": None, "stale": False})
         res = story_service.list_stories(st, publisher=row["name"], topic=topic, country=country,
                                          date_from=from_, date_to=to, sort=sort, limit=limit,
-                                         offset=offset, query=q)
+                                         offset=offset, query=q, stories=universe,
+                                         min_trust=_trust_floor(min_trust))
         extra = {"query": {"q": q, "terms": _query_terms(q)}} if q else {}
-        return _story_page(request, st, res, p, limit=limit, offset=offset, **extra)
+        return _story_page(request, st, res, p, limit=limit, offset=offset, minTrust=min_trust,
+                           **_fresh_view(st, view), **extra)
 
     # ---- outlets (the index, not the catalogue) --------------------------------------- #
     @router.get("/outlets/search", summary="Find news outlets by place, language or name",
@@ -748,6 +874,27 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         return shape.envelope(items, request_id=rid(request), total=len(items), query=plan)
 
     # ---- the meter -------------------------------------------------------------------- #
+    @router.get("/usage/requests", summary="The tenant's per-request log",
+                description="Every metered request, newest first: time, key, endpoint template, "
+                            "units, status, request id, latency. No query text is ever stored. "
+                            "Filter by `key_id`, `from` / `to` (ISO timestamps) and `status`; page "
+                            "with `cursor` = the previous `nextCursor`.")
+    def usage_requests(request: Request, p: Principal = Depends(scoped("usage:read")),
+                       key_id: Optional[str] = None,
+                       from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
+                       status: Optional[int] = Query(None, ge=100, le=599),
+                       limit: int = Query(100, ge=1, le=500), cursor: Optional[str] = None) -> dict:
+        st = get_store()
+        before = _cursor(cursor) or None
+        rows = st.platform_usage_events(p.tenant_id, key_id=key_id, since=from_, until=to,
+                                        status=status, limit=limit + 1, before_id=before)
+        more = len(rows) > limit
+        rows = rows[:limit]
+        nxt = str(rows[-1]["id"]) if more and rows else None
+        return shape.envelope(rows, request_id=rid(request),
+                              page={"limit": limit, "cursor": str(before or ""), "nextCursor": nxt,
+                                    "total": None})
+
     @router.get("/usage", summary="The tenant's own meter",
                 description="Units and requests this month (or `month=YYYY-MM`), per day, key "
                             "and endpoint. Refused requests count as requests, never as units.")

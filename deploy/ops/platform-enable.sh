@@ -116,6 +116,34 @@ st = store.Store(os.environ.get("RWE_DB_URL") or store.default_db_url())
 pubs, total = st.list_publishers(limit=1)
 builds = st.story_builds(limit=1)
 print(f"publishers table: {total} rows; story builds recorded: {'yes, newest ' + str(builds[0]['builtAt']) if builds else 'none yet (recorded on the next served build)'}")
+print(f"search index: {st.search_index_status()}")
+PY
+fi
+
+# ── 4b. enrichment backfill: provider entities (GDELT GKG, network) + our headline spans (local) ──
+step "4b/7 enrichment backfill (what /v1/entities, /v1/countries and the comparison's geography answer over)"
+if [ "$MODE" = "dry" ]; then
+  echo "  would run: gdelt_entity_backfill.py --hours ${PLATFORM_GKG_HOURS:-48} ; entity_span_backfill.py ; then report /v1/health enrichment"
+else
+  if [ "$MODE" = "enable" ]; then
+    echo "  provider entities from GDELT GKG (last ${PLATFORM_GKG_HOURS:-48}h of files; idempotent; a missing window is skipped):"
+    if dc exec -T api python examples/gdelt_entity_backfill.py --hours "${PLATFORM_GKG_HOURS:-48}" 2>&1 | tail -3 | sed 's/^/    /'; then
+      ok "entity backfill finished"
+    else
+      warn "entity backfill returned non-zero (egress to data.gdeltproject.org? re-run later; the steady-state enricher keeps filling)"
+    fi
+    echo "  headline spans (local rule extractor):"
+    dc exec -T api python examples/entity_span_backfill.py 2>&1 | tail -2 | sed 's/^/    /' || warn "span backfill returned non-zero"
+  fi
+  dc exec -T api python - <<'PY' 2>/dev/null | sed 's/^/    /'
+import json, os, sys
+sys.path.insert(0, "examples")
+import store
+st = store.Store(os.environ.get("RWE_DB_URL") or store.default_db_url())
+e = st.enrichment_coverage()
+r = e["recent"]
+print(f"enrichment, last {r['days']} days: {r['articles']} articles; entities on {r['withEntities']} ({r['entityCoverage']}), spans on {r['withSpans']} ({r['spanCoverage']}), event countries on {r['withEventCountries']} ({r['geoCoverage']})")
+print(f"enrichment, whole catalogue: {json.dumps(e['catalogue'])}")
 PY
 fi
 

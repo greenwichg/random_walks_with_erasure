@@ -85,22 +85,22 @@ unchanged (substring) unless `RWE_SEARCH_TERMS=1`.
 1. **Term search with ranking — done.** FTS5 behind `q` on `/v1/articles`, `/v1/stories` and the
    per-publisher listings; `sort=relevance` default with a query; `meta.query.terms` echoed.
    Remaining choice: flip the consumer Search page to the same engine (`RWE_SEARCH_TERMS=1`).
-2. **Cold-build latency on `/v1/stories`.** The first request after a restart or cache expiry
-   builds the window on the request thread (2.2 s at 121 articles; tens of seconds at production
-   size). Serve the persisted last build (`story_snapshots` is already written) while the fresh
-   one builds, and expose `meta.asOf` so a customer can tell.
-3. **Enrichment coverage as a product guarantee.** `/v1/countries`, `/v1/entities` and the
-   coverage comparison's geography findings are only as good as GDELT enrichment coverage
-   (24% provider-covered at the last audit). Publish the coverage number in `/v1/health`, run the
-   entity backfill before the first key, and decide whether the headline-span extractor's `span`
-   kind should count as a default entity kind for the API.
-4. **Cluster quality gates on the wire.** `clusterTrust` is served but nothing stops a low-trust
-   or over-merged story from being the top result. Add `min_trust=ok` as a default filter on
-   `/v1/stories` (opt-out), and cap articles-per-publisher in a served story's coverage.
-5. **Developer experience.** Idempotent SDK-shaped responses need: stable sort options
-   documented per endpoint, `If-None-Match` / `ETag` on story and article objects, a
-   `Retry-After` on quota exhaustion, per-key request logs a customer can read (`/v1/usage`
-   already has the rows), and a self-service key rotation command.
+2. **Cold-build latency on `/v1/stories` — done.** A cold cache answers from the durable record
+   of the last build (`stale: true`, that build's `asOf`) and queues one background build; no
+   story request clusters on the request thread. The battery reports `meta.asOf` / `stale`.
+3. **Enrichment as a guarantee — done.** `/v1/health` publishes entity, span and event-geography
+   coverage (catalogue and last 7 days); `platform-enable.sh` runs the GDELT entity backfill and
+   the span backfill before validating and prints the coverage; spans stay opt-in (`kind=span`).
+   The battery WARNs below 20% recent coverage — the production number decides.
+4. **Cluster quality on the wire — done.** `min_trust=ok` is the default on every story
+   listing; coverage lists at most 3 rows per outlet with `coverageOmitted` counting the rest.
+5. **Developer experience — done.** Weak `ETag` + `If-None-Match` → 304 (a request, no unit) on
+   story, article and publisher objects; `Retry-After` on `quota_exceeded` (seconds to the month's
+   end); `GET /v1/usage/requests` per-key request log; `platform_keys.py rotate` with a grace
+   period; `/v1/me` shows the key's expiry.
+
+Remaining before an external key: the production battery itself (the bars above), and the
+ratings / provider-ToS decisions that gate `RWE_PLATFORM_PUBLISH_RATINGS`.
 
 ## Production run
 
@@ -115,13 +115,16 @@ before a private external key is minted:
 
 1. **0 FAIL** in the battery, and every exposure check PASS (not SKIP) — a developer-plan key in
    the run, which the script mints.
-2. **Backfill complete**: `missingArticleId = missingPublisherId = missingLicence = 0`.
-3. **Clustering shape** on the live window: largest-story share well under 40%, ≤3 articles per
-   publisher per story, `clusterTrust: ok` on the top stories.
-4. **Enrichment present**: event countries on ≥30% of stories, provider entities on the top
-   story's articles (otherwise `/v1/countries`, `/v1/entities` are empty for customers).
-5. **Latency**: warm p95 under 1.5 s on every endpoint; note the cold `/v1/stories` cost.
-6. **Metering exact**: metered = sent, `recordErrors` 0.
+2. **Backfill complete**: `missingArticleId = missingPublisherId = missingLicence = 0`; search
+   index `indexed == catalogue`.
+3. **Clustering shape** on the live window: the default listing (`min_trust=ok`) holds only
+   `clusterTrust: ok`; largest-story share well under 40%; no publisher above the coverage cap.
+4. **Enrichment present**: `/v1/health` recent `entityCoverage` and `geoCoverage` ≥ 0.2 (the
+   battery WARNs below), provider entities on the top story's articles, event countries on ≥30%
+   of stories.
+5. **Freshness**: `meta.stale: false` on the listing in steady state, `lastBuildAt` recent; warm
+   p95 under 1.5 s on every endpoint.
+6. **Metering exact**: metered = sent, `recordErrors` 0, a 304 logged with `units: 0`.
 7. **Public edge**: `https://hidden-view.com/v1/health` 200 and a keyless `/v1/articles`
    answering the platform's `unauthenticated` envelope; the consumer site unchanged.
 

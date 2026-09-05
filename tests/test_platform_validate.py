@@ -109,7 +109,9 @@ def test_cli_writes_a_report_and_exit_code(tmp_path):
     assert rc == 0
     report = json.loads(out.read_text())
     assert report["summary"]["FAIL"] == 0 and report["samples"]["me"]["plan"] == "internal"
-    assert "hv_live_" not in out.read_text()          # keys never reach the report
+    import re
+    # keys never reach the report: only the 12-char display prefix (hv_live_ + 4) may appear
+    assert not re.search(r"hv_live_[A-Za-z0-9_\-]{5,}", out.read_text())
 
 
 def test_enable_script_and_caddy_route_are_in_place():
