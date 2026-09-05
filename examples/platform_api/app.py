@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from platform_api.auth import PlatformError
-from platform_api.routes import build_router
+from platform_api.routes import DESCRIPTION, TITLE, VERSION, build_router
 
 _MARK = "_platform_api_mounted"
 
@@ -53,8 +53,9 @@ def mount(app: FastAPI, get_store: Callable, *,
 
 def create_app(store_) -> FastAPI:
     """A standalone platform app over ``store_`` — one uvicorn away from its own process."""
-    app = FastAPI(title="Hidden View Platform API", version="1.0.0",
-                  summary="The commercial front door over the Hidden View news-intelligence engine.")
+    app = FastAPI(title=TITLE, version=VERSION, description=DESCRIPTION,
+                  summary="The commercial front door over the Hidden View news-intelligence engine.",
+                  docs_url=None, redoc_url=None, openapi_url=None)   # /v1/docs + /v1/openapi.json
     mount(app, lambda: store_)
     return app
 

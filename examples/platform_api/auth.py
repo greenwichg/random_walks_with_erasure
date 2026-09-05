@@ -42,11 +42,15 @@ class Principal:
 
 
 def bearer_from(request) -> Optional[str]:
+    """The presented key: ``Authorization: Bearer …`` first, ``X-API-Key: …`` as the alternative
+    many HTTP clients and gateways prefer. Query-string keys are deliberately not accepted — they
+    land in access logs and browser histories."""
     raw = request.headers.get("authorization") or ""
     scheme, _, value = raw.strip().partition(" ")
-    if scheme.lower() != "bearer" or not value.strip():
-        return None
-    return value.strip()
+    if scheme.lower() == "bearer" and value.strip():
+        return value.strip()
+    alt = (request.headers.get("x-api-key") or "").strip()
+    return alt or None
 
 
 def authenticate(store_, request, *, now: "datetime | None" = None) -> Principal:

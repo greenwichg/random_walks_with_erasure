@@ -2349,6 +2349,15 @@ def _rate_limit_check(request: Request) -> "JSONResponse | None":
     scope = ratelimit.scope_for(request.method, request.url.path)
     if scope is None:
         return None
+    if request.url.path.startswith("/v1/"):
+        # The platform surface meters itself per KEY (platform_api.metering: the plan's rate and
+        # the tenant's quota). A keyed request is therefore exempt from this per-IP bucket, which
+        # would otherwise cap every customer behind one address at the anonymous read rate. A
+        # request presenting NO key gets the brute-force scope instead of the read scope — the
+        # only thing it can be doing is guessing.
+        if request.headers.get("authorization") or request.headers.get("x-api-key"):
+            return None
+        scope = "auth"
     identity = _rate_identity(request)
     rate = ratelimit.rate_for(scope, production=_production())
     ok, retry_after = limiter.check(f"{scope}|{identity}", rate)

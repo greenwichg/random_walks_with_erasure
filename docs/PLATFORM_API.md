@@ -62,15 +62,34 @@ selling a plan above that rate to callers behind one address.
 
 ## Requests
 
-```
-Authorization: Bearer hv_live_…
-GET /v1/articles?q=&publisher_id=&topic=&country=&from=&to=&sort=newest&limit=30&cursor=
-GET /v1/articles/{article_id}          GET /v1/articles/by-url?url=
-GET /v1/stories?topic=&publisher_id=&country=&tag=&type=&from=&to=&sort=top&limit=&cursor=
-GET /v1/stories/{story_id}             /similar   /intelligence   /history  (stories:history)
-GET /v1/publishers?name=               GET /v1/publishers/{publisher_id}
-GET /v1/usage?month=YYYY-MM            GET /v1/health
-```
+The key travels as `Authorization: Bearer hv_live_…` or `X-API-Key: hv_live_…` (never in the
+query string). Interactive reference: `GET /v1/docs` (Swagger UI) over `GET /v1/openapi.json`,
+both public.
+
+| endpoint | scope | what it answers |
+|---|---|---|
+| `GET /v1/health` | — | liveness + the versions in force |
+| `GET /v1/me` | any key | the key's tenant, plan, scopes, licence classes, limits, month-to-date |
+| `GET /v1/articles?q=&publisher_id=&publisher=&topic=&country=&from=&to=&sort=newest&limit=&cursor=` | `articles:read` | catalogue search (FTS + filters), provisional rows excluded in SQL |
+| `GET /v1/articles/{article_id}` · `GET /v1/articles/by-url?url=` | `articles:read` | one article, its current `storyId`, its provenance channels |
+| `GET /v1/articles/{article_id}/entities?kind=` | `articles:read` | provider-extracted `person` / `org` names (GDELT attribution), `kind=span` for our headline spans |
+| `GET /v1/entities?name=&kind=&limit=&cursor=` | `articles:read` | the articles an entity was extracted on, newest first |
+| `GET /v1/countries` | `articles:read` | per-country article + publisher counts over EVENT geography |
+| `GET /v1/stories?topic=&publisher_id=&country=&tag=&type=&lean=&blindspot=&from=&to=&sort=top&limit=&cursor=` | `stories:read` | the served story build, paged (`lean`/`blindspot` only where ratings are published) |
+| `GET /v1/stories/{story_id}` | `stories:read` | one story with its coverage |
+| `GET /v1/stories/{story_id}/similar?limit=` | `stories:read` | stories about the same / a related event |
+| `GET /v1/stories/{story_id}/intelligence` | `stories:read` | freshness, momentum, lifecycle, alerts |
+| `GET /v1/stories/{story_id}/coverage-comparison?article_id=` (or `url=`) | `stories:read` | one member against the rest of its coverage: other outlets, event geography, register mix, timing, uniqueness (counted facts, never text) |
+| `GET /v1/stories/{story_id}/history?limit=` | `stories:history` | persisted snapshots + membership joins/leaves |
+| `GET /v1/tags?q=&min_stories=&limit=&cursor=` | `stories:read` | the tag vocabulary of the live window with story counts |
+| `GET /v1/tags/{tag}?limit=&cursor=` | `stories:read` | every story recorded under the tag, strongest association first |
+| `GET /v1/publishers?name=` · `?q=&country=&scope=&kind=&registered=&limit=&cursor=` | `publishers:read` | resolve one by any name/host form, or list busiest-first under filters |
+| `GET /v1/publishers/by-host?host=` | `publishers:read` | a hostname or URL → its publisher |
+| `GET /v1/publishers/{publisher_id}` | `publishers:read` | curated facts + hosts + counted profile |
+| `GET /v1/publishers/{publisher_id}/articles?q=&topic=&from=&to=&sort=&limit=&cursor=` | `articles:read` | the publisher's articles |
+| `GET /v1/publishers/{publisher_id}/stories?topic=&country=&from=&to=&sort=&limit=&cursor=` | `stories:read` | stories with coverage from the publisher |
+| `GET /v1/outlets/search?q=&count=` | `publishers:read` | the outlet index (Wikidata, Wikipedia, Common Crawl, observed feeds): outlets by place, language or name — internal index only, no paid upstream |
+| `GET /v1/usage?month=YYYY-MM` | `usage:read` | the tenant's meter, per day / key / endpoint |
 
 Every response is `{"data": …, "meta": {...}}`. `meta` carries `requestId`, `asOf`, `versions`
 (`scorer`, `build`, `buildConfig`, `registry`, `publisherIdScheme`), `ratingsPublished`, and
@@ -78,7 +97,29 @@ Every response is `{"data": …, "meta": {...}}`. `meta` carries `requestId`, `a
 `X-Usage-Month`, `X-Usage-Limit`, `Retry-After` on 429. Errors are the engine's envelope
 `{"error": {"code", "message", "requestId"}}` with stable codes: `unauthenticated`,
 `key_revoked`, `key_expired`, `tenant_suspended`, `forbidden_scope`, `ratings_not_published`,
-`rate_limited`, `quota_exceeded`, `invalid_cursor`, `not_found`, `platform_disabled`.
+`rate_limited`, `quota_exceeded`, `invalid_cursor`, `invalid_request`, `not_found`,
+`search_unavailable`, `platform_disabled`. Parameter validation failures are FastAPI's `422`.
+
+A keyed `/v1` request is exempt from the engine's per-IP limiter (the platform meters per key);
+a keyless one is throttled at the engine's `auth` rate (30/min in production) — a request with no
+key can only be guessing. `/v1/openapi.json` and `/v1/docs` are public and never metered.
+
+### What the intelligence endpoints reuse
+
+Nothing on `/v1` computes intelligence of its own. `articles` → `search.search`; `stories`,
+`tags/{tag}`, `publishers/{id}/stories` → `story_service.list_stories` / `get_story`;
+`similar` → `story_service.similar_stories`; `intelligence` → `story_intelligence`;
+`coverage-comparison` → `coverage_comparison.compare` with exactly the analyzer's inputs (the
+member's own facts, the article's provider-extracted event countries); `publishers/{id}` →
+`publisher_service.get_publisher`; `outlets/search` → `outlet_search` (the index the discovery
+pipeline builds and the SerpAPI-compatible facade reads — without the facade's paid top-up);
+`entities`, `countries`, `tags` → the projections the ingest and build paths already write.
+
+Counts on a story (`totalCoverage`, `publisherCount`, `publishers`, `attachedCoverage`) are over
+the members the platform can serve: a reader-private or provisional member is not a smaller row,
+it is no row. The coverage comparison runs over the same set; its evidence links follow each
+member's licence class; its viewpoint findings and `missingViewpoints` derive from the
+AllSides-based lean and leave only where ratings are published (`withheld` names them otherwise).
 
 ## Identity
 
@@ -128,5 +169,17 @@ back and snapshots the publisher table on demand.
 
 No billing (the meter is the invoice's input), no SSO, no data tenancy (every tenant sees the
 same world), no bulk exports through the API (the archive is the substrate), no webhooks (the
-breaking-story edge in `notification_events` is the event source). Each attaches to the tables
-that now exist without changing them.
+breaking-story edge in `notification_events` is the event source), no self-service key
+management (`platform_keys.py` is the operator's tool). Each attaches to the tables that now
+exist without changing them.
+
+## Verifying a deployment
+
+```bash
+curl -s https://api.hidden-view.com/v1/health | jq .meta.versions
+curl -s -H "Authorization: Bearer $KEY" https://api.hidden-view.com/v1/me | jq .data
+curl -s -H "X-API-Key: $KEY" "https://api.hidden-view.com/v1/stories?limit=1" | jq '.meta.page, .data[0].storyId'
+curl -s -H "X-API-Key: $KEY" "https://api.hidden-view.com/v1/outlets/search?q=local+news+websites+in+Kenya" | jq .meta.query
+```
+
+Read `$KEY` from the operator's secret store; never paste a key into a shell history or a chat.

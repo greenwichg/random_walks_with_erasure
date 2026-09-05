@@ -44,9 +44,12 @@ def test_platform_calls_the_same_services_the_consumer_routes_call():
     src = (PLATFORM / "routes.py").read_text(encoding="utf-8")
     for call in ("search.search(", "story_service.list_stories(", "story_service.get_story(",
                  "story_service.similar_stories(", "story_intelligence.compute_intelligence(",
-                 "publisher_service.get_publisher("):
+                 "publisher_service.get_publisher(", "coverage_comparison.compare(",
+                 "outlet_search.query_index(", "st.entities_for_urls(", "st.stories_for_tag("):
         assert call in src, f"routes.py must reuse {call}"
     assert "build_stories(" not in src and "cluster(" not in src, "the platform must not re-cluster"
+    # The outlet search never spends the operator's paid upstream on a customer's request.
+    assert "_serp_topup" not in src and "serpapi" not in src.lower()
 
 
 def test_engine_mounts_platform_only_behind_the_flag():

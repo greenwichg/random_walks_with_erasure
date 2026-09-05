@@ -6,11 +6,15 @@ commercial tier is a row here, not a code path — and the vocabulary is closed 
 scope the router does not check is a promise nobody keeps.
 
 Scopes
-    articles:read       /v1/articles, /v1/articles/{id}
-    stories:read        /v1/stories, /v1/stories/{id}, /similar, /intelligence
+    articles:read       /v1/articles, /v1/articles/{id}, /v1/articles/{id}/entities, /v1/entities,
+                        /v1/countries, /v1/publishers/{id}/articles
+    stories:read        /v1/stories, /v1/stories/{id}, /similar, /intelligence,
+                        /coverage-comparison, /v1/tags, /v1/tags/{tag}, /v1/publishers/{id}/stories
     stories:history     /v1/stories/{id}/history — the persisted snapshots + membership deltas
-    publishers:read     /v1/publishers, /v1/publishers/{id}
+    publishers:read     /v1/publishers, /v1/publishers/by-host, /v1/publishers/{id},
+                        /v1/outlets/search
     usage:read          /v1/usage — the tenant's own meter
+    (any key)           /v1/me — the key's own plan, scopes, classes, limits and month-to-date
 
 Licence classes (``licence.py``): which rows a plan receives in full. ``reader_private`` is never
 in any plan — it is not ours to license. Third-party ratings are NOT a plan property: publishing

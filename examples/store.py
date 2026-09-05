@@ -2670,16 +2670,58 @@ class Store:
             return self._publisher_row(r) if r is not None else None
 
     def list_publishers(self, *, limit: int = 100, offset: int = 0,
-                        registered: "bool | None" = None) -> "tuple[list, int]":
-        q = select(Publisher)
-        c = select(func.count()).select_from(Publisher)
+                        registered: "bool | None" = None, country: "str | None" = None,
+                        scope: "str | None" = None, kind: "str | None" = None,
+                        q: "str | None" = None) -> "tuple[list, int]":
+        """Publishers, busiest first, under optional curated-fact filters. ``q`` matches the
+        display name or a host (case-insensitive substring) — the discovery lookup a customer
+        runs before it has an id."""
+        conds = []
         if registered is not None:
-            q = q.where(Publisher.registered.is_(bool(registered)))
-            c = c.where(Publisher.registered.is_(bool(registered)))
-        q = q.order_by(Publisher.articles.desc(), Publisher.name).offset(offset).limit(limit)
+            conds.append(Publisher.registered.is_(bool(registered)))
+        if country:
+            conds.append(Publisher.country == country.strip().upper()[:2])
+        if scope:
+            conds.append(Publisher.scope == scope.strip().lower())
+        if kind:
+            conds.append(Publisher.kind == kind.strip().lower())
+        needle = (q or "").strip().lower()
+        if needle:
+            hosts = select(PublisherHost.publisher_id).where(
+                PublisherHost.host.like(f"%{needle}%"))
+            conds.append(or_(func.lower(Publisher.name).like(f"%{needle}%"),
+                             Publisher.publisher_id.in_(hosts)))
+        stmt = select(Publisher).where(*conds) if conds else select(Publisher)
+        count = (select(func.count()).select_from(Publisher).where(*conds) if conds
+                 else select(func.count()).select_from(Publisher))
+        stmt = stmt.order_by(Publisher.articles.desc(), Publisher.name).offset(offset).limit(limit)
         with self.session() as s:
-            total = int(s.scalar(c) or 0)
-            return [self._publisher_row(r) for r in s.scalars(q).all()], total
+            total = int(s.scalar(count) or 0)
+            return [self._publisher_row(r) for r in s.scalars(stmt).all()], total
+
+    def articles_for_entity(self, name: str, *, kinds=None, limit: int = 50,
+                            offset: int = 0) -> "tuple[list, int]":
+        """Catalogue rows carrying a named entity (normalised: lower-cased, whitespace-collapsed,
+        the form ``article_entities.name`` stores), newest first. Provider-extracted kinds by
+        default; a caller names ``span`` to include the rule-extracted spans."""
+        needle = " ".join((name or "").split()).lower()
+        if not needle:
+            return [], 0
+        kinds = tuple(kinds or PROVIDER_ENTITY_KINDS)
+        urls_q = (select(ArticleEntity.canonical_url).distinct()
+                  .where(ArticleEntity.name == needle, ArticleEntity.kind.in_(kinds)))
+        # The count and the page apply the SAME provisional filter: a total that included rows
+        # the page may never show would promise a next page that is empty.
+        conds = (FeedArticle.canonical_url.in_(urls_q),
+                 or_(FeedArticle.article_state.is_(None),
+                     FeedArticle.article_state != "provisional"))
+        with self.session() as s:
+            total = int(s.scalar(select(func.count()).select_from(FeedArticle).where(*conds)) or 0)
+            rows = s.scalars(select(FeedArticle).where(*conds)
+                             .order_by(FeedArticle.published_at.desc().nullslast(),
+                                       FeedArticle.canonical_url)
+                             .offset(offset).limit(limit)).all()
+            return [self._feed_row(r) for r in rows], total
 
     def publisher_article_counts(self) -> dict:
         """``publisher_id -> (articles, first created_at, last created_at)`` over the catalogue."""
@@ -4073,6 +4115,18 @@ class Store:
         with self.session() as s:
             return {tag: int(n) for tag, n in s.execute(
                 select(StoryTag.tag, func.count()).group_by(StoryTag.tag)).all()}
+
+    def tag_vocabulary(self) -> list:
+        """``[{tag, label, stories}]`` — every tag the projection holds with the number of stories
+        carrying it, most-carried first. One aggregate query (the platform's ``/v1/tags``), rather
+        than :meth:`story_tags` + :meth:`tag_story_counts` re-joined in Python; the label is the
+        first the projection recorded for the name (labels differ only in case/spacing)."""
+        with self.session() as s:
+            rows = s.execute(select(StoryTag.tag, func.min(StoryTag.label), func.count())
+                             .group_by(StoryTag.tag)).all()
+        out = [{"tag": tag, "label": label or tag, "stories": int(n)} for tag, label, n in rows]
+        out.sort(key=lambda r: (-r["stories"], r["tag"]))
+        return out
 
     def stories_for_tag(self, tag: str, *, limit: int = 200) -> list:
         """Story ids carrying ``tag``, strongest association first — the retrieval half of the

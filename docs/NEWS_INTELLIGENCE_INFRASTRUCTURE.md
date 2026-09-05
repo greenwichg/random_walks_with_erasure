@@ -743,6 +743,15 @@ Not built, on purpose: billing, SSO, data tenancy, bulk exports through the API,
 entity node table, Alembic (every change here is additive and uses the store's existing
 `_ensure_*` discipline; the first non-additive change still needs a migration tool).
 
+**Phase 1 (the minimum commercial access layer) shipped on that foundation** — 22 authenticated
+endpoints plus public `/v1/health`, `/v1/openapi.json` and `/v1/docs`; `X-API-Key` beside the
+bearer; `/v1/me`; coverage comparison, tags, entities, countries, publisher discovery (filters,
+by-host, per-publisher articles and stories) and outlet search, each a wrapper over the service the
+consumer route already calls; keyed `/v1` requests exempt from the engine's per-IP limiter, keyless
+ones throttled at its `auth` rate. Story counts on `/v1` are over the members the platform can
+serve. Reference: `docs/PLATFORM_API.md`. Phase 2 (`/v1/graph`, event edges) and Phase 3
+(presentation tenancy) remain as designed in §H.
+
 ## Approval checklist
 
 Approve, amend or reject each line; implementation starts only on the approved subset.
