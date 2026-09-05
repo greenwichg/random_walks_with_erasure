@@ -71,4 +71,12 @@ else
   echo "backup-offhost: IH_S3_BUCKET unset — skipping off-host sync (set it in deploy/.env before go-live)."
 fi
 
+# 4) Ship the archive (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md §E.5) — written by retention's
+#    archive-before-delete and examples/archive_export.py. Under archive/, OUTSIDE the backups/ prefix the
+#    S3 lifecycle rule tiers and expires, so history is never tiered away. Absent directory = nothing to ship.
+if [ -n "$S3" ] && [ -d "$DATA_DIR/archive" ]; then
+  echo "== backup-offhost: syncing $DATA_DIR/archive → s3://$S3/archive/ =="
+  aws s3 sync "$DATA_DIR/archive/" "s3://$S3/archive/" || fail "aws s3 sync to s3://$S3/archive/ failed"
+fi
+
 echo "backup-offhost: done."

@@ -73,6 +73,9 @@ import publisher_logo         # verified site logos → story coverage rows (att
 import story_intelligence     # deterministic intelligence computed ON TOP of Story objects (Commit 10)
 import article_analyzer       # anonymous URL analysis (A1 service: catalog-first, fetchless, zero-write)
 import analysis_enrichment    # A3: reader-relative explanation + recommendation layered on an analysis
+import platform_api           # the commercial /v1 front door (RWE_PLATFORM_API, default off)
+import platform_api.app as platform_app
+import identity               # durable publisher ids + the registry-backed publishers table
 import location               # Location Intelligence — canonical model + publisher scope vocabulary
 import outlet_registry        # publisher locality registry (Local News v1 backing data)
 import media                  # centralised media + publisher-logo selection (rec enrichment, Commit 9)
@@ -277,6 +280,13 @@ async def lifespan(app: FastAPI):
     _install_db_timing(st)          # OBS1: observational per-query latency (never alters queries)
     state.scorer = ingest.Scorer(enricher=enrich.make_enricher())   # baseline register+emotion
     state.limiter = ratelimit.RateLimiter()          # per-process token-bucket limiter
+    # The platform's publisher table is a materialised view of the registry; refresh it at boot
+    # when the platform is on (a few hundred rows, fail-soft — the consumer path never reads it).
+    if platform_api.enabled():
+        try:
+            _log(logging.INFO, "publishers_sync", **identity.sync_publishers(st))
+        except Exception as exc:                     # noqa: BLE001
+            _log(logging.WARNING, "publishers_sync_failed", error=f"{type(exc).__name__}: {exc}")
     # The read-only exhibit account (Option E): when RWE_DEMO_ACCOUNT=provider:accountId is set,
     # anonymous / below-threshold requests are served this account's MEASURED report once it is
     # seeded past the read threshold (see _serve/_report_for); its writes are locked at the
@@ -4417,6 +4427,15 @@ def dev_recommendation_quality(request: Request) -> dict:
             all_rows.append(row)
     return {"cohortSize": len(uids),
             "ruleQuality": recommendation_eval.rule_quality(all_evals, all_rows)}
+
+
+# ------------------------------------------------------------------ #
+# The commercial front door (/v1) — docs/PLATFORM_API.md. Mounted only when RWE_PLATFORM_API=1,
+# so a deployment that has not opted in carries no /v1 route at all; the consumer routes above
+# are untouched either way. `platform_app.mount` is idempotent (tests mount on demand).
+# ------------------------------------------------------------------ #
+if platform_api.enabled():
+    platform_app.mount(app, _require_store, get_request_id=_request_id.get)
 
 
 def main() -> None:

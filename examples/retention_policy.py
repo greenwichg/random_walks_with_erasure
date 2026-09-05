@@ -78,6 +78,10 @@ class RetentionPolicy:
     rec_event_days: int = 365          # Open-Mindedness reads these; a year is generous
     snapshots_per_user: int = 500      # report trend history (analytics charts)
     notifications_per_user: int = 200  # settled inbox history; UNSEEN rows are never pruned
+    # --- the platform foundation (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md) ------------------ #
+    story_history_days: int = 30       # hot window for snapshots / closed membership / closed stories;
+                                       # archived first when RWE_ARCHIVE_ON_PRUNE=1
+    platform_usage_event_days: int = 90   # per-request audit rows; the daily rollup is never pruned
     # --- safety ----------------------------------------------------------------------------- #
     batch_limit: int = 5000            # per table, per run — keeps write locks short
 
@@ -122,6 +126,8 @@ def load() -> RetentionPolicy:
         rec_event_days=_int_env("RWE_RETENTION_REC_EVENT_DAYS", 365),
         snapshots_per_user=_int_env("RWE_RETENTION_SNAPSHOTS_PER_USER", 500),
         notifications_per_user=_int_env("RWE_RETENTION_NOTIFICATIONS_PER_USER", 200),
+        story_history_days=_int_env("RWE_RETENTION_STORY_HISTORY_DAYS", 30),
+        platform_usage_event_days=_int_env("RWE_RETENTION_PLATFORM_EVENT_DAYS", 90),
         batch_limit=_int_env("RWE_RETENTION_BATCH_LIMIT", 5000, minimum=1),
     )
 
@@ -140,4 +146,10 @@ PROTECTED_TABLES = {
     "improvement_lifecycle": "audit trail of suggested improvements",
     "feed_health": "one row per feed — naturally bounded, and the ops diagnostic",
     "push_subscriptions": "devices the reader explicitly connected; removed only on a push-service 410",
+    # The platform foundation (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md): who we serve, with what
+    # credential, and what they consumed — the records an invoice and an audit rest on.
+    "platform_tenants": "who is served by the platform API",
+    "platform_keys": "platform credentials (hashes); revocation is a timestamp, never a delete",
+    "platform_usage_daily": "the meter — what each tenant consumed, per day and endpoint",
+    "publishers": "the materialised publisher table — one row per outlet, naturally bounded",
 }

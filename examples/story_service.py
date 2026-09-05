@@ -20,6 +20,7 @@ an API change.
 from __future__ import annotations
 
 import hashlib
+import logging
 import multiprocessing
 import os
 import re
@@ -38,6 +39,8 @@ import obs_metrics                # OBS1 counters (stdlib-only leaf) — stale s
 import outlet_registry            # curated source identity — supplies the wire/news distinction
 import publisher_identity         # one outlet, one identity, whatever form the feed used
 import story_tags                 # the story-level projection of article_entities (topics/tags)
+import story_history              # durable events: builds, snapshots, membership deltas (additive)
+import identity                   # registry_version — which curation snapshot a build read
 from pagination import OffsetPagination
 
 SORTS = ("top", "latest", "oldest", "publishers")
@@ -1787,6 +1790,40 @@ def publisher_identity_enabled() -> bool:
     syndicating identical copy. Those 35 stop being stories, which is correct: they never were."""
     v = os.environ.get("RWE_STORY_PUBLISHER_IDENTITY", "").strip().lower()
     return v not in {"0", "false", "no", "off"}
+
+
+#: Version of the story builder's OUTPUT for identical input rows and configuration: bump when a
+#: change to clustering, the gates, merge/repair, id anchoring, summary or hero selection would
+#: make ``build_stories`` return different stories for the same rows. Recorded on every served
+#: build (``story_builds.build_version``) beside :func:`build_config_hash`, so a customer can tell
+#: a data change from an algorithm change (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md, G7).
+BUILD_VERSION = "1"
+
+
+def build_config_hash() -> str:
+    """A 16-hex digest of every clustering / story setting in force — the ``RWE_CLUSTER_*``,
+    ``RWE_STORY_*``, ``RWE_STORIES_*`` and ``RWE_EVENT_*`` environment, sorted. Two builds with the
+    same version and the same hash ran the same algorithm under the same knobs."""
+    prefixes = ("RWE_CLUSTER_", "RWE_STORY_", "RWE_STORIES_", "RWE_EVENT_")
+    items = sorted((k, v) for k, v in os.environ.items() if k.startswith(prefixes))
+    body = "\n".join(f"{k}={v}" for k, v in items)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def _record_history(store_, stories: list) -> None:
+    """Record the served unfiltered build as history (story_history). Fail-soft: a history fault
+    is counted and logged, and the build is served exactly as it would have been."""
+    if not story_history.enabled():
+        return
+    try:
+        story_history.record_build(store_, stories, build_version=BUILD_VERSION,
+                                   config_hash=build_config_hash(),
+                                   registry_version=identity.registry_version(),
+                                   resolve_ids=store_.article_ids_for_urls)
+    except Exception as exc:                 # noqa: BLE001 — never let bookkeeping break serving
+        obs_metrics.incr("story_history_errors_total")
+        logging.getLogger("story_service").warning(
+            "story_history failed: %s: %s", type(exc).__name__, exc)
 
 
 def stable_ids() -> bool:
@@ -3812,6 +3849,11 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
         # also covers the subprocess path with the same single implementation.
         if tier_b_attach_enabled():
             stories = attach_tier_b(store_, stories, date_from=date_from, max_scan=max_scan)
+        # History LAST, on the unfiltered build only, after identity, tags and attachment: what
+        # is recorded is exactly what readers are served. Single-flight under the build lock,
+        # and it cannot change the list — `_record_history` returns nothing and swallows faults.
+        if topic is None and date_from is None and date_to is None:
+            _record_history(store_, stories)
         return stories
 
     ttl = cache_ttl()

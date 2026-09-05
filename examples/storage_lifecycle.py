@@ -35,6 +35,7 @@ import json
 import logging
 import time
 
+import archive                   # archive-before-delete for the story history (same switch)
 import corpus_health
 import retention_policy
 
@@ -43,6 +44,19 @@ _logger = logging.getLogger("ih.storage")
 
 def _default_log(level: int, event: str, **fields) -> None:
     _logger.log(level, json.dumps({"event": event, **fields}, default=str))
+
+
+def _prune_story_history(store_, days: int, limit: int) -> int:
+    """Age the story history out of the hot database — after writing it to the archive when
+    ``RWE_ARCHIVE_ON_PRUNE`` is on. An archive failure raises, which the caller records as the
+    step's error and deletes nothing: the same fail-closed rule the catalogue prune follows."""
+    if not days:
+        return 0
+    if archive.enabled_on_prune():
+        rows = store_.story_history_older_than(days, limit=limit)
+        if any(rows.values()):
+            archive.archive_story_history(store_, rows)
+    return store_.prune_story_history(days, limit)
 
 
 def run_cleanup(store_, *, policy: "retention_policy.RetentionPolicy | None" = None,
@@ -75,13 +89,20 @@ def run_cleanup(store_, *, policy: "retention_policy.RetentionPolicy | None" = N
         deleted["feed_articles"] = 0
         ms["feed_articles"] = 0.0                    # disabled, but the contract is every step reports
 
-    # 2. Then the reaper for anything the catalog prune (now or in the past) left behind.
+    # 2. Then the reapers for anything the catalog prune (now or in the past) left behind.
     step("article_event_locations", lambda: store_.prune_orphan_event_locations(limit))
+    step("article_provenance", lambda: store_.prune_orphan_provenance(limit))
+    step("article_aliases", lambda: store_.prune_orphan_aliases(limit))
     # 3. Derived / operational tables, each independently bounded.
     step("scored_articles", lambda: store_.prune_scored_cache(policy.scored_cache_days, limit))
     step("analytics_events", lambda: store_.prune_analytics_events(policy.analytics_event_days, limit))
     step("rec_events", lambda: store_.prune_rec_events(policy.rec_event_days, limit))
     step("report_snapshots", lambda: store_.prune_report_snapshots(policy.snapshots_per_user, limit))
+    # 4. The story history's hot window (archived first when the archive switch is on), and the
+    #    platform's per-request audit rows (the daily rollup they feed is never pruned).
+    step("story_history", lambda: _prune_story_history(store_, policy.story_history_days, limit))
+    step("platform_usage_events", lambda: store_.prune_platform_usage_events(
+        policy.platform_usage_event_days, limit))
 
     total = sum(deleted.values())
     t0 = time.perf_counter()

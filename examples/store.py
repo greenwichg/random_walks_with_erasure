@@ -111,6 +111,36 @@ def _dumps_scored(scored) -> str:
     return json.dumps(_json_safe(scored))
 
 
+# --------------------------------------------------------------------------- #
+# Durable identity + licence vocabulary (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md, E.1 / I.2)
+# --------------------------------------------------------------------------- #
+#: Licence classes, ordered MOST restrictive first. An article's class is the most PERMISSIVE
+#: class among the channels it was observed from: an article we also hold from the publisher's own
+#: feed is ours to describe even if a keyed provider delivered it first. ``reader_private`` is the
+#: floor — an article that exists in the catalogue only because one reader's browser reported it.
+LICENCE_CLASSES = ("reader_private", "unknown", "provider_restricted", "metadata_public")
+_LICENCE_RANK = {c: i for i, c in enumerate(LICENCE_CLASSES)}
+
+
+def merge_licence_class(existing: "str | None", incoming: "str | None") -> "str | None":
+    """The more permissive of two classes (``None`` counts as absent, never as a class)."""
+    if incoming not in _LICENCE_RANK:
+        return existing if existing in _LICENCE_RANK else None
+    if existing not in _LICENCE_RANK:
+        return incoming
+    return existing if _LICENCE_RANK[existing] >= _LICENCE_RANK[incoming] else incoming
+
+
+def article_id_for(canonical_url: str) -> str:
+    """The durable, opaque article id: ``ar_`` + 20 hex of the canonical URL's SHA-1.
+
+    Deterministic so two processes ingesting the same URL mint the same id without coordination,
+    and ASSIGNED ONCE — the id is stored on first sight and never recomputed, so a later change to
+    ``ingest.canonical_url`` cannot re-key an article that already has one. Every URL form ever
+    seen for the article resolves to it through ``article_aliases``."""
+    return "ar_" + hashlib.sha1((canonical_url or "").encode("utf-8", "replace")).hexdigest()[:20]
+
+
 # Multi-source media-merge priority: when the same canonical URL arrives from several ingestion sources,
 # the image from the higher-priority source wins (see ``upsert_feed_article``). Centralised here so the
 # ordering changes in ONE place with **no data migration** — precedence is derived dynamically from each
@@ -955,8 +985,295 @@ class FeedArticle(Base):
     # Provider-agnostic by construction: every adapter's metadata arrives here already normalized.
     country: Mapped[Optional[str]] = mapped_column(String(2), default=None)
     language: Mapped[Optional[str]] = mapped_column(String(8), default=None)
+    # Durable identity + licence (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md, E.1 / I.2). Additive
+    # and nullable: legacy rows carry NULL until `identity_backfill.py` — or the next re-poll of
+    # the row — fills them. ``article_id`` is assigned ONCE (see :func:`article_id_for`);
+    # ``publisher_id`` is the durable outlet id (`identity.publisher_id_for`); ``licence_class``
+    # is the most permissive class among the channels that delivered the row; ``scorer_version``
+    # names the deterministic scorer that produced ``scored``.
+    article_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    publisher_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    licence_class: Mapped[Optional[str]] = mapped_column(String(24), default=None)
+    scorer_version: Mapped[Optional[str]] = mapped_column(String(16), default=None)
     fetched_at: Mapped[datetime] = mapped_column(default=_utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class ArticleAlias(Base):
+    """Every URL form ever observed for an article -> its durable ``article_id``.
+
+    The catalogue is keyed by canonical URL, and canonicalisation is a RULE that has changed
+    before (tracking parameters, scheme flips, aggregator unwrapping). A rule change must never
+    orphan an id a customer stored, so the id is minted once and every form we have seen — the
+    raw publisher URL, the canonical form, and later forms — is remembered here. Lookup by any of
+    them resolves to one article. Written by ``upsert_feed_article``; orphans reaped by retention."""
+
+    __tablename__ = "article_aliases"
+
+    alias: Mapped[str] = mapped_column(String(2048), primary_key=True)
+    article_id: Mapped[str] = mapped_column(String(32), index=True)
+    canonical_url: Mapped[str] = mapped_column(String(2048), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="url")        # url | canonical
+    first_seen: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class ArticleProvenance(Base):
+    """One row per (article, acquisition channel, source) — WHERE we hold an article from.
+
+    ``feed_articles`` keeps first-seen values and only ``fetched_at`` moves, so the fact that a
+    keyed provider *and* the publisher's own feed both delivered an article was lost the moment the
+    second arrived. That fact decides the article's licence class (a row we also hold from the
+    publisher's machine-readable offer is ours to describe; a row we hold only through a provider
+    API is governed by that provider's terms) and it is the evidence behind every "we acquired this
+    ourselves" claim a data licence rests on. One row per distinct source rather than one per poll:
+    a feed re-delivers an article every cycle for as long as it lists it, and an append-only log
+    of that would be ~100x the catalogue. ``observations`` counts; the two timestamps bound."""
+
+    __tablename__ = "article_provenance"
+    __table_args__ = (UniqueConstraint("canonical_url", "channel", "source_ref",
+                                       name="uq_provenance_observation"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    canonical_url: Mapped[str] = mapped_column(String(2048), index=True)
+    article_id: Mapped[Optional[str]] = mapped_column(String(32), index=True, default=None)
+    channel: Mapped[str] = mapped_column(String(32), index=True)          # rss | newsapi | crawl | extension | …
+    provider: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    source_ref: Mapped[str] = mapped_column(String(2048), default="")     # feed URL / provider / "extension"
+    external_id: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    licence_class: Mapped[Optional[str]] = mapped_column(String(24), default=None)
+    first_observed_at: Mapped[str] = mapped_column(String(64))           # ISO
+    last_observed_at: Mapped[str] = mapped_column(String(64))            # ISO
+    published_at_seen: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    observations: Mapped[int] = mapped_column(default=1)
+
+
+class Publisher(Base):
+    """The durable publisher row — ``pub_<20 hex>`` derived from the outlet's identity key.
+
+    A MATERIALISED VIEW of facts that live elsewhere: the curated registry (`outlet_registry.csv`,
+    still the source of truth for every curated field) and the catalogue (first/last seen, volume).
+    Rows are created lazily at ingest (id + name only) and filled by ``identity.sync_publishers``.
+    The id is a pure function of the identity key (`identity.publisher_id_for`), so ingest needs
+    no lookup to stamp ``feed_articles.publisher_id`` and two processes agree without coordination.
+    Every curated fact keeps its provenance column exactly as the registry carries it."""
+
+    __tablename__ = "publishers"
+
+    publisher_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    identity_key: Mapped[str] = mapped_column(String(255), index=True)   # c:<canonical> | d:<domain> | n:<name key>
+    name: Mapped[str] = mapped_column(String(255))
+    registered: Mapped[bool] = mapped_column(default=False)
+    lean: Mapped[Optional[float]] = mapped_column(default=None)
+    lean_source: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    country: Mapped[Optional[str]] = mapped_column(String(2), default=None)
+    region: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    city: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    scope: Mapped[Optional[str]] = mapped_column(String(24), default=None)
+    kind: Mapped[Optional[str]] = mapped_column(String(24), default=None)
+    credibility: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    factuality: Mapped[Optional[str]] = mapped_column(String(24), default=None)
+    factuality_source: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    factuality_asof: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    ownership: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    ownership_source: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    ownership_asof: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    ownership_owner: Mapped[Optional[str]] = mapped_column(String(255), default=None)
+    tier: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    articles: Mapped[int] = mapped_column(default=0)
+    first_seen: Mapped[datetime] = mapped_column(default=_utcnow)
+    last_seen: Mapped[Optional[datetime]] = mapped_column(default=None)
+    registry_version: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class PublisherHost(Base):
+    """host -> publisher id: the join key for URLs, the crawler and the outlet index."""
+
+    __tablename__ = "publisher_hosts"
+
+    host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    publisher_id: Mapped[str] = mapped_column(String(32), index=True)
+    source: Mapped[str] = mapped_column(String(16), default="registry")   # registry | catalogue
+    first_seen: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class StoryRecord(Base):
+    """The durable story (event) row — the id the ledger serves, given a lifecycle.
+
+    ``story_member`` remembers only the id each url was LAST served under; a story that leaves the
+    window leaves no trace, and a merge or a split is invisible after the fact. This row is created
+    the first time an id is served and closed when it stops being served, with the successor
+    recorded when the ledger's exclusivity rules hand its members to another id (``merged``).
+    Written by ``story_history.record_build``; read by nothing on the consumer path."""
+
+    __tablename__ = "stories"
+
+    story_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)   # active | closed | merged
+    successor_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    origin_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)      # split from
+    first_build_id: Mapped[int] = mapped_column()
+    last_build_id: Mapped[int] = mapped_column()
+    first_served_at: Mapped[str] = mapped_column(String(64))
+    last_served_at: Mapped[str] = mapped_column(String(64), index=True)
+    closed_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    title: Mapped[str] = mapped_column(Text, default="")
+    topic: Mapped[str] = mapped_column(String(64), default="")
+    representative_url: Mapped[str] = mapped_column(Text, default="")
+    snapshots: Mapped[int] = mapped_column(default=0)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class StoryBuild(Base):
+    """One row per SERVED unfiltered build: when, which algorithm version, under which config."""
+
+    __tablename__ = "story_builds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    built_at: Mapped[str] = mapped_column(String(64), index=True)
+    build_version: Mapped[str] = mapped_column(String(16), default="")
+    config_hash: Mapped[str] = mapped_column(String(64), default="")
+    registry_version: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    catalog_rows: Mapped[Optional[int]] = mapped_column(default=None)
+    catalog_newest: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    stories: Mapped[int] = mapped_column(default=0)
+    new_stories: Mapped[int] = mapped_column(default=0)
+    closed_stories: Mapped[int] = mapped_column(default=0)
+    changed: Mapped[int] = mapped_column(default=0)
+    joins: Mapped[int] = mapped_column(default=0)
+    leaves: Mapped[int] = mapped_column(default=0)
+    ms: Mapped[Optional[float]] = mapped_column(default=None)
+
+
+class StorySnapshot(Base):
+    """A story as it was served at one build — written only when something about it CHANGED.
+
+    ``fingerprint`` is a hash of the served fields; a build that serves a story unchanged writes
+    nothing, so the table grows with news, not with polling. Coverage is not repeated here — the
+    membership table carries joins and leaves — but the counts and the derived spectrum are, so a
+    row answers "what did we say about this story at that time" on its own."""
+
+    __tablename__ = "story_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    story_id: Mapped[str] = mapped_column(String(32), index=True)
+    build_id: Mapped[int] = mapped_column(index=True)
+    built_at: Mapped[str] = mapped_column(String(64), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(Text, default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    topic: Mapped[str] = mapped_column(String(64), default="")
+    total_coverage: Mapped[int] = mapped_column(default=0)
+    publisher_count: Mapped[int] = mapped_column(default=0)
+    attached_coverage: Mapped[int] = mapped_column(default=0)
+    distribution: Mapped[str] = mapped_column(Text, default="{}")        # JSON {left, center, right}
+    blindspot_side: Mapped[Optional[str]] = mapped_column(String(8), default=None)
+    blindspot_withheld: Mapped[bool] = mapped_column(default=False)
+    cluster_trust: Mapped[Optional[str]] = mapped_column(String(16), default=None)
+    geo_coherence: Mapped[Optional[float]] = mapped_column(default=None)
+    countries: Mapped[str] = mapped_column(Text, default="[]")           # JSON
+    primary_country: Mapped[Optional[str]] = mapped_column(String(2), default=None)
+    earliest: Mapped[str] = mapped_column(String(64), default="")
+    latest: Mapped[str] = mapped_column(String(64), default="")
+    image: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    publishers: Mapped[str] = mapped_column(Text, default="[]")          # JSON
+    tags: Mapped[str] = mapped_column(Text, default="[]")                # JSON
+
+
+class StoryMembership(Base):
+    """article url -> story, with the build it joined at and (once it left) the build it left at.
+
+    The open rows (``left_build IS NULL``) are the current membership; the closed rows are the
+    history. Keyed on the coverage url exactly as ``story_member`` is, so the two tables can be
+    joined; ``article_id`` is carried when the article row has one. ``attached`` marks Tier-B
+    coverage (no vote), as ``tierB`` does on the wire — this table is read by nothing that decides
+    membership, so recording attached rows here cannot move the partition."""
+
+    __tablename__ = "story_membership"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    story_id: Mapped[str] = mapped_column(String(32), index=True)
+    url: Mapped[str] = mapped_column(String(2048), index=True)
+    article_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    publisher: Mapped[str] = mapped_column(String(255), default="")
+    publisher_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    attached: Mapped[bool] = mapped_column(default=False)
+    joined_build: Mapped[int] = mapped_column()
+    joined_at: Mapped[str] = mapped_column(String(64))
+    left_build: Mapped[Optional[int]] = mapped_column(default=None, index=True)
+    left_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+
+
+class PlatformTenant(Base):
+    """Who is being served by the platform API — the unit a plan and a meter attach to.
+
+    Deliberately minimal (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md, D.5 "access tenancy"): every
+    tenant sees the same world, filtered by its keys' scopes, plans and licence classes. No data
+    tenancy, no SSO, no billing — those attach here later without changing this row."""
+
+    __tablename__ = "platform_tenants"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(24), default="developer")   # internal | developer | enterprise
+    status: Mapped[str] = mapped_column(String(16), default="active")    # active | suspended
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+
+
+class PlatformKey(Base):
+    """An API key for the platform surface — hash only, like :class:`ApiToken`, plus what a paying
+    caller needs that a reader's token never did: scopes, a plan, per-key limits, an expiry and a
+    revocation timestamp (a revoked key stays on record; a reader's token is deleted)."""
+
+    __tablename__ = "platform_keys"
+
+    key_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    prefix: Mapped[str] = mapped_column(String(24), default="")           # shown in listings, never the secret
+    label: Mapped[Optional[str]] = mapped_column(String(100), default=None)
+    plan: Mapped[str] = mapped_column(String(32), default="developer")
+    scopes: Mapped[str] = mapped_column(Text, default="[]")               # JSON list
+    licence_classes: Mapped[Optional[str]] = mapped_column(Text, default=None)   # JSON list; NULL = the plan's
+    rate_per_min: Mapped[Optional[int]] = mapped_column(default=None)     # NULL = the plan's
+    quota_month: Mapped[Optional[int]] = mapped_column(default=None)      # NULL = the plan's
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    expires_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    revoked_at: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+
+
+class PlatformUsageDaily(Base):
+    """The meter: units and requests per (tenant, key, day, endpoint). The quota reads this; the
+    invoice will. Never pruned — see ``retention_policy.PROTECTED_TABLES``."""
+
+    __tablename__ = "platform_usage_daily"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)        # UTC YYYY-MM-DD
+    endpoint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    units: Mapped[int] = mapped_column(default=0)
+    requests: Mapped[int] = mapped_column(default=0)
+    errors: Mapped[int] = mapped_column(default=0)
+
+
+class PlatformUsageEvent(Base):
+    """One row per platform request — the audit trail behind the daily meter. Carries no query
+    text (endpoint, units, status, latency and the request id only), so a customer's searches are
+    never a retained log. Pruned by age; the daily rollup is what persists."""
+
+    __tablename__ = "platform_usage_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[str] = mapped_column(String(64), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    key_id: Mapped[str] = mapped_column(String(32))
+    endpoint: Mapped[str] = mapped_column(String(64))
+    units: Mapped[int] = mapped_column(default=1)
+    status: Mapped[int] = mapped_column(default=200)
+    request_id: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    latency_ms: Mapped[Optional[float]] = mapped_column(default=None)
 
 
 class ArticleEventLocation(Base):
@@ -1261,8 +1578,13 @@ class Store:
         self._ensure_delivery_retry_columns()
         self._ensure_feed_schedule_columns()
         self._ensure_source_admission_columns()
+        self._ensure_identity_columns()
         self._ensure_search_indexes()
         self._ensure_retention_indexes()
+        self._ensure_identity_indexes()
+        # Publisher ids this process has already ensured a `publishers` row for — the lazy
+        # materialisation at ingest costs one INSERT-OR-IGNORE per NEW publisher per process.
+        self._known_publisher_ids: set = set()
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -1519,7 +1841,10 @@ class Store:
                             image_mime: "str | None" = None, image_source: "str | None" = None,
                             image_attribution: "str | None" = None, source_type: "str | None" = None,
                             source_provider: "str | None" = None, external_id: "str | None" = None,
-                            country: "str | None" = None, language: "str | None" = None) -> bool:
+                            country: "str | None" = None, language: "str | None" = None,
+                            publisher_id: "str | None" = None, publisher_key: "str | None" = None,
+                            licence_class: "str | None" = None,
+                            scorer_version: "str | None" = None) -> bool:
         """Insert a catalog article, or refresh an existing one (dedup by ``canonical_url``). Returns
         ``True`` when newly created, ``False`` on a re-poll. A re-poll refreshes ``fetched_at`` and
         backfills any field that was empty before, but never rewrites first-seen metadata — so the same
@@ -1542,6 +1867,7 @@ class Store:
         with self.session() as s:
             row = s.get(FeedArticle, canonical_url)
             if row is None:
+                aid = article_id_for(canonical_url)
                 s.add(FeedArticle(
                     canonical_url=canonical_url, url=url, publisher=publisher,
                     source_publisher=source_publisher, title=title, description=description,
@@ -1551,9 +1877,34 @@ class Store:
                     image_attribution=image_attribution, source_type=source_type,
                     source_provider=source_provider, external_id=external_id,
                     country=country, language=language,
-                    article_state=("provisional" if (source_type or "").lower() == "extension" else None)))
+                    article_state=("provisional" if (source_type or "").lower() == "extension" else None),
+                    article_id=aid, publisher_id=publisher_id, licence_class=licence_class,
+                    scorer_version=scorer_version))
+                # Identity + provenance ride in the SAME transaction as the row, so a crash cannot
+                # leave an article without its aliases or its first observation.
+                self._record_observation(s, canonical_url=canonical_url, article_id=aid, url=url,
+                                         channel=source_type, provider=source_provider,
+                                         source_ref=source_feed, external_id=external_id,
+                                         published_at=published_at, licence_class=licence_class)
+                self._ensure_publisher_row(s, publisher_id, publisher_key, publisher)
                 return True
             row.fetched_at = _utcnow()
+            # Identity self-heals on re-poll: a legacy row (NULL id) that a feed still lists gets
+            # its id here, the same deterministic id the backfill would assign. The licence class
+            # only ever widens — a second, more permissive channel upgrades it; a narrower one
+            # cannot take back what a public channel already established.
+            if not row.article_id:
+                row.article_id = article_id_for(canonical_url)
+            if publisher_id and not row.publisher_id:
+                row.publisher_id = publisher_id
+            row.licence_class = merge_licence_class(row.licence_class, licence_class)
+            if scorer_version and not row.scorer_version:
+                row.scorer_version = scorer_version
+            self._record_observation(s, canonical_url=canonical_url, article_id=row.article_id,
+                                     url=url, channel=source_type, provider=source_provider,
+                                     source_ref=source_feed, external_id=external_id,
+                                     published_at=published_at, licence_class=licence_class)
+            self._ensure_publisher_row(s, publisher_id, publisher_key, publisher)
             if title and not row.title:
                 row.title = title
             if description and not row.description:
@@ -1718,7 +2069,12 @@ class Store:
                                 ("rec_events", RecEvent), ("report_snapshots", ReportSnapshot),
                                 ("notifications", Notification), ("reads", Read),
                                 ("push_subscriptions", PushSubscription),
-                                ("saved_articles", SavedArticle), ("users", User)):
+                                ("saved_articles", SavedArticle), ("users", User),
+                                ("article_provenance", ArticleProvenance),
+                                ("article_aliases", ArticleAlias), ("publishers", Publisher),
+                                ("stories", StoryRecord), ("story_snapshots", StorySnapshot),
+                                ("story_membership", StoryMembership),
+                                ("platform_usage_events", PlatformUsageEvent)):
                 counts[name] = int(s.scalar(select(func.count()).select_from(model)) or 0)
         size = None
         url = str(self.engine.url)
@@ -1889,7 +2245,7 @@ class Store:
                     for r in s.execute(stmt)]
 
     def prune_tier_articles_older_than(self, publishers, max_age_days: float, *,
-                                       limit: int = 5000, now=None) -> int:
+                                       limit: int = 5000, now=None, before_delete=None) -> int:
         """Delete up to ``limit`` catalogue rows whose publisher is in ``publishers`` and whose
         ``published_at`` is older than ``max_age_days``. Returns the number deleted.
 
@@ -1927,6 +2283,24 @@ class Store:
             return 0
         cutoff = ((now or _utcnow()) - timedelta(days=max_age_days)).isoformat()
         deleted = 0
+        if before_delete is not None:
+            # Archive-before-delete (archive.py): SELECT the doomed rows in one transaction, hand
+            # them to the callback OUTSIDE any session (it opens its own), and only then delete
+            # exactly those rows. A callback that raises aborts the delete — fail closed.
+            ordered = sorted(names)
+            doomed: list = []
+            with self.session() as s:
+                for i in range(0, len(ordered), 400):
+                    doomed.extend(u for (u,) in s.execute(
+                        select(FeedArticle.canonical_url)
+                        .where(func.lower(FeedArticle.publisher).in_(ordered[i:i + 400]))
+                        .where(FeedArticle.published_at.is_not(None))
+                        .where(FeedArticle.published_at < cutoff)
+                        .limit(limit)).all())
+            if not doomed:
+                return 0
+            before_delete(doomed)
+            return self.delete_feed_articles(doomed)
         with self.session() as s:
             # Chunked over the publisher set for SQLITE_MAX_VARIABLE_NUMBER, the same bound
             # `delete_feed_articles` respects. Each chunk carries its own LIMIT, so the batch cap is
@@ -1978,8 +2352,727 @@ class Store:
                 "sourceType": r.source_type, "sourceProvider": r.source_provider,
                 "externalId": r.external_id, "articleState": r.article_state,
                 "country": r.country, "language": r.language,
+                # Durable identity + licence (additive keys; every existing consumer ignores them).
+                "articleId": r.article_id, "publisherId": r.publisher_id,
+                "licenceClass": r.licence_class, "scorerVersion": r.scorer_version,
                 "fetchedAt": r.fetched_at.isoformat() if r.fetched_at else None,
                 "createdAt": r.created_at.isoformat() if r.created_at else None}
+
+    # ---- durable identity, provenance, publishers (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md) --- #
+    def _record_observation(self, s, *, canonical_url, article_id, url, channel, provider,
+                            source_ref, external_id, published_at, licence_class) -> None:
+        """Remember the URL forms and the (channel, source) this observation came through.
+
+        Runs inside the caller's session. Aliases are insert-if-absent; the provenance row for
+        (article, channel, source) is created once and thereafter only its ``last_observed_at``
+        and ``observations`` move — see :class:`ArticleProvenance` for why not one row per poll."""
+        now_iso = _utcnow().isoformat()
+        seen: set = set()
+        for alias, kind in ((url, "url"), (canonical_url, "canonical")):
+            alias = (alias or "").strip()
+            if not alias or alias in seen:
+                continue
+            seen.add(alias)
+            if s.get(ArticleAlias, alias) is None:
+                s.add(ArticleAlias(alias=alias, article_id=article_id or "",
+                                   canonical_url=canonical_url, kind=kind))
+        ch = ((channel or "").strip().lower() or "unknown")[:32]
+        ref = (source_ref or "")[:2048]
+        prov = s.scalar(select(ArticleProvenance).where(
+            ArticleProvenance.canonical_url == canonical_url,
+            ArticleProvenance.channel == ch, ArticleProvenance.source_ref == ref))
+        if prov is None:
+            s.add(ArticleProvenance(canonical_url=canonical_url, article_id=article_id,
+                                    channel=ch, provider=provider, source_ref=ref,
+                                    external_id=external_id, licence_class=licence_class,
+                                    first_observed_at=now_iso, last_observed_at=now_iso,
+                                    published_at_seen=published_at, observations=1))
+            return
+        prov.last_observed_at = now_iso
+        prov.observations = int(prov.observations or 0) + 1
+        if article_id and not prov.article_id:
+            prov.article_id = article_id
+        if external_id and not prov.external_id:
+            prov.external_id = external_id
+        if licence_class and not prov.licence_class:
+            prov.licence_class = licence_class
+
+    def _ensure_publisher_row(self, s, publisher_id, publisher_key, name) -> None:
+        """Materialise the minimal ``publishers`` row for an id the first time this process sees
+        it (id, identity key, display name). Curated facts arrive via ``identity.sync_publishers``."""
+        if not publisher_id or publisher_id in self._known_publisher_ids:
+            return
+        if s.get(Publisher, publisher_id) is None:
+            s.add(Publisher(publisher_id=publisher_id, identity_key=publisher_key or "",
+                            name=name or "", registered=False))
+        self._known_publisher_ids.add(publisher_id)
+
+    def resolve_article(self, ref: str) -> "dict | None":
+        """The catalogue row for an article id (``ar_…``), a canonical URL, or ANY URL form ever
+        observed for the article (``article_aliases``). ``None`` when nothing matches."""
+        ref = (ref or "").strip()
+        if not ref:
+            return None
+        with self.session() as s:
+            row = None
+            if ref.startswith("ar_"):
+                row = s.scalar(select(FeedArticle).where(FeedArticle.article_id == ref))
+            if row is None:
+                row = s.get(FeedArticle, ref)
+            if row is None:
+                alias = s.get(ArticleAlias, ref)
+                if alias is not None:
+                    row = s.get(FeedArticle, alias.canonical_url)
+                    if row is None and alias.article_id:
+                        row = s.scalar(select(FeedArticle)
+                                       .where(FeedArticle.article_id == alias.article_id))
+            return self._feed_row(row) if row is not None else None
+
+    def article_provenance(self, canonical_url: str) -> list:
+        """Every (channel, source) an article was observed through, oldest first."""
+        with self.session() as s:
+            rows = s.scalars(select(ArticleProvenance)
+                             .where(ArticleProvenance.canonical_url == canonical_url)
+                             .order_by(ArticleProvenance.first_observed_at,
+                                       ArticleProvenance.id)).all()
+            return [{"channel": r.channel, "provider": r.provider, "sourceRef": r.source_ref,
+                     "externalId": r.external_id, "licenceClass": r.licence_class,
+                     "firstObservedAt": r.first_observed_at,
+                     "lastObservedAt": r.last_observed_at,
+                     "observations": int(r.observations or 0)} for r in rows]
+
+    def provenance_for_urls(self, canonical_urls) -> dict:
+        """``{canonical_url: [provenance rows]}`` for many articles at once (chunked ``IN``)."""
+        urls = [u for u in dict.fromkeys(canonical_urls) if u]
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(urls), 500):
+                rows = s.scalars(select(ArticleProvenance)
+                                 .where(ArticleProvenance.canonical_url.in_(urls[i:i + 500]))
+                                 .order_by(ArticleProvenance.first_observed_at,
+                                           ArticleProvenance.id)).all()
+                for r in rows:
+                    out.setdefault(r.canonical_url, []).append(
+                        {"channel": r.channel, "provider": r.provider, "sourceRef": r.source_ref,
+                         "externalId": r.external_id, "licenceClass": r.licence_class,
+                         "firstObservedAt": r.first_observed_at,
+                         "lastObservedAt": r.last_observed_at,
+                         "observations": int(r.observations or 0)})
+        return out
+
+    def article_meta_for_urls(self, urls) -> dict:
+        """``{url form: {articleId, publisherId, licenceClass, articleState, canonicalUrl}}`` for
+        many urls at once — the identity + licence facts the platform serializer needs per
+        coverage row, resolved through the alias table and then the catalogue row."""
+        wanted = [u for u in dict.fromkeys(urls) if u]
+        if not wanted:
+            return {}
+        alias_to_canonical: dict = {}
+        with self.session() as s:
+            for i in range(0, len(wanted), 500):
+                rows = s.execute(select(ArticleAlias.alias, ArticleAlias.canonical_url)
+                                 .where(ArticleAlias.alias.in_(wanted[i:i + 500]))).all()
+                alias_to_canonical.update({a: c for a, c in rows})
+            for u in wanted:                  # a canonical url is its own alias
+                alias_to_canonical.setdefault(u, u)
+            canon = list(dict.fromkeys(alias_to_canonical.values()))
+            facts: dict = {}
+            for i in range(0, len(canon), 500):
+                rows = s.execute(select(FeedArticle.canonical_url, FeedArticle.article_id,
+                                        FeedArticle.publisher_id, FeedArticle.licence_class,
+                                        FeedArticle.article_state)
+                                 .where(FeedArticle.canonical_url.in_(canon[i:i + 500]))).all()
+                for c, aid, pid, lc, state in rows:
+                    facts[c] = {"articleId": aid, "publisherId": pid, "licenceClass": lc,
+                                "articleState": state, "canonicalUrl": c}
+        return {u: facts[c] for u, c in alias_to_canonical.items() if c in facts}
+
+    def article_ids_for_urls(self, urls) -> dict:
+        """``{url form: article_id}`` through the alias table, for many urls at once."""
+        wanted = [u for u in dict.fromkeys(urls) if u]
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(wanted), 500):
+                rows = s.execute(select(ArticleAlias.alias, ArticleAlias.article_id)
+                                 .where(ArticleAlias.alias.in_(wanted[i:i + 500]))).all()
+                out.update({a: aid for a, aid in rows if aid})
+        return out
+
+    def prune_orphan_provenance(self, limit: int = 5000) -> int:
+        """Reap provenance rows whose article left the catalogue (retention deletes articles
+        only). Bounded, like every prune in ``storage_lifecycle``."""
+        with self.session() as s:
+            ids = [i for (i,) in s.execute(
+                select(ArticleProvenance.id)
+                .where(~ArticleProvenance.canonical_url.in_(select(FeedArticle.canonical_url)))
+                .limit(max(1, int(limit)))).all()]
+            if not ids:
+                return 0
+            res = s.execute(delete(ArticleProvenance).where(ArticleProvenance.id.in_(ids)))
+            return res.rowcount or 0
+
+    def prune_orphan_aliases(self, limit: int = 5000) -> int:
+        """Reap alias rows whose article left the catalogue. Same contract as the reaper above."""
+        with self.session() as s:
+            aliases = [a for (a,) in s.execute(
+                select(ArticleAlias.alias)
+                .where(~ArticleAlias.canonical_url.in_(select(FeedArticle.canonical_url)))
+                .limit(max(1, int(limit)))).all()]
+            if not aliases:
+                return 0
+            res = s.execute(delete(ArticleAlias).where(ArticleAlias.alias.in_(aliases)))
+            return res.rowcount or 0
+
+    def identity_backfill_rows(self, *, limit: int = 1000, after: "str | None" = None) -> list:
+        """Catalogue rows in canonical-URL order, resuming after ``after`` — the backfill's cursor
+        shape, narrow on purpose (the identity backfill reads seven columns, not the scored blob)."""
+        q = select(FeedArticle.canonical_url, FeedArticle.url, FeedArticle.publisher,
+                   FeedArticle.source_type, FeedArticle.source_provider, FeedArticle.source_feed,
+                   FeedArticle.external_id, FeedArticle.published_at, FeedArticle.article_id,
+                   FeedArticle.publisher_id, FeedArticle.licence_class, FeedArticle.created_at,
+                   FeedArticle.fetched_at).order_by(FeedArticle.canonical_url).limit(limit)
+        if after:
+            q = q.where(FeedArticle.canonical_url > after)
+        with self.session() as s:
+            return [{"canonicalUrl": c, "url": u, "publisher": p, "sourceType": st,
+                     "sourceProvider": sp, "sourceFeed": sf, "externalId": e, "publishedAt": pa,
+                     "articleId": aid, "publisherId": pid, "licenceClass": lc,
+                     "createdAt": ca.isoformat() if ca else None,
+                     "fetchedAt": fa.isoformat() if fa else None}
+                    for c, u, p, st, sp, sf, e, pa, aid, pid, lc, ca, fa in s.execute(q).all()]
+
+    def apply_identity_backfill(self, canonical_url: str, *, article_id: str, publisher_id,
+                                publisher_key, licence_class, channel, provider, source_ref,
+                                external_id, published_at, first_observed_at,
+                                last_observed_at, url) -> bool:
+        """Fill one legacy row's identity columns and seed its aliases + first provenance row from
+        what the row already carries. Idempotent: a filled row is left exactly as it is (the
+        backfill never rewrites an id), and an existing provenance row is not re-counted."""
+        with self.session() as s:
+            row = s.get(FeedArticle, canonical_url)
+            if row is None:
+                return False
+            changed = False
+            if not row.article_id:
+                row.article_id = article_id
+                changed = True
+            if publisher_id and not row.publisher_id:
+                row.publisher_id = publisher_id
+                changed = True
+            merged = merge_licence_class(row.licence_class, licence_class)
+            if merged != row.licence_class:
+                row.licence_class = merged
+                changed = True
+            aid = row.article_id
+            for alias, kind in ((url, "url"), (canonical_url, "canonical")):
+                alias = (alias or "").strip()
+                if alias and s.get(ArticleAlias, alias) is None:
+                    s.add(ArticleAlias(alias=alias, article_id=aid, canonical_url=canonical_url,
+                                       kind=kind))
+                    changed = True
+            ch = ((channel or "").strip().lower() or "unknown")[:32]
+            ref = (source_ref or "")[:2048]
+            if s.scalar(select(ArticleProvenance.id).where(
+                    ArticleProvenance.canonical_url == canonical_url,
+                    ArticleProvenance.channel == ch, ArticleProvenance.source_ref == ref)) is None:
+                s.add(ArticleProvenance(canonical_url=canonical_url, article_id=aid, channel=ch,
+                                        provider=provider, source_ref=ref, external_id=external_id,
+                                        licence_class=licence_class,
+                                        first_observed_at=first_observed_at or _utcnow().isoformat(),
+                                        last_observed_at=last_observed_at or first_observed_at
+                                        or _utcnow().isoformat(),
+                                        published_at_seen=published_at, observations=1))
+                changed = True
+            self._ensure_publisher_row(s, publisher_id, publisher_key, row.publisher)
+            return changed
+
+    def upsert_publisher(self, *, publisher_id: str, identity_key: str, name: str,
+                         registered: "bool | None" = None, facts: "dict | None" = None,
+                         registry_version: "str | None" = None, tier: "str | None" = None,
+                         hosts=(), articles: "int | None" = None, first_seen=None,
+                         last_seen=None, create: bool = True) -> "bool | None":
+        """Create or refresh a publisher row + its hosts. ``facts`` carries the curated columns
+        (every key in :class:`Publisher` between ``lean`` and ``ownership_owner``); a key that is
+        absent is left alone, a key that is present replaces — the registry is the truth for what
+        it carries, and a fact it dropped must drop here too. Returns ``True`` when created,
+        ``False`` when refreshed, ``None`` when absent and ``create`` is off."""
+        facts = facts or {}
+        allowed = {"lean", "lean_source", "country", "region", "city", "scope", "kind",
+                   "credibility", "factuality", "factuality_source", "factuality_asof",
+                   "ownership", "ownership_source", "ownership_asof", "ownership_owner"}
+        with self.session() as s:
+            row = s.get(Publisher, publisher_id)
+            created = row is None
+            if created and not create:
+                return None
+            if created:
+                row = Publisher(publisher_id=publisher_id, identity_key=identity_key, name=name)
+                s.add(row)
+            if identity_key:
+                row.identity_key = identity_key
+            if name:
+                row.name = name
+            if registered is not None:
+                row.registered = bool(registered)
+            for k, v in facts.items():
+                if k in allowed:
+                    setattr(row, k, v)
+            if registry_version:
+                row.registry_version = registry_version
+            if tier is not None:
+                row.tier = tier
+            if articles is not None:
+                row.articles = int(articles)
+            if first_seen is not None:
+                row.first_seen = first_seen
+            if last_seen is not None:
+                row.last_seen = last_seen
+            row.updated_at = _utcnow()
+            for host in hosts or ():
+                h = (host or "").strip().lower()
+                if h and s.get(PublisherHost, h) is None:
+                    s.add(PublisherHost(host=h, publisher_id=publisher_id, source="registry"))
+            self._known_publisher_ids.add(publisher_id)
+            return created
+
+    @staticmethod
+    def _publisher_row(r: "Publisher") -> dict:
+        return {"publisherId": r.publisher_id, "identityKey": r.identity_key, "name": r.name,
+                "registered": bool(r.registered), "lean": r.lean, "leanSource": r.lean_source,
+                "country": r.country, "region": r.region, "city": r.city, "scope": r.scope,
+                "kind": r.kind, "credibility": r.credibility, "factuality": r.factuality,
+                "factualitySource": r.factuality_source, "factualityAsOf": r.factuality_asof,
+                "ownership": r.ownership, "ownershipSource": r.ownership_source,
+                "ownershipAsOf": r.ownership_asof, "ownershipOwner": r.ownership_owner,
+                "tier": r.tier, "articles": int(r.articles or 0),
+                "firstSeen": r.first_seen.isoformat() if r.first_seen else None,
+                "lastSeen": r.last_seen.isoformat() if r.last_seen else None,
+                "registryVersion": r.registry_version,
+                "updatedAt": r.updated_at.isoformat() if r.updated_at else None}
+
+    def publisher_by_id(self, publisher_id: str) -> "dict | None":
+        with self.session() as s:
+            r = s.get(Publisher, publisher_id)
+            return self._publisher_row(r) if r is not None else None
+
+    def publisher_hosts(self, publisher_id: str) -> list:
+        with self.session() as s:
+            return [h for (h,) in s.execute(select(PublisherHost.host)
+                                            .where(PublisherHost.publisher_id == publisher_id)
+                                            .order_by(PublisherHost.host)).all()]
+
+    def publisher_for_host(self, host: str) -> "dict | None":
+        with self.session() as s:
+            ph = s.get(PublisherHost, (host or "").strip().lower())
+            if ph is None:
+                return None
+            r = s.get(Publisher, ph.publisher_id)
+            return self._publisher_row(r) if r is not None else None
+
+    def list_publishers(self, *, limit: int = 100, offset: int = 0,
+                        registered: "bool | None" = None) -> "tuple[list, int]":
+        q = select(Publisher)
+        c = select(func.count()).select_from(Publisher)
+        if registered is not None:
+            q = q.where(Publisher.registered.is_(bool(registered)))
+            c = c.where(Publisher.registered.is_(bool(registered)))
+        q = q.order_by(Publisher.articles.desc(), Publisher.name).offset(offset).limit(limit)
+        with self.session() as s:
+            total = int(s.scalar(c) or 0)
+            return [self._publisher_row(r) for r in s.scalars(q).all()], total
+
+    def publisher_article_counts(self) -> dict:
+        """``publisher_id -> (articles, first created_at, last created_at)`` over the catalogue."""
+        q = (select(FeedArticle.publisher_id, func.count(), func.min(FeedArticle.created_at),
+                    func.max(FeedArticle.created_at))
+             .where(FeedArticle.publisher_id.is_not(None)).group_by(FeedArticle.publisher_id))
+        with self.session() as s:
+            return {pid: (int(n), first, last) for pid, n, first, last in s.execute(q).all() if pid}
+
+    # ---- story history: durable events, builds, snapshots, membership --------------------- #
+    def story_history_open(self) -> dict:
+        """The CURRENT membership: ``url -> {id, storyId, attached}`` for every open row."""
+        with self.session() as s:
+            rows = s.execute(select(StoryMembership.id, StoryMembership.url,
+                                    StoryMembership.story_id, StoryMembership.attached)
+                             .where(StoryMembership.left_build.is_(None))).all()
+            return {u: {"id": i, "storyId": sid, "attached": bool(a)} for i, u, sid, a in rows}
+
+    def story_records(self, story_ids) -> dict:
+        ids = [i for i in dict.fromkeys(story_ids) if i]
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(ids), 500):
+                for r in s.scalars(select(StoryRecord)
+                                   .where(StoryRecord.story_id.in_(ids[i:i + 500]))).all():
+                    out[r.story_id] = self._story_record_row(r)
+        return out
+
+    @staticmethod
+    def _story_record_row(r: "StoryRecord") -> dict:
+        return {"storyId": r.story_id, "status": r.status, "successorId": r.successor_id,
+                "originId": r.origin_id, "firstBuildId": r.first_build_id,
+                "lastBuildId": r.last_build_id, "firstServedAt": r.first_served_at,
+                "lastServedAt": r.last_served_at, "closedAt": r.closed_at, "title": r.title,
+                "topic": r.topic, "representativeUrl": r.representative_url,
+                "snapshots": int(r.snapshots or 0)}
+
+    def open_story_ids(self) -> set:
+        with self.session() as s:
+            return {i for (i,) in s.execute(select(StoryRecord.story_id)
+                                            .where(StoryRecord.status == "active")).all()}
+
+    def last_story_fingerprints(self, story_ids) -> dict:
+        """``story_id -> fingerprint`` of each story's LATEST snapshot (absent = never snapshotted)."""
+        ids = [i for i in dict.fromkeys(story_ids) if i]
+        out: dict = {}
+        with self.session() as s:
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                latest = (select(StorySnapshot.story_id, func.max(StorySnapshot.id).label("mid"))
+                          .where(StorySnapshot.story_id.in_(chunk))
+                          .group_by(StorySnapshot.story_id)).subquery()
+                rows = s.execute(select(StorySnapshot.story_id, StorySnapshot.fingerprint)
+                                 .join(latest, StorySnapshot.id == latest.c.mid)).all()
+                out.update({sid: fp for sid, fp in rows})
+        return out
+
+    def record_story_build(self, *, built_at: str, build_version: str, config_hash: str,
+                           registry_version: "str | None", catalog_rows: "int | None",
+                           catalog_newest: "str | None", stories: int) -> int:
+        with self.session() as s:
+            b = StoryBuild(built_at=built_at, build_version=build_version,
+                           config_hash=config_hash, registry_version=registry_version,
+                           catalog_rows=catalog_rows, catalog_newest=catalog_newest,
+                           stories=stories)
+            s.add(b)
+            s.flush()
+            return int(b.id)
+
+    def apply_story_history(self, *, build_id: int, built_at: str, new_stories: list,
+                            reopened: list, status_updates: list, touched: list,
+                            snapshots: list, joins: list, leaves: list, stats: dict) -> None:
+        """Write one build's deltas in ONE transaction: new/reopened story rows, status changes
+        (closed / merged with successor, split origin), the touched stories' ``last_*`` stamps,
+        the changed snapshots, membership joins, membership leaves, and the build's counters."""
+        with self.session() as s:
+            for ns in new_stories:
+                s.add(StoryRecord(story_id=ns["storyId"], status="active",
+                                  origin_id=ns.get("originId"), first_build_id=build_id,
+                                  last_build_id=build_id, first_served_at=built_at,
+                                  last_served_at=built_at, title=ns.get("title") or "",
+                                  topic=ns.get("topic") or "",
+                                  representative_url=ns.get("representativeUrl") or ""))
+            for sid in reopened:
+                r = s.get(StoryRecord, sid)
+                if r is not None:
+                    r.status, r.successor_id, r.closed_at = "active", None, None
+            for upd in status_updates:
+                r = s.get(StoryRecord, upd["storyId"])
+                if r is None:
+                    continue
+                r.status = upd["status"]
+                r.successor_id = upd.get("successorId")
+                r.closed_at = built_at
+                r.updated_at = _utcnow()
+            snap_counts: dict = {}
+            for sn in snapshots:
+                s.add(StorySnapshot(build_id=build_id, built_at=built_at, **sn))
+                snap_counts[sn["story_id"]] = snap_counts.get(sn["story_id"], 0) + 1
+            for sid in touched:
+                r = s.get(StoryRecord, sid)
+                if r is None:
+                    continue
+                r.last_build_id, r.last_served_at, r.updated_at = build_id, built_at, _utcnow()
+                if sid in snap_counts:
+                    r.snapshots = int(r.snapshots or 0) + snap_counts[sid]
+                    t = next((sn for sn in snapshots if sn["story_id"] == sid), None)
+                    if t is not None:
+                        r.title, r.topic = t.get("title") or r.title, t.get("topic") or r.topic
+            if joins:
+                s.bulk_save_objects([StoryMembership(joined_build=build_id, joined_at=built_at, **j)
+                                     for j in joins])
+            for i in range(0, len(leaves), 500):
+                s.execute(update(StoryMembership)
+                          .where(StoryMembership.id.in_(leaves[i:i + 500]))
+                          .values(left_build=build_id, left_at=built_at))
+            b = s.get(StoryBuild, build_id)
+            if b is not None:
+                for k, v in stats.items():
+                    if hasattr(b, k):
+                        setattr(b, k, v)
+
+    def story_record(self, story_id: str) -> "dict | None":
+        with self.session() as s:
+            r = s.get(StoryRecord, story_id)
+            return self._story_record_row(r) if r is not None else None
+
+    def story_history(self, story_id: str, *, limit: int = 200) -> "dict | None":
+        """A story's durable record with its snapshots (oldest first) and membership history."""
+        with self.session() as s:
+            r = s.get(StoryRecord, story_id)
+            if r is None:
+                return None
+            snaps = s.scalars(select(StorySnapshot).where(StorySnapshot.story_id == story_id)
+                              .order_by(StorySnapshot.id.desc()).limit(limit)).all()
+            members = s.scalars(select(StoryMembership)
+                                .where(StoryMembership.story_id == story_id)
+                                .order_by(StoryMembership.id)).all()
+            return {"story": self._story_record_row(r),
+                    "snapshots": [self._snapshot_row(x) for x in reversed(snaps)],
+                    "membership": [self._membership_row(m) for m in members]}
+
+    @staticmethod
+    def _snapshot_row(x: "StorySnapshot") -> dict:
+        return {"buildId": x.build_id, "builtAt": x.built_at, "fingerprint": x.fingerprint,
+                "title": x.title, "summary": x.summary, "topic": x.topic,
+                "totalCoverage": x.total_coverage, "publisherCount": x.publisher_count,
+                "attachedCoverage": x.attached_coverage,
+                "distribution": json.loads(x.distribution or "{}"),
+                "blindspotSide": x.blindspot_side, "blindspotWithheld": bool(x.blindspot_withheld),
+                "clusterTrust": x.cluster_trust, "geoCoherence": x.geo_coherence,
+                "countries": json.loads(x.countries or "[]"), "primaryCountry": x.primary_country,
+                "earliest": x.earliest, "latest": x.latest, "image": x.image,
+                "publishers": json.loads(x.publishers or "[]"), "tags": json.loads(x.tags or "[]")}
+
+    @staticmethod
+    def _membership_row(m: "StoryMembership") -> dict:
+        return {"url": m.url, "articleId": m.article_id, "publisher": m.publisher,
+                "publisherId": m.publisher_id, "attached": bool(m.attached),
+                "joinedBuild": m.joined_build, "joinedAt": m.joined_at,
+                "leftBuild": m.left_build, "leftAt": m.left_at}
+
+    def story_builds(self, *, limit: int = 50) -> list:
+        with self.session() as s:
+            rows = s.scalars(select(StoryBuild).order_by(StoryBuild.id.desc()).limit(limit)).all()
+            return [{"id": b.id, "builtAt": b.built_at, "buildVersion": b.build_version,
+                     "configHash": b.config_hash, "registryVersion": b.registry_version,
+                     "catalogRows": b.catalog_rows, "catalogNewest": b.catalog_newest,
+                     "stories": b.stories, "newStories": b.new_stories,
+                     "closedStories": b.closed_stories, "changed": b.changed,
+                     "joins": b.joins, "leaves": b.leaves, "ms": b.ms} for b in rows]
+
+    def story_history_stats(self) -> dict:
+        with self.session() as s:
+            return {name: int(s.scalar(select(func.count()).select_from(model)) or 0)
+                    for name, model in (("stories", StoryRecord), ("story_builds", StoryBuild),
+                                        ("story_snapshots", StorySnapshot),
+                                        ("story_membership", StoryMembership))}
+
+    def story_history_older_than(self, days: float, *, limit: int = 5000, now=None) -> dict:
+        """The history rows a prune of ``days`` would delete — what the archive writes first.
+        Snapshots and closed membership by their own timestamps; stories by ``closed_at``;
+        builds by ``built_at``. Open membership and active stories are never in the set."""
+        cutoff = ((now or _utcnow()) - timedelta(days=days)).isoformat()
+        with self.session() as s:
+            snaps = s.scalars(select(StorySnapshot).where(StorySnapshot.built_at < cutoff)
+                              .order_by(StorySnapshot.id).limit(limit)).all()
+            members = s.scalars(select(StoryMembership)
+                                .where(StoryMembership.left_at.is_not(None),
+                                       StoryMembership.left_at < cutoff)
+                                .order_by(StoryMembership.id).limit(limit)).all()
+            stories = s.scalars(select(StoryRecord)
+                                .where(StoryRecord.status != "active",
+                                       StoryRecord.closed_at.is_not(None),
+                                       StoryRecord.closed_at < cutoff)
+                                .order_by(StoryRecord.closed_at).limit(limit)).all()
+            builds = s.scalars(select(StoryBuild).where(StoryBuild.built_at < cutoff)
+                               .order_by(StoryBuild.id).limit(limit)).all()
+            return {"snapshots": [dict(self._snapshot_row(x), storyId=x.story_id, id=x.id)
+                                  for x in snaps],
+                    "membership": [dict(self._membership_row(m), storyId=m.story_id, id=m.id)
+                                   for m in members],
+                    "stories": [self._story_record_row(r) for r in stories],
+                    "builds": [{"id": b.id, "builtAt": b.built_at,
+                                "buildVersion": b.build_version, "configHash": b.config_hash,
+                                "registryVersion": b.registry_version, "stories": b.stories,
+                                "newStories": b.new_stories, "closedStories": b.closed_stories,
+                                "changed": b.changed, "joins": b.joins, "leaves": b.leaves}
+                               for b in builds]}
+
+    def prune_story_history(self, days: float, limit: int = 5000, *, now=None) -> int:
+        """Delete history older than ``days`` — the rows :meth:`story_history_older_than` names.
+        ``0`` keeps forever (the uniform retention convention). Bounded per table per pass."""
+        if not days or days <= 0:
+            return 0
+        rows = self.story_history_older_than(days, limit=limit, now=now)
+        deleted = 0
+        with self.session() as s:
+            ids = [x["id"] for x in rows["snapshots"]]
+            if ids:
+                deleted += s.execute(delete(StorySnapshot)
+                                     .where(StorySnapshot.id.in_(ids))).rowcount or 0
+            ids = [m["id"] for m in rows["membership"]]
+            if ids:
+                deleted += s.execute(delete(StoryMembership)
+                                     .where(StoryMembership.id.in_(ids))).rowcount or 0
+            ids = [r["storyId"] for r in rows["stories"]]
+            if ids:
+                deleted += s.execute(delete(StoryRecord)
+                                     .where(StoryRecord.story_id.in_(ids))).rowcount or 0
+            ids = [b["id"] for b in rows["builds"]]
+            if ids:
+                deleted += s.execute(delete(StoryBuild).where(StoryBuild.id.in_(ids))).rowcount or 0
+        return deleted
+
+    # ---- platform access: tenants, keys, metering --------------------------------------- #
+    _PLATFORM_KEY_PREFIX = "hv_live_"
+
+    def platform_create_tenant(self, tenant_id: str, name: str, *, kind: str = "developer") -> dict:
+        with self.session() as s:
+            row = s.get(PlatformTenant, tenant_id)
+            if row is None:
+                row = PlatformTenant(tenant_id=tenant_id, name=name, kind=kind)
+                s.add(row)
+            else:
+                row.name, row.kind = name or row.name, kind or row.kind
+            s.flush()
+            return self._tenant_row(row)
+
+    @staticmethod
+    def _tenant_row(r: "PlatformTenant") -> dict:
+        return {"tenantId": r.tenant_id, "name": r.name, "kind": r.kind, "status": r.status,
+                "createdAt": r.created_at.isoformat() if r.created_at else None}
+
+    def platform_tenant(self, tenant_id: str) -> "dict | None":
+        with self.session() as s:
+            r = s.get(PlatformTenant, tenant_id)
+            return self._tenant_row(r) if r is not None else None
+
+    def platform_list_tenants(self) -> list:
+        with self.session() as s:
+            return [self._tenant_row(r) for r in
+                    s.scalars(select(PlatformTenant).order_by(PlatformTenant.tenant_id)).all()]
+
+    def platform_set_tenant_status(self, tenant_id: str, status: str) -> bool:
+        with self.session() as s:
+            r = s.get(PlatformTenant, tenant_id)
+            if r is None:
+                return False
+            r.status = status
+            return True
+
+    def platform_mint_key(self, *, tenant_id: str, plan: str = "developer",
+                          label: "str | None" = None, scopes=(), licence_classes=None,
+                          rate_per_min: "int | None" = None, quota_month: "int | None" = None,
+                          expires_at: "str | None" = None) -> "tuple[str, dict]":
+        """Mint a platform key: store its hash, return the plaintext ONCE plus the row metadata."""
+        secret = self._PLATFORM_KEY_PREFIX + secrets.token_urlsafe(32)
+        key_id = "key_" + secrets.token_hex(8)
+        with self.session() as s:
+            if s.get(PlatformTenant, tenant_id) is None:
+                raise ValueError(f"unknown tenant {tenant_id!r}")
+            row = PlatformKey(key_id=key_id, tenant_id=tenant_id, key_hash=self._hash_token(secret),
+                              prefix=secret[:12], label=label, plan=plan,
+                              scopes=json.dumps(sorted(set(scopes or ()))),
+                              licence_classes=(json.dumps(sorted(set(licence_classes)))
+                                               if licence_classes is not None else None),
+                              rate_per_min=rate_per_min, quota_month=quota_month,
+                              expires_at=expires_at)
+            s.add(row)
+            s.flush()
+            meta = self._key_row(row)
+        return secret, meta
+
+    @staticmethod
+    def _key_row(r: "PlatformKey") -> dict:
+        return {"keyId": r.key_id, "tenantId": r.tenant_id, "prefix": r.prefix, "label": r.label,
+                "plan": r.plan, "scopes": json.loads(r.scopes or "[]"),
+                "licenceClasses": json.loads(r.licence_classes) if r.licence_classes else None,
+                "ratePerMin": r.rate_per_min, "quotaMonth": r.quota_month,
+                "createdAt": r.created_at.isoformat() if r.created_at else None,
+                "expiresAt": r.expires_at, "revokedAt": r.revoked_at,
+                "lastUsedAt": r.last_used_at.isoformat() if r.last_used_at else None}
+
+    def platform_resolve_key(self, secret: str) -> "dict | None":
+        """The key row + its tenant for a presented secret, or ``None`` when unknown. Touches
+        ``last_used_at``. Revocation and expiry are RETURNED, not decided here — the caller (the
+        platform auth dependency) turns them into the right refusal."""
+        if not secret:
+            return None
+        h = self._hash_token(secret)
+        with self.session() as s:
+            row = s.scalar(select(PlatformKey).where(PlatformKey.key_hash == h))
+            if row is None:
+                return None
+            row.last_used_at = _utcnow()
+            tenant = s.get(PlatformTenant, row.tenant_id)
+            out = self._key_row(row)
+            out["tenant"] = self._tenant_row(tenant) if tenant is not None else None
+            return out
+
+    def platform_list_keys(self, tenant_id: "str | None" = None) -> list:
+        q = select(PlatformKey).order_by(PlatformKey.created_at, PlatformKey.key_id)
+        if tenant_id:
+            q = q.where(PlatformKey.tenant_id == tenant_id)
+        with self.session() as s:
+            return [self._key_row(r) for r in s.scalars(q).all()]
+
+    def platform_revoke_key(self, key_id: str) -> bool:
+        with self.session() as s:
+            r = s.get(PlatformKey, key_id)
+            if r is None or r.revoked_at:
+                return False
+            r.revoked_at = _utcnow().isoformat()
+            return True
+
+    def platform_record_usage(self, *, tenant_id: str, key_id: str, endpoint: str,
+                              units: int = 1, status: int = 200, request_id: "str | None" = None,
+                              latency_ms: "float | None" = None, ts: "str | None" = None,
+                              events: bool = True) -> None:
+        """Meter one request: bump the daily rollup (the quota's input) and append the event."""
+        now = _utcnow()
+        ts = ts or now.isoformat()
+        day = ts[:10]
+        with self.session() as s:
+            row = s.get(PlatformUsageDaily, (tenant_id, key_id, day, endpoint))
+            if row is None:
+                row = PlatformUsageDaily(tenant_id=tenant_id, key_id=key_id, day=day,
+                                         endpoint=endpoint)
+                s.add(row)
+            row.requests = int(row.requests or 0) + 1
+            if 200 <= int(status) < 400:
+                row.units = int(row.units or 0) + int(units)
+            else:
+                row.errors = int(row.errors or 0) + 1
+            if events:
+                s.add(PlatformUsageEvent(ts=ts, tenant_id=tenant_id, key_id=key_id,
+                                         endpoint=endpoint[:64], units=int(units),
+                                         status=int(status), request_id=request_id,
+                                         latency_ms=latency_ms))
+
+    def platform_usage_month(self, tenant_id: str, month: str) -> dict:
+        """Units + requests a tenant has consumed in ``month`` (``YYYY-MM``, UTC)."""
+        with self.session() as s:
+            units, reqs = s.execute(
+                select(func.coalesce(func.sum(PlatformUsageDaily.units), 0),
+                       func.coalesce(func.sum(PlatformUsageDaily.requests), 0))
+                .where(PlatformUsageDaily.tenant_id == tenant_id,
+                       PlatformUsageDaily.day.like(f"{month}-%"))).one()
+            return {"units": int(units or 0), "requests": int(reqs or 0)}
+
+    def platform_usage(self, tenant_id: str, *, since_day: "str | None" = None) -> list:
+        q = select(PlatformUsageDaily).where(PlatformUsageDaily.tenant_id == tenant_id)
+        if since_day:
+            q = q.where(PlatformUsageDaily.day >= since_day)
+        q = q.order_by(PlatformUsageDaily.day, PlatformUsageDaily.key_id, PlatformUsageDaily.endpoint)
+        with self.session() as s:
+            return [{"day": r.day, "keyId": r.key_id, "endpoint": r.endpoint, "units": r.units,
+                     "requests": r.requests, "errors": r.errors} for r in s.scalars(q).all()]
+
+    def prune_platform_usage_events(self, days: int, limit: int = 5000) -> int:
+        """Age out the per-request audit rows (the daily rollup is what persists). 0 = keep."""
+        if not days or days <= 0:
+            return 0
+        cutoff = (_utcnow() - timedelta(days=days)).isoformat()
+        with self.session() as s:
+            ids = [i for (i,) in s.execute(select(PlatformUsageEvent.id)
+                                           .where(PlatformUsageEvent.ts < cutoff)
+                                           .limit(max(1, int(limit)))).all()]
+            if not ids:
+                return 0
+            return s.execute(delete(PlatformUsageEvent)
+                             .where(PlatformUsageEvent.id.in_(ids))).rowcount or 0
 
     def replace_article_event_locations(self, canonical_url: str, locations) -> None:
         """Persist an article's EVENT locations (``location.EventLocation`` rows) — idempotent per
@@ -2252,6 +3345,28 @@ class Store:
                     s.execute(text(f"ALTER TABLE source_admission ADD COLUMN {name} {decl}"))
             except Exception:
                 pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
+    def _ensure_identity_columns(self) -> None:
+        """Additive, idempotent identity/licence columns on ``feed_articles`` — same discipline as
+        ``_ensure_media_columns``: ``create_all`` creates NEW tables only, and this table has been
+        in production since the first deploy. NULL on every legacy row until the backfill (or the
+        row's next re-poll) fills it; nothing on the consumer path reads these columns."""
+        for name, decl in [("article_id", "VARCHAR(32)"), ("publisher_id", "VARCHAR(32)"),
+                           ("licence_class", "VARCHAR(24)"), ("scorer_version", "VARCHAR(16)")]:
+            try:
+                with self.session() as s:
+                    s.execute(text(f"ALTER TABLE feed_articles ADD COLUMN {name} {decl}"))
+            except Exception:
+                pass    # already exists (fresh DB) or a non-sqlite backend — nothing to do
+
+    def _ensure_identity_indexes(self) -> None:
+        """The identity columns' indexes: a UNIQUE index on ``article_id`` (NULLs are distinct, so
+        legacy rows coexist with filled ones) and plain indexes on the two the platform filters by."""
+        self._create_indexes([
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_feed_article_id ON feed_articles(article_id)",
+            "CREATE INDEX IF NOT EXISTS ix_feed_publisher_id ON feed_articles(publisher_id)",
+            "CREATE INDEX IF NOT EXISTS ix_feed_licence_class ON feed_articles(licence_class)",
+        ])
 
     def _ensure_publisher_metadata_columns(self) -> None:
         """Additive, idempotent columns on ``publisher_metadata`` — same discipline as
@@ -2872,6 +3987,17 @@ class Store:
         with self.session() as s:
             return {u: sid for u, sid in s.execute(
                 select(StoryMember.url, StoryMember.story_id)).all()}
+
+    def story_ids_for_urls(self, urls) -> dict:
+        """``url -> story_id`` from the ledger for a few urls (the platform's per-article lookup;
+        :meth:`story_member_ids` loads the whole table and is for the build)."""
+        wanted = [u for u in dict.fromkeys(urls) if u]
+        if not wanted:
+            return {}
+        with self.session() as s:
+            return {u: sid for u, sid in s.execute(
+                select(StoryMember.url, StoryMember.story_id)
+                .where(StoryMember.url.in_(wanted[:500]))).all()}
 
     def replace_story_members(self, mapping: dict) -> int:
         """Replace the whole url -> story_id map with the current build's.

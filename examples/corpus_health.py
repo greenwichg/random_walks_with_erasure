@@ -53,6 +53,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 import retention_policy          # the ONE typed description of how long anything is kept
+import archive                   # archive-before-delete (RWE_ARCHIVE_ON_PRUNE) — fails closed
 
 _BUCKETS = ("left", "center", "right")
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)   # undated articles sort oldest (pruned first)
@@ -590,6 +591,13 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
     # Runs only when a per-tier age is configured, so a deployment that has not asked for one is
     # byte-identical to before this existed.
     sql_pruned = 0
+    # Archive-before-delete (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md §C.2): when the operator has
+    # switched it on, every row retention is about to delete is written to the archive FIRST, and
+    # a failed write keeps the rows. Off by default; byte-identical behaviour when off.
+    archive_cb = None
+    if archive.enabled_on_prune():
+        def archive_cb(urls, _store=store_):
+            archive.archive_articles(_store, urls)
     if policy.article_max_age_days_shadow or policy.article_max_age_days_tier_b:
         import corpus
         for tier, age, names in (("shadow", policy.article_max_age_days_shadow,
@@ -599,7 +607,8 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
             if not age:
                 continue
             n = store_.prune_tier_articles_older_than(names(), age,
-                                                      limit=policy.batch_limit, now=now)
+                                                      limit=policy.batch_limit, now=now,
+                                                      before_delete=archive_cb)
             sql_pruned += n
             if n:
                 log(logging.INFO, "feed_retention_tier", tier=tier, pruned=n, ageDays=age)
@@ -614,7 +623,15 @@ def run_retention(store_, *, max_age_days: Optional[float] = None, max_count: Op
     articles = store_.list_retention_rows()
     plan = plan_retention(articles, max_age_days=max_age_days, max_count=max_count,
                           thresholds=thresholds, now=now, age_days_for=age_days_for)
-    deleted = store_.delete_feed_articles(plan["prune"]) if plan["prune"] else 0
+    prune = list(plan["prune"])
+    if prune and archive_cb is not None:
+        try:
+            archive_cb(prune)
+        except Exception as exc:             # noqa: BLE001 — fail CLOSED: keep every row this pass
+            log(logging.WARNING, "feed_retention_archive_failed", rows=len(prune),
+                error=f"{type(exc).__name__}: {exc}")
+            prune = []
+    deleted = store_.delete_feed_articles(prune) if prune else 0
     deleted += sql_pruned
     # The set is built ONCE. It used to be constructed inside the comprehension's condition, where
     # Python re-evaluates it for every article — a 27,000-element set rebuilt 27,000 times, ~729

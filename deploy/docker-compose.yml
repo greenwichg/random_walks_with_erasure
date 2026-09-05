@@ -750,6 +750,28 @@ services:
       # member aged out of the rolling window, 9 because a backfilled article displaced it. Each
       # one is a saved or shared link that stops resolving. 0 reverts to deriving from the anchor.
       RWE_STORY_STABLE_IDS: ${RWE_STORY_STABLE_IDS:-1}
+      # ── The News Intelligence foundation (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md, docs/PLATFORM_API.md) ──
+      # Story history: the served unfiltered build is recorded as deltas (builds, snapshots on
+      # change, membership joins/leaves) beside the id ledger. ON; `0` records nothing. Fail-soft.
+      RWE_STORY_HISTORY: ${RWE_STORY_HISTORY:-1}
+      # The commercial /v1 surface. OFF: no /v1 route exists until an operator opts in; keys are
+      # minted with `platform_keys.py` and stored as hashes. The consumer routes are unchanged
+      # either way.
+      RWE_PLATFORM_API: ${RWE_PLATFORM_API:-0}
+      # Third-party ratings (the AllSides-derived lean and everything derived from it, MBFC
+      # verdicts) on /v1: a licence the operator holds or does not — OFF until it does. Wikipedia
+      # text (CC BY-SA) likewise.
+      RWE_PLATFORM_PUBLISH_RATINGS: ${RWE_PLATFORM_PUBLISH_RATINGS:-0}
+      RWE_PLATFORM_PUBLISH_WIKIPEDIA: ${RWE_PLATFORM_PUBLISH_WIKIPEDIA:-0}
+      # Archive-before-delete: retention writes every row it is about to prune (catalogue rows,
+      # story history) to RWE_ARCHIVE_DIR first and keeps them if the write fails. OFF by default;
+      # `backup-offhost.sh` ships the directory to s3://<bucket>/archive/ (outside the backups/
+      # lifecycle prefix) once it exists.
+      RWE_ARCHIVE_ON_PRUNE: ${RWE_ARCHIVE_ON_PRUNE:-0}
+      RWE_ARCHIVE_DIR: ${RWE_ARCHIVE_DIR:-/app/data/archive}
+      # Hot window for the story history (days; 0 = keep) and the platform's per-request audit rows.
+      RWE_RETENTION_STORY_HISTORY_DAYS: ${RWE_RETENTION_STORY_HISTORY_DAYS:-30}
+      RWE_RETENTION_PLATFORM_EVENT_DAYS: ${RWE_RETENTION_PLATFORM_EVENT_DAYS:-90}
       # M4 — Tier B story attachment. Tier B articles (corpus.tier_b_exclusions) join built
       # stories as coverage-only entries: appended to the END of `coverage` with `tierB: true`
       # plus an `attachedCoverage` count, and NOTHING else changes — membership, ids, lean

@@ -43,6 +43,28 @@
       "fix": "On the `api` service add `RWE_RSS_FEEDS: /app/feeds/rss_feeds.txt` and the bind-mount `./rss_feeds.example.txt:/app/feeds/rss_feeds.txt:ro` \u2014 in the AWS override too, because its `volumes: !override` replaces the list."
     },
     {
+      "id": "archive-on-prune",
+      "categories": [
+        "feature-flag",
+        "required-env",
+        "required-mount"
+      ],
+      "when": {
+        "service": "api",
+        "env_truthy": "RWE_ARCHIVE_ON_PRUNE"
+      },
+      "require": {
+        "env": [
+          "RWE_ARCHIVE_DIR"
+        ],
+        "mounts": [
+          "/app/data"
+        ]
+      },
+      "why": "RWE_ARCHIVE_ON_PRUNE=1 makes retention write every row it is about to delete to RWE_ARCHIVE_DIR first and keep the rows if the write fails. Without a directory on the durable data volume the archive lands in the container's ephemeral filesystem, survives no deploy, and never reaches S3 — history the product sells would be written to nowhere while retention reports success.",
+      "fix": "On the `api` service keep `RWE_ARCHIVE_DIR: ${RWE_ARCHIVE_DIR:-/app/data/archive}` and the `/app/data` volume mount; `backup-offhost.sh` ships `<data>/archive` to `s3://<bucket>/archive/`."
+    },
+    {
       "id": "newsapi-key",
       "categories": [
         "feature-flag",

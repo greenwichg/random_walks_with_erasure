@@ -493,6 +493,14 @@ def _domain_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+#: Version of the deterministic scorer (topic classifier + political flag + registry resolution +
+#: baseline enricher). Stamped on every catalogue row it scores (``feed_articles.scorer_version``)
+#: so a downstream consumer can tell a data change from an algorithm change. Bump it when
+#: ``classify_topic``, ``looks_political``, ``_resolve_outlet`` or the baseline enricher would
+#: produce different output for identical input.
+SCORER_VERSION = "1"
+
+
 class Scorer:
     """Baseline, deterministic scorer: a URL -> :class:`ScoredRead`, with an optional enricher.
 

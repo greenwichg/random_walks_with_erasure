@@ -48,6 +48,8 @@ import text_utils                # the ONE canonical HTML→text normalizer (use
 import robots                    # the ONE robots policy + the ONE user-agent
 import location                  # Location Resolver — canonical publisher country/language (Phase 0)
 import entity_spans              # Stage 0.3 — rule-extracted entity spans, written under their own source
+import identity                  # durable publisher ids (docs/NEWS_INTELLIGENCE_INFRASTRUCTURE.md E.3)
+import licence                   # the licence class one acquisition channel establishes (§I.2)
 
 #: F2 of the M7 Stage 2 audit: this used to read
 #: ``InformationHealth-RSS/0.1 (+https://code.claude.com)`` — a documentation site belonging to
@@ -537,6 +539,12 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
         # canonical publisher-level location. Provider-agnostic — every adapter's entry passes
         # through this same line, so downstream never sees provider-specific location forms.
         loc = location.resolve_article_location(e.country, e.language, outlet=scored.outlet)
+        # Durable identity + licence, stamped HERE so every producer — feeds, the keyed adapters,
+        # the crawler and the browser extension — gets the same id and the same class rule from
+        # the same line. The publisher id is a pure function of the resolved outlet (no lookup);
+        # the class is what THIS channel's terms allow, and the store keeps the most permissive
+        # class any channel has established for the row.
+        channel = (e.source_type or source_type or "")
         created = store_.upsert_feed_article(
             canonical_url=scored.article_id, url=url, publisher=scored.outlet,
             source_publisher=source_publisher, title=e.title or scored.title,
@@ -547,7 +555,11 @@ def ingest_entries(entries, source_publisher, source_feed, scorer, store_, *,
             image_attribution=(source_publisher or scored.outlet or None),
             source_type=(e.source_type or source_type),
             source_provider=(e.source_provider or source_provider or source_publisher),
-            external_id=e.external_id, country=loc.country, language=loc.language)
+            external_id=e.external_id, country=loc.country, language=loc.language,
+            publisher_id=identity.publisher_id_for(scored.outlet),
+            publisher_key=identity.publisher_identity_key(scored.outlet),
+            licence_class=licence.class_for_channel(channel),
+            scorer_version=ingest.SCORER_VERSION)
         # Event geography (Phase 2): persist provider-extracted places, normalized through the
         # same resolver. Written only when the entry CARRIES event locations — a provider
         # without geography never wipes another provider's rows for the same article.

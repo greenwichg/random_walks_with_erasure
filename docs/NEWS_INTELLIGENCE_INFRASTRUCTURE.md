@@ -717,6 +717,32 @@ The design keeps all three open: lean fields carry `lean_source`, distributions 
 
 ---
 
+## Implementation note — what shipped as the minimum foundation
+
+**One decision revised against §D.2 before building: no separate gateway process.** The engine
+is not internet-facing, carries zero third-party load, and a second uvicorn service would be a
+second thing to operate, monitor and deploy for a benefit nobody has measured. The platform is a
+self-contained package (`examples/platform_api/`) **mounted into the engine behind
+`RWE_PLATFORM_API=1`** (default off — a deployment that has not opted in has no `/v1` route), with
+a standalone factory (`platform_api.app.create_app`) that runs it as its own process the day
+isolation is worth one. The package boundary is what preserves that option, and
+`tests/test_platform_boundaries.py` pins it.
+
+Shipped (all additive; consumer routes, payloads and apps byte-identical):
+
+| item | where |
+|---|---|
+| `article_id` (minted once) + `article_aliases`; `publisher_id` (pure function of the identity key) + `publishers` / `publisher_hosts`; `licence_class`; `scorer_version` — stamped at the one ingest choke point, self-healing on re-poll, backfilled by `identity_backfill.py` | `store.py`, `identity.py`, `licence.py`, `rss_ingest.py` |
+| `article_provenance` — one row per (article, channel, source) with first/last observation and count | `store.py` |
+| Story history: `stories` (lifecycle: active / closed / merged + successor / split origin), `story_builds` (version + config hash + registry snapshot), `story_snapshots` (on change only), `story_membership` (joins/leaves); recorded after the served unfiltered build, fail-soft | `story_history.py`, `story_service.py` |
+| Versions: `ingest.SCORER_VERSION`, `story_service.BUILD_VERSION` + `build_config_hash()`, `identity.registry_version()`; every `/v1` response carries them | |
+| Archive: gzipped JSONL partitions + manifests; archive-before-delete in retention (fails closed); story-history hot window; `archive_export.py`; off-host sync under `archive/` | `archive.py`, `corpus_health.py`, `storage_lifecycle.py`, `retention_policy.py`, `deploy/ops/backup-offhost.sh` |
+| `/v1`: tenants, hashed keys with scopes / plans / per-key limits / expiry / revocation, per-key rate, per-tenant monthly quota, durable meter, licence-class withholding, ratings as a deployment switch, cursor paging, stable error codes | `platform_api/`, `platform_keys.py`, `docs/PLATFORM_API.md` |
+
+Not built, on purpose: billing, SSO, data tenancy, bulk exports through the API, webhooks, an
+entity node table, Alembic (every change here is additive and uses the store's existing
+`_ensure_*` discipline; the first non-additive change still needs a migration tool).
+
 ## Approval checklist
 
 Approve, amend or reject each line; implementation starts only on the approved subset.

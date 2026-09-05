@@ -1266,9 +1266,13 @@ def test_corpus_validation_endpoint(client, monkeypatch):
             for pub, lean in (("CV-Left", -1.5), ("CV-Center", 0.0), ("CV-Right", 1.5)):
                 u = f"https://cv-{pub}-{i}.example/a"
                 urls.append(u)
+                # A RECENT publication time, not a fixed date: the candidate corpus applies the
+                # 60-day freshness window, so a pinned date turned this into a fuse that blew
+                # on 2026-09-04 (every row stale -> ineligible) with no code change anywhere.
                 st.upsert_feed_article(canonical_url=u, url=u, publisher=pub, source_publisher=pub,
                                        title=f"{pub} {i}", description="", body=None,
-                                       published_at="2026-07-06T12:00:00+00:00", source_feed="f",
+                                       published_at=(datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
+                                       source_feed="f",
                                        scored={"article_id": u, "outlet": pub, "lean": lean,
                                                "category": "Politics"})
         monkeypatch.setenv("RWE_CORPUS_MIN_ARTICLES", "1")   # low floor so a small test corpus is eligible
