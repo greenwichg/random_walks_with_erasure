@@ -203,6 +203,38 @@ def test_article_lookup_by_id_and_by_url(st, client):
     assert r.status_code == 404
 
 
+def test_every_platform_timestamp_carries_its_utc_offset(st, client):
+    """The first external key's `mint` printed `createdAt` with `+00:00` and `list` printed the
+    same field without it (SQLite hands a DateTime back naive). One format on the wire, whether
+    the row was just flushed or read back, on every timestamp a key or tenant carries."""
+    secret, meta, h = _key(st)
+    client.get("/v1/articles", headers=h)                               # stamps lastUsedAt
+    st.platform_revoke_key(meta["keyId"])
+    rows = [st.platform_key(meta["keyId"]), *st.platform_list_keys("acme"), st.platform_tenant("acme")]
+    stamps = [(k, v) for r in rows for k, v in r.items()
+              if k in ("createdAt", "lastUsedAt", "expiresAt", "revokedAt") and v is not None]
+    assert {k for k, _ in stamps} >= {"createdAt", "lastUsedAt", "revokedAt"}
+    for k, v in stamps:
+        parsed = datetime.fromisoformat(v)
+        assert parsed.tzinfo is not None and v.endswith("+00:00"), (k, v)
+    me = client.get("/v1/me", headers=h).json()
+    assert me["error"]["code"] == "key_revoked"                          # the revoked key refuses …
+    secret2, meta2, h2 = _key(st)
+    created = client.get("/v1/me", headers=h2).json()["data"]["key"]["createdAt"]
+    assert created.endswith("+00:00") and created == meta2["createdAt"]  # … and /v1/me matches mint
+
+
+def test_iso_utc_stamps_naive_values_and_keeps_offsets():
+    iso = store_mod._iso_utc
+    assert iso(None) is None
+    assert iso(datetime(2026, 9, 5, 19, 17, 45, 59368)) == "2026-09-05T19:17:45.059368+00:00"
+    assert iso(datetime(2026, 9, 5, 21, 0, tzinfo=timezone(timedelta(hours=2)))) == "2026-09-05T19:00:00+00:00"
+    assert iso("2027-01-01T00:00:00") == "2027-01-01T00:00:00+00:00"    # an operator's --expires, typed naive
+    assert iso("2027-01-01T00:00:00+00:00") == "2027-01-01T00:00:00+00:00"
+    assert iso("2027-01-01T00:00:00Z") == "2027-01-01T00:00:00Z"        # already unambiguous: untouched
+    assert iso("not a date") == "not a date"
+
+
 def test_publishers_by_name_and_id(st, client):
     _, _, dev = _key(st)
     d = client.get("/v1/publishers", params={"name": "bbc.co.uk"}, headers=dev).json()["data"][0]

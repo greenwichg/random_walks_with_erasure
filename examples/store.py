@@ -53,6 +53,31 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _iso_utc(value) -> "str | None":
+    """ISO 8601 with an explicit UTC offset, whatever the store handed back.
+
+    SQLite returns a ``DateTime`` column NAIVE (the offset is lost on the way in), so the same
+    row serialised right after a flush (aware) and after a read (naive) printed two formats —
+    ``…19:17:45.059368+00:00`` from ``mint``, ``…19:17:45.059368`` from ``list``, on the first
+    external key (2026-09-05). Every value this store writes is UTC, so a naive datetime is
+    stamped UTC rather than guessed at. An ISO string passes through with its offset; one typed
+    without an offset (an operator's ``--expires``) is stamped too; ``None`` stays ``None``."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+    text_value = str(value)
+    try:
+        parsed = datetime.fromisoformat(text_value.replace("Z", "+00:00"))
+    except ValueError:
+        return text_value
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc).isoformat()
+    return text_value
+
+
 def _iso_gap_days(earlier: "str | None", later: "str | None") -> "float | None":
     """Days between two ISO timestamps, or ``None`` when either is missing or unparseable.
 
@@ -3140,7 +3165,7 @@ class Store:
     @staticmethod
     def _tenant_row(r: "PlatformTenant") -> dict:
         return {"tenantId": r.tenant_id, "name": r.name, "kind": r.kind, "status": r.status,
-                "createdAt": r.created_at.isoformat() if r.created_at else None}
+                "createdAt": _iso_utc(r.created_at)}
 
     def platform_tenant(self, tenant_id: str) -> "dict | None":
         with self.session() as s:
@@ -3188,9 +3213,10 @@ class Store:
                 "plan": r.plan, "scopes": json.loads(r.scopes or "[]"),
                 "licenceClasses": json.loads(r.licence_classes) if r.licence_classes else None,
                 "ratePerMin": r.rate_per_min, "quotaMonth": r.quota_month,
-                "createdAt": r.created_at.isoformat() if r.created_at else None,
-                "expiresAt": r.expires_at, "revokedAt": r.revoked_at,
-                "lastUsedAt": r.last_used_at.isoformat() if r.last_used_at else None}
+                # Every timestamp on the wire carries its UTC offset — the four together, so a
+                # client parses one format whether the row was just minted or read back.
+                "createdAt": _iso_utc(r.created_at), "expiresAt": _iso_utc(r.expires_at),
+                "revokedAt": _iso_utc(r.revoked_at), "lastUsedAt": _iso_utc(r.last_used_at)}
 
     def platform_resolve_key(self, secret: str) -> "dict | None":
         """The key row + its tenant for a presented secret, or ``None`` when unknown. Touches

@@ -145,6 +145,11 @@ unit.
 **Retry-After.** `rate_limited` says when the per-minute bucket refills; `quota_exceeded` says
 how many seconds remain in the UTC calendar month.
 
+**Timestamps.** Every timestamp `/v1` and `platform_keys.py` emit is ISO 8601 in UTC with the
+offset written out (`2026-09-05T19:27:11.401408+00:00`) — `createdAt`, `lastUsedAt`, `expiresAt`,
+`revokedAt`, the usage log's `ts`, `meta.asOf`. One format whether the row was just minted or
+read back; a client parses it with any ISO parser and never has to guess a zone.
+
 **Key rotation.** `platform_keys.py rotate key_… [--grace-hours 24]` mints a successor with the
 same tenant, plan, scopes, classes, limits and label, prints it once, and gives the old key the
 grace period (`0` revokes it now; an earlier expiry is never extended). `/v1/me` shows the key's
