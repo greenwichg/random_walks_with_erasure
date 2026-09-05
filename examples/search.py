@@ -35,7 +35,7 @@ def search(store_, *, query: Optional[str] = None, publisher: Optional[str] = No
            date_from: Optional[str] = None, date_to: Optional[str] = None,
            source: Optional[str] = None, country: Optional[str] = None, sort: str = "newest",
            limit: int = 30, offset: int = 0, debug: bool = False,
-           include_provisional: bool = True) -> dict:
+           include_provisional: bool = True, terms: "bool | None" = None) -> dict:
     """Run a catalog search and return the paginated envelope:
     ``{results, total, page, pageSize, hasMore, remainingPages, sort}`` (plus ``queryMs`` +
     ``ftsAvailable`` when ``debug``). Every result carries the canonical URL, publisher, title,
@@ -43,7 +43,12 @@ def search(store_, *, query: Optional[str] = None, publisher: Optional[str] = No
 
     ``include_provisional`` (default ``True`` — the consumer Search surface sees everything, as it
     always has) is the same switch Discover passes to the store: ``False`` leaves out
-    extension-born articles nothing has corroborated yet. The platform API passes ``False``."""
+    extension-born articles nothing has corroborated yet. The platform API passes ``False``.
+
+    ``terms`` selects TERM search (``store.search_feed_articles``): every word must occur, in any
+    order, porter-stemmed, and ``sort="relevance"`` ranks by bm25. The platform API passes
+    ``True``; ``None`` leaves the consumer surfaces on the substring match unless
+    ``RWE_SEARCH_TERMS=1``."""
     sort = normalize_sort(sort)
     pagination = OffsetPagination.from_params(limit, offset)
 
@@ -51,12 +56,13 @@ def search(store_, *, query: Optional[str] = None, publisher: Optional[str] = No
     rows, total = store_.search_feed_articles(
         q=query, publisher=publisher, lean=normalize_lean(lean), topic=topic, country=country,
         date_from=date_from, date_to=date_to, source=source, sort=sort, pagination=pagination,
-        include_provisional=include_provisional)
+        include_provisional=include_provisional, terms=terms)
     results = [discover.feed_article_to_article(r) for r in rows]
     query_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
     out = {"results": results, "total": total, "sort": sort, **pagination.meta(total)}
     if debug:
         out["queryMs"] = query_ms
-        out["ftsAvailable"] = store_.fts5_available()   # diagnostics only — FTS is not implemented yet
+        out["ftsAvailable"] = store_.fts5_available()
+        out["termSearch"] = bool(query) and store_._terms_mode(terms)
     return out

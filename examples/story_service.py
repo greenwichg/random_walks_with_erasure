@@ -33,6 +33,7 @@ from typing import Optional
 import clustering                 # the deterministic union-find Jaccard primitive (algorithm only)
 import corpus                     # the clustering-corpus boundary (Tier A) + the budget report
 import discover                   # feed_article_to_article — the shared Article serializer (Read flow)
+import ingest                     # canonical_url — the one URL normalisation (the query filter's join key)
 import location                   # normalize_country — the entity noise filter's geo test (X5b)
 import media                      # centralised hero-image selection (additive; no clustering change)
 import obs_metrics                # OBS1 counters (stdlib-only leaf) — stale serves land in /api/metrics
@@ -3939,6 +3940,31 @@ def _cached_build(store_, *, topic, date_from, date_to, max_scan, min_articles, 
     return built
 
 
+#: How many best-ranked catalogue matches a story query considers. A common word can match
+#: tens of thousands of rows; the top of the bm25 order is where the stories about it are.
+QUERY_MATCH_LIMIT = 2000
+
+
+def _query_filter(store_, stories: list, query: str) -> "tuple[list, dict]":
+    """The stories with at least one member among the catalogue's term-search hits, plus a sort
+    key per story id: ``(-matching members, best rank, original position)``."""
+    try:
+        hits = store_.search_feed_article_urls(query, limit=QUERY_MATCH_LIMIT)
+    except Exception:                       # noqa: BLE001 — no index: nothing matches, honestly
+        hits = []
+    if not hits:
+        return [], {}
+    rank_of = {u: r for u, r in hits}
+    kept, strength = [], {}
+    for pos, s in enumerate(stories):
+        ranks = [rank_of[u] for u in (ingest.canonical_url(str(m.get("id") or m.get("url") or ""))
+                                      for m in (s.get("coverage") or ())) if u in rank_of]
+        if ranks:
+            kept.append(s)
+            strength[s["id"]] = (-len(ranks), min(ranks), pos)
+    return kept, strength
+
+
 def _sort_stories(stories: list, sort: str) -> list:
     if sort == "latest":
         return sorted(stories, key=lambda s: (s["latest"] or "", s["id"]), reverse=True)
@@ -4073,7 +4099,8 @@ def cluster_from_store(store_, *, min_articles: int = 2, min_publishers: int = 2
 def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None, blindspot=None,
                  story_type=None, tag=None, exclude_story=None, date_from=None, date_to=None,
                  sort: str = "top", limit: int = 30, offset: int = 0, min_articles: int = 2,
-                 min_publishers: int = 2, max_scan: int = None, debug: bool = False) -> dict:
+                 min_publishers: int = 2, max_scan: int = None, debug: bool = False,
+                 query: "str | None" = None) -> dict:
     """The paginated, filtered Story envelope Discover + Stories consume:
     ``{stories, total, page, pageSize, hasMore, remainingPages, sort, countryFacets,
     blindspotFacets, typeFacets}`` (+ ``clusterMs`` + ``diagnostics`` when ``debug``). topic/date are
@@ -4196,6 +4223,16 @@ def list_stories(store_, *, topic=None, publisher=None, lean=None, country=None,
         # someone saved, shared or typed, where the catalog has since moved on.
         if exclude_story and len(stories) == 1 and stories[0]["id"] == exclude_story:
             stories = []
+    if query and query.strip():
+        # Free-text retrieval — "find stories about X". A story matches when one of its members
+        # matches the catalogue's term search (any order, stemmed; store.search_feed_article_urls),
+        # so the words are found in headlines and snippets the story is actually made of; the
+        # story's own title never decides alone. Post-filter and last, like ``tag``. Under the
+        # default "top" sort the best-matched stories lead: more matching members first, then the
+        # best member rank, then the build's own order.
+        stories, strength = _query_filter(store_, stories, query)
+        if sort == "top":
+            stories = sorted(stories, key=lambda s: strength[s["id"]])
 
     stories = _sort_stories(stories, sort)
     total = len(stories)

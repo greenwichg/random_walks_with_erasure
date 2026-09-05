@@ -80,12 +80,12 @@ both public.
 |---|---|---|
 | `GET /v1/health` | — | liveness + the versions in force |
 | `GET /v1/me` | any key | the key's tenant, plan, scopes, licence classes, limits, month-to-date |
-| `GET /v1/articles?q=&publisher_id=&publisher=&topic=&country=&from=&to=&sort=newest&limit=&cursor=` | `articles:read` | catalogue search (FTS + filters), provisional rows excluded in SQL |
+| `GET /v1/articles?q=&publisher_id=&publisher=&topic=&country=&from=&to=&sort=&limit=&cursor=` | `articles:read` | catalogue term search + filters; with `q` the default `sort` is `relevance` (else `newest`; `oldest`, `publisher`); provisional rows excluded in SQL |
 | `GET /v1/articles/{article_id}` · `GET /v1/articles/by-url?url=` | `articles:read` | one article, its current `storyId`, its provenance channels |
 | `GET /v1/articles/{article_id}/entities?kind=` | `articles:read` | provider-extracted `person` / `org` names (GDELT attribution), `kind=span` for our headline spans |
 | `GET /v1/entities?name=&kind=&limit=&cursor=` | `articles:read` | the articles an entity was extracted on, newest first |
 | `GET /v1/countries` | `articles:read` | per-country article + publisher counts over EVENT geography |
-| `GET /v1/stories?topic=&publisher_id=&country=&tag=&type=&lean=&blindspot=&from=&to=&sort=top&limit=&cursor=` | `stories:read` | the served story build, paged (`lean`/`blindspot` only where ratings are published) |
+| `GET /v1/stories?q=&topic=&publisher_id=&country=&tag=&type=&lean=&blindspot=&from=&to=&sort=top&limit=&cursor=` | `stories:read` | the served story build, paged; `q` keeps the events whose member articles match the words, best-matched first under `sort=top` (`lean`/`blindspot` only where ratings are published) |
 | `GET /v1/stories/{story_id}` | `stories:read` | one story with its coverage |
 | `GET /v1/stories/{story_id}/similar?limit=` | `stories:read` | stories about the same / a related event |
 | `GET /v1/stories/{story_id}/intelligence` | `stories:read` | freshness, momentum, lifecycle, alerts |
@@ -96,8 +96,8 @@ both public.
 | `GET /v1/publishers?name=` · `?q=&country=&scope=&kind=&registered=&limit=&cursor=` | `publishers:read` | resolve one by any name/host form, or list busiest-first under filters |
 | `GET /v1/publishers/by-host?host=` | `publishers:read` | a hostname or URL → its publisher |
 | `GET /v1/publishers/{publisher_id}` | `publishers:read` | curated facts + hosts + counted profile |
-| `GET /v1/publishers/{publisher_id}/articles?q=&topic=&from=&to=&sort=&limit=&cursor=` | `articles:read` | the publisher's articles |
-| `GET /v1/publishers/{publisher_id}/stories?topic=&country=&from=&to=&sort=&limit=&cursor=` | `stories:read` | stories with coverage from the publisher |
+| `GET /v1/publishers/{publisher_id}/articles?q=&topic=&from=&to=&sort=&limit=&cursor=` | `articles:read` | the publisher's articles (same `q` / `sort` semantics as `/v1/articles`) |
+| `GET /v1/publishers/{publisher_id}/stories?q=&topic=&country=&from=&to=&sort=&limit=&cursor=` | `stories:read` | stories with coverage from the publisher |
 | `GET /v1/outlets/search?q=&count=` | `publishers:read` | the outlet index (Wikidata, Wikipedia, Common Crawl, observed feeds): outlets by place, language or name — internal index only, no paid upstream |
 | `GET /v1/usage?month=YYYY-MM` | `usage:read` | the tenant's meter, per day / key / endpoint |
 
@@ -113,6 +113,18 @@ Every response is `{"data": …, "meta": {...}}`. `meta` carries `requestId`, `a
 A keyed `/v1` request is exempt from the engine's per-IP limiter (the platform meters per key);
 a keyless one is throttled at the engine's `auth` rate (30/min in production) — a request with no
 key can only be guessing. `/v1/openapi.json` and `/v1/docs` are public and never metered.
+
+### How `q` matches
+
+`q` is words: every word must occur, in any order, in the headline, the snippet, the publisher
+name or the category; words are porter-stemmed (`resign` finds `resigns` and `resigned`) and
+diacritic-folded; a trailing `*` keeps a prefix (`econ*`); operators and punctuation are plain
+words. `sort=relevance` (the default with `q`) ranks by bm25 with the headline weighted above the
+snippet. `meta.query.terms` echoes the words that were matched. On `/v1/stories`, an event
+matches when one of its member articles matches, and under `sort=top` events with more matching
+members lead. The index is SQLite FTS5 (`feed_articles_fts`), maintained by triggers on every
+catalogue write and checked / rebuilt with `examples/search_index.py`. The consumer Search page
+keeps its substring match unless the deployment sets `RWE_SEARCH_TERMS=1`.
 
 ### What the intelligence endpoints reuse
 

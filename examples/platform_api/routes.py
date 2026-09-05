@@ -100,6 +100,21 @@ def _hidden(row: dict) -> bool:
             or row.get("articleState") == "provisional")
 
 
+def _article_sort(sort: Optional[str], q: Optional[str]) -> str:
+    """With a query the natural order is relevance; without one there is no relevance to sort by."""
+    if sort:
+        return "newest" if (sort == "relevance" and not q) else sort
+    return "relevance" if q else "newest"
+
+
+def _query_terms(q: str) -> list:
+    """The words a query was matched on — echoed in ``meta.query`` so a caller can see what a
+    punctuation-heavy or operator-looking query became."""
+    import store as store_mod
+    expr = store_mod.Store.fts_match_expression(q) or ""
+    return [t.strip('"') for t in expr.split(" ") if t]
+
+
 def _page_meta(limit: int, offset: int, total: Optional[int], has_more: Optional[bool] = None) -> dict:
     more = has_more if has_more is not None else (total is not None and offset + limit < total)
     return {"limit": limit, "cursor": str(offset), "nextCursor": str(offset + limit) if more else None,
@@ -212,10 +227,15 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         items = [shape.article(a, metas.get(a["id"]), p.licence_classes) for a in results]
         return [a for a in items if a is not None]
 
-    def _article_page(request: Request, st, res: dict, p: Principal, *, limit: int, offset: int) -> dict:
+    def _article_page(request: Request, st, res: dict, p: Principal, *, limit: int, offset: int,
+                      q: Optional[str] = None) -> dict:
         items = _article_items(st, res["results"], p)
+        extra = {"sort": res.get("sort")}
+        if q:
+            extra["query"] = {"q": q, "terms": _query_terms(q)}
         return shape.envelope(items, request_id=rid(request),
-                              page=_page_meta(limit, offset, res.get("total"), res.get("hasMore")))
+                              page=_page_meta(limit, offset, res.get("total"), res.get("hasMore")),
+                              **extra)
 
     def _story_page(request: Request, st, res: dict, p: Principal, *, limit: int, offset: int,
                     **extra) -> dict:
@@ -303,15 +323,20 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
 
     # ---- articles --------------------------------------------------------------------- #
     @router.get("/articles", summary="Search the catalogue",
-                description="Full-text search and filters over the article catalogue, newest "
-                            "first by default. Provisional (uncorroborated, reader-private) rows "
+                description="Term search and filters over the article catalogue. `q` is words, "
+                            "any order, all required, stemmed (`resign` finds `resigns`), matched "
+                            "in the headline, snippet, publisher name and category; a trailing "
+                            "`*` keeps a prefix. With `q` the default `sort` is `relevance` "
+                            "(bm25, headline weighted), else `newest`; `oldest` and `publisher` "
+                            "are also accepted. Provisional (uncorroborated, reader-private) rows "
                             "are excluded in SQL. Page with `cursor` = the previous `nextCursor`.")
     def articles(request: Request, p: Principal = Depends(scoped("articles:read")),
                  q: Optional[str] = Query(None, max_length=200),
                  publisher_id: Optional[str] = None, publisher: Optional[str] = None,
                  topic: Optional[str] = None, country: Optional[str] = None,
                  from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
-                 sort: str = "newest", limit: int = Query(30, ge=1, le=MAX_LIMIT),
+                 sort: Optional[str] = Query(None, pattern="^(relevance|newest|oldest|publisher)$"),
+                 limit: int = Query(30, ge=1, le=MAX_LIMIT),
                  cursor: Optional[str] = None) -> dict:
         st = get_store()
         offset = _cursor(cursor)
@@ -320,8 +345,9 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         # be short by exactly the rows it must not show.
         res = search.search(st, query=q, publisher=publisher_name(st, publisher_id, publisher),
                             topic=topic, country=country, date_from=from_, date_to=to,
-                            sort=sort, limit=limit, offset=offset, include_provisional=False)
-        return _article_page(request, st, res, p, limit=limit, offset=offset)
+                            sort=_article_sort(sort, q), limit=limit, offset=offset,
+                            include_provisional=False, terms=True)
+        return _article_page(request, st, res, p, limit=limit, offset=offset, q=q)
 
     @router.get("/articles/by-url", summary="One article by any URL form ever observed",
                 description="Resolves the raw, canonical or any aliased URL form to the article.")
@@ -416,9 +442,12 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
     # ---- stories ---------------------------------------------------------------------- #
     @router.get("/stories", summary="News events, clustered — filtered and paged",
                 description="The served story build: one row per event with its publishers, "
-                            "countries, freshness, lifecycle and tags. `lean` / `blindspot` "
-                            "filters exist only where ratings are published.")
+                            "countries, freshness, lifecycle and tags. `q` finds the events whose "
+                            "member articles match the words (any order, all required, stemmed); "
+                            "under the default `sort=top` the best-matched events lead. "
+                            "`lean` / `blindspot` filters exist only where ratings are published.")
     def stories(request: Request, p: Principal = Depends(scoped("stories:read")),
+                q: Optional[str] = Query(None, max_length=200),
                 topic: Optional[str] = None, publisher_id: Optional[str] = None,
                 publisher: Optional[str] = None, country: Optional[str] = None,
                 tag: Optional[str] = None, type: Optional[str] = None,
@@ -433,8 +462,9 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                                          publisher=publisher_name(st, publisher_id, publisher),
                                          lean=lean, country=country, blindspot=blindspot,
                                          story_type=type, tag=tag, date_from=from_, date_to=to,
-                                         sort=sort, limit=limit, offset=offset)
-        return _story_page(request, st, res, p, limit=limit, offset=offset)
+                                         sort=sort, limit=limit, offset=offset, query=q)
+        extra = {"query": {"q": q, "terms": _query_terms(q)}} if q else {}
+        return _story_page(request, st, res, p, limit=limit, offset=offset, **extra)
 
     @router.get("/stories/{story_id}", summary="One story with its coverage",
                 description="The event, every member article (identity, publisher, time, "
@@ -652,20 +682,22 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
                            q: Optional[str] = Query(None, max_length=200),
                            topic: Optional[str] = None,
                            from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
-                           sort: str = "newest", limit: int = Query(30, ge=1, le=MAX_LIMIT),
+                           sort: Optional[str] = Query(None, pattern="^(relevance|newest|oldest|publisher)$"),
+                           limit: int = Query(30, ge=1, le=MAX_LIMIT),
                            cursor: Optional[str] = None,
                            p: Principal = Depends(scoped("articles:read"))) -> dict:
         st = get_store()
         row = _publisher_or_404(st, publisher_id)
         offset = _cursor(cursor)
         res = search.search(st, query=q, publisher=row["name"], topic=topic, date_from=from_,
-                            date_to=to, sort=sort, limit=limit, offset=offset,
-                            include_provisional=False)
-        return _article_page(request, st, res, p, limit=limit, offset=offset)
+                            date_to=to, sort=_article_sort(sort, q), limit=limit, offset=offset,
+                            include_provisional=False, terms=True)
+        return _article_page(request, st, res, p, limit=limit, offset=offset, q=q)
 
     @router.get("/publishers/{publisher_id}/stories", summary="Stories one publisher covered",
                 description="`/v1/stories` scoped to events with coverage from the publisher.")
-    def publisher_stories(request: Request, publisher_id: str, topic: Optional[str] = None,
+    def publisher_stories(request: Request, publisher_id: str,
+                          q: Optional[str] = Query(None, max_length=200), topic: Optional[str] = None,
                           country: Optional[str] = None,
                           from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
                           sort: str = "top", limit: int = Query(30, ge=1, le=MAX_LIMIT),
@@ -676,8 +708,9 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         offset = _cursor(cursor)
         res = story_service.list_stories(st, publisher=row["name"], topic=topic, country=country,
                                          date_from=from_, date_to=to, sort=sort, limit=limit,
-                                         offset=offset)
-        return _story_page(request, st, res, p, limit=limit, offset=offset)
+                                         offset=offset, query=q)
+        extra = {"query": {"q": q, "terms": _query_terms(q)}} if q else {}
+        return _story_page(request, st, res, p, limit=limit, offset=offset, **extra)
 
     # ---- outlets (the index, not the catalogue) --------------------------------------- #
     @router.get("/outlets/search", summary="Find news outlets by place, language or name",

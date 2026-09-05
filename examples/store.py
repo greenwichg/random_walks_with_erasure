@@ -40,8 +40,9 @@ from pathlib import Path
 from typing import Iterator, Optional
 from urllib.parse import urlsplit
 
-from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, and_, create_engine,
-                        delete, event, func, or_, select, text, update)
+from sqlalchemy import (ForeignKey, String, Text, UniqueConstraint, and_, bindparam, column,
+                        create_engine, delete, event, func, literal_column, or_, select, table,
+                        text, update)
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import (DeclarativeBase, Mapped, Session, mapped_column,
                             relationship, sessionmaker)
@@ -1582,6 +1583,7 @@ class Store:
         self._ensure_search_indexes()
         self._ensure_retention_indexes()
         self._ensure_identity_indexes()
+        self._ensure_search_fts()
         # Publisher ids this process has already ensured a `publishers` row for — the lazy
         # materialisation at ingest costs one INSERT-OR-IGNORE per NEW publisher per process.
         self._known_publisher_ids: set = set()
@@ -3548,6 +3550,154 @@ class Store:
         self.index_errors: "list[tuple[str, str]]" = []
         self._create_indexes(stmts)
 
+    # ---- full-text search index (FTS5) ------------------------------------------------------- #
+    #: The search index: a regular FTS5 table whose rowid IS ``feed_articles``' rowid, over the
+    #: headline, the snippet, the publisher name and the scored category. Kept in step by three
+    #: triggers on ``feed_articles`` (insert / delete / update of those columns), so every writer —
+    #: the poller, the extension, the crawler, a bulk fill, retention — maintains it without knowing
+    #: it exists. Populated once when first created; :meth:`rebuild_search_index` re-derives it in
+    #: full (after a VACUUM, which may renumber rowids of a table with no INTEGER PRIMARY KEY).
+    #: A regular table (its own copy of the text) rather than external-content: the category is a
+    #: JSON path, not a column, and a copy is what lets deletes be by rowid — O(log n) — instead
+    #: of a scan of the content table per pruned row.
+    FTS_TABLE = "feed_articles_fts"
+    FTS_COLUMNS = ("title", "description", "publisher", "category")
+    #: bm25 weights per column, in ``FTS_COLUMNS`` order: a term in the headline outranks the same
+    #: term in the snippet; the publisher and the category are strong exact signals.
+    FTS_WEIGHTS = (3.0, 1.0, 2.0, 2.0)
+    _FTS_CATEGORY = "CASE WHEN json_valid({row}.scored) THEN json_extract({row}.scored, '$.category') END"
+
+    def _ensure_search_fts(self) -> None:
+        """Create the FTS5 index + its triggers (idempotent) and populate it the first time.
+
+        Never blocks startup: without FTS5 (a non-SQLite backend, a build without it) or on any
+        error, ``fts_ready`` stays False and term search degrades to the LIKE path, recorded in
+        ``index_errors`` like every other index the store could not make."""
+        self.fts_ready = False
+        if self.engine.dialect.name != "sqlite" or not self.fts5_available():
+            return
+        if not hasattr(self, "index_errors"):
+            self.index_errors = []
+        t, cols = self.FTS_TABLE, ", ".join(self.FTS_COLUMNS)
+        new_vals = ("new.title, new.description, new.publisher, "
+                    + self._FTS_CATEGORY.format(row="new"))
+        triggers = [
+            f"CREATE TRIGGER IF NOT EXISTS {t}_ai AFTER INSERT ON feed_articles BEGIN "
+            f"INSERT INTO {t}(rowid, {cols}) VALUES (new.rowid, {new_vals}); END",
+            f"CREATE TRIGGER IF NOT EXISTS {t}_ad AFTER DELETE ON feed_articles BEGIN "
+            f"DELETE FROM {t} WHERE rowid = old.rowid; END",
+            f"CREATE TRIGGER IF NOT EXISTS {t}_au AFTER UPDATE OF title, description, publisher, scored "
+            f"ON feed_articles BEGIN DELETE FROM {t} WHERE rowid = old.rowid; "
+            f"INSERT INTO {t}(rowid, {cols}) VALUES (new.rowid, {new_vals}); END",
+        ]
+        try:
+            with self.session() as s:
+                existed = bool(s.scalar(text(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :n").bindparams(n=t)))
+            if not existed:
+                created = False
+                # porter stemming (resigns ~ resign ~ resigned) + unicode folding; the newer
+                # diacritics mode first, the older spelling for an older SQLite.
+                for tokenizer in ("porter unicode61 remove_diacritics 2", "porter unicode61"):
+                    try:
+                        with self.session() as s:
+                            s.execute(text(f"CREATE VIRTUAL TABLE IF NOT EXISTS {t} USING fts5("
+                                           f"{cols}, tokenize = '{tokenizer}')"))
+                            s.commit()
+                        created = True
+                        break
+                    except OperationalError:
+                        continue
+                if not created:
+                    raise OperationalError("CREATE VIRTUAL TABLE", {}, Exception("no usable tokenizer"))
+            for stmt in triggers:
+                with self.session() as s:
+                    s.execute(text(stmt))
+                    s.commit()
+            if not existed:
+                self.rebuild_search_index()
+            self.fts_ready = True
+        except Exception as exc:                # noqa: BLE001 — search still works, by LIKE
+            self.index_errors.append((t, str(exc)[:200]))
+
+    def rebuild_search_index(self) -> int:
+        """Re-derive the whole FTS index from ``feed_articles``; returns the rows indexed. One
+        statement, one transaction — a few seconds at 50k rows. Run after a VACUUM."""
+        t, cols = self.FTS_TABLE, ", ".join(self.FTS_COLUMNS)
+        with self.session() as s:
+            s.execute(text(f"DELETE FROM {t}"))
+            s.execute(text(f"INSERT INTO {t}(rowid, {cols}) SELECT rowid, title, description, publisher, "
+                           f"{self._FTS_CATEGORY.format(row='feed_articles')} FROM feed_articles"))
+            n = int(s.scalar(text(f"SELECT count(*) FROM {t}")) or 0)
+            s.commit()
+        return n
+
+    def search_index_status(self) -> dict:
+        """``{ready, indexed, catalogue}`` — a drift between the two counts means a rebuild."""
+        out = {"ready": bool(getattr(self, "fts_ready", False)), "indexed": None,
+               "catalogue": self.count_feed_articles()}
+        if out["ready"]:
+            with self.session() as s:
+                out["indexed"] = int(s.scalar(text(f"SELECT count(*) FROM {self.FTS_TABLE}")) or 0)
+        return out
+
+    @staticmethod
+    def fts_match_expression(q) -> "str | None":
+        """A user's free text -> a safe FTS5 MATCH expression: every word a quoted term (so
+        ``AND`` / ``NOT`` / punctuation are words, never operators), implicitly ANDed, in any
+        order; a trailing ``*`` on a word keeps its prefix meaning (``econ*``). ``None`` when the
+        text holds no word."""
+        parts = [f'"{m.group(1)}"{"*" if m.group(2) else ""}'
+                 for m in re.finditer(r"(\w+)(\*?)", q or "", re.UNICODE)]
+        return " ".join(parts[:16]) or None
+
+    def _terms_mode(self, terms) -> bool:
+        """Whether a search runs as TERM search (FTS5) rather than the substring LIKE. An explicit
+        ``terms`` wins; otherwise ``RWE_SEARCH_TERMS=1`` opts the consumer surfaces in (default
+        off — byte-identical). Either way it needs the index."""
+        if not getattr(self, "fts_ready", False):
+            return False
+        if terms is not None:
+            return bool(terms)
+        return os.environ.get("RWE_SEARCH_TERMS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _fts_join(self):
+        fts = table(self.FTS_TABLE, column("rowid"))
+        on = fts.c.rowid == literal_column("feed_articles.rowid")
+        return fts, on
+
+    def _fts_match(self, expr: str):
+        return literal_column(self.FTS_TABLE).op("MATCH")(bindparam("fts_q", expr))
+
+    def _fts_rank(self):
+        w = ", ".join(str(x) for x in self.FTS_WEIGHTS)
+        return literal_column(f"bm25({self.FTS_TABLE}, {w})")
+
+    def search_feed_article_urls(self, q, *, limit: int = 2000, include_provisional: bool = False,
+                                 include_shadow: bool = False) -> list:
+        """The best ``limit`` catalogue matches for free text as ``[(canonical_url, rank)]``, best
+        first (rank is bm25: lower is better) — the story search's input. Empty without the
+        index or without a word to match."""
+        expr = self.fts_match_expression(q)
+        if not expr or not getattr(self, "fts_ready", False):
+            return []
+        conds = []
+        if not include_provisional:
+            conds.append(or_(FeedArticle.article_state.is_(None),
+                             FeedArticle.article_state != "provisional"))
+        if not include_shadow:
+            import corpus
+            shadow = corpus.shadow_exclusions()
+            if shadow:
+                conds.append(or_(FeedArticle.publisher.is_(None),
+                                 func.lower(FeedArticle.publisher).notin_(sorted(shadow))))
+        fts, on = self._fts_join()
+        rank = self._fts_rank()
+        stmt = (select(FeedArticle.canonical_url, rank).select_from(FeedArticle).join(fts, on)
+                .where(self._fts_match(expr), *conds).order_by(rank.asc()).limit(max(1, int(limit))))
+        with self.session() as s:
+            return [(u, float(r)) for u, r in s.execute(stmt).all()]
+
     def _ensure_retention_indexes(self) -> None:
         """Additive, idempotent indexes on the columns the bounded prunes FILTER by (M3 / D3).
 
@@ -3676,7 +3826,7 @@ class Store:
                              date_from=None, date_to=None, source=None, country=None,
                              sort="newest", pagination=None, include_provisional: bool = True,
                              exclude_publishers=None, include_publishers=None,
-                             include_shadow: bool = False):
+                             include_shadow: bool = False, terms: "bool | None" = None):
         """Search the catalog directly, in SQL. Returns ``(rows, total)`` — ``rows`` are paginated
         FeedArticle-row dicts, ``total`` the match count before pagination. All filtering / sorting /
         paging happen in the database (index-backed); it never touches the recommendation engine.
@@ -3711,7 +3861,12 @@ class Store:
         Defaulting to exclusion means a NEW reader surface is safe the day it is written, and the
         failure mode of forgetting the flag is "the evaluation harness cannot see what it evaluates"
         — loud and immediate — rather than "unvetted sources reached readers" — silent.
-        Pass ``include_shadow=True`` from evaluation and audit paths that must see the lane."""
+        Pass ``include_shadow=True`` from evaluation and audit paths that must see the lane.
+
+        ``terms`` selects TERM search for ``q``: every word must occur (any order, any of the
+        headline / snippet / publisher / category, porter-stemmed) and ``sort="relevance"`` ranks by
+        bm25 — the platform API passes ``True``. ``None`` (the consumer surfaces) keeps the
+        substring LIKE match unless ``RWE_SEARCH_TERMS=1``; ``False`` forces LIKE."""
         from pagination import OffsetPagination
         pg = pagination or OffsetPagination()
         if not include_shadow:
@@ -3721,9 +3876,10 @@ class Store:
             shadow = corpus.shadow_exclusions()
             if shadow:
                 exclude_publishers = frozenset(exclude_publishers or ()) | shadow
-        conds = self._search_conditions(q=q, publisher=publisher, lean=lean, topic=topic,
-                                         date_from=date_from, date_to=date_to, source=source,
-                                         country=country)
+        match_expr = self.fts_match_expression(q) if (q and self._terms_mode(terms)) else None
+        conds = self._search_conditions(q=None if match_expr else q, publisher=publisher, lean=lean,
+                                         topic=topic, date_from=date_from, date_to=date_to,
+                                         source=source, country=country)
         if exclude_publishers:
             # NULL-safe by construction. `lower(NULL) NOT IN (...)` evaluates to NULL, not TRUE, so
             # a bare NOT IN silently drops every row with no publisher — a filter that removes rows
@@ -3743,13 +3899,21 @@ class Store:
         where = and_(*conds) if conds else None
         with self.session() as s:
             cnt = select(func.count()).select_from(FeedArticle)
+            stmt = select(FeedArticle)
+            order = self._search_order(sort)
+            if match_expr:
+                fts, on = self._fts_join()
+                match = self._fts_match(match_expr)
+                cnt = cnt.join(fts, on).where(match)
+                stmt = stmt.join(fts, on).where(match)
+                if sort == "relevance":
+                    order = (self._fts_rank().asc(), FeedArticle.published_at.desc(),
+                             FeedArticle.canonical_url.desc())
             if where is not None:
                 cnt = cnt.where(where)
-            total = int(s.scalar(cnt) or 0)
-            stmt = select(FeedArticle)
-            if where is not None:
                 stmt = stmt.where(where)
-            stmt = pg.apply(stmt.order_by(*self._search_order(sort)))
+            total = int(s.scalar(cnt) or 0)
+            stmt = pg.apply(stmt.order_by(*order))
             return [self._feed_row(r) for r in s.scalars(stmt).all()], total
 
     def feed_article_facets(self, include_provisional: bool = True,
@@ -4942,8 +5106,8 @@ class Store:
         return out
 
     def fts5_available(self) -> bool:
-        """Whether this SQLite build has FTS5 compiled in — **diagnostics only** (FTS is not used yet;
-        search is LIKE-based). Non-SQLite backends report False."""
+        """Whether this SQLite build has FTS5 compiled in — what :meth:`_ensure_search_fts` needs
+        for term search (``feed_articles_fts``). Non-SQLite backends report False."""
         if self.engine.dialect.name != "sqlite":
             return False
         try:

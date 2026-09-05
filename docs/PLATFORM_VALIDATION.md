@@ -69,18 +69,22 @@ reader-private (extension-observed, uncorroborated) member in `membership` — u
 entirely, as they are from coverage, counts and evidence. The battery's fixture keeps one such row
 so the regression stays covered (`tests/test_platform_validate.py`).
 
-**What the search check found (not fixed — a product decision):** `GET /v1/articles?q=` matches
-the query as one substring. On the rehearsal catalogue `Ontario` and `Lake Ontario` find all 54
-articles about the renaming story; `trump apple` and `ontario dispatch` find none, though every
-one of those headlines carries both words. SQLite FTS5 is available (`store.fts5_available()`
-reports it) and unused. A customer's first query is a multi-word one; this is the first item in
-the improvements list below.
+**What the search check found (fixed in the follow-up change):** `GET /v1/articles?q=` matched
+the query as one substring. On the rehearsal catalogue `Ontario` and `Lake Ontario` found all 54
+articles about the renaming story; `trump apple` and `ontario dispatch` found none, though every
+one of those headlines carries both words. `/v1` now runs term search over an FTS5 index
+(`feed_articles_fts`: headline, snippet, publisher, category; porter-stemmed; bm25 with the
+headline weighted): on the same catalogue `trump apple` → 54, `ontario dispatch` → 54,
+`budget package` → 18, `kusama retrospective` on `/v1/stories?q=` → the one story. The battery
+now requires the top story's own words to be found in either order, the top result to carry the
+query, and `/v1/stories?q=` to return the story the words came from. The consumer Search page is
+unchanged (substring) unless `RWE_SEARCH_TERMS=1`.
 
 ## Improvements before an external developer relies on this
 
-1. **Term search with ranking.** Replace the substring match behind `q` with FTS5 (headline +
-   description, BM25), term-AND semantics, `sort=relevance`, and a `q` on `/v1/stories` so
-   "find stories about X" is one call rather than articles → `storyId`.
+1. **Term search with ranking — done.** FTS5 behind `q` on `/v1/articles`, `/v1/stories` and the
+   per-publisher listings; `sort=relevance` default with a query; `meta.query.terms` echoed.
+   Remaining choice: flip the consumer Search page to the same engine (`RWE_SEARCH_TERMS=1`).
 2. **Cold-build latency on `/v1/stories`.** The first request after a restart or cache expiry
    builds the window on the request thread (2.2 s at 121 articles; tens of seconds at production
    size). Serve the persisted last build (`story_snapshots` is already written) while the fresh

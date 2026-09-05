@@ -461,24 +461,43 @@ class Battery:
             return
         r = self.get("articles.search", "/v1/articles", {"q": q, "limit": 20})
         arts = self.data(r) or []
-        total = (((r.json or {}).get("meta") or {}).get("page") or {}).get("total")
+        meta = (r.json or {}).get("meta") or {}
+        total = (meta.get("page") or {}).get("total")
         self.check("search answers", r.status == 200 and isinstance(arts, list), f"q='{q}' -> {len(arts)} (total {total})")
-        # Recall on the easiest possible query: two words from a headline the catalogue holds. A
-        # zero here means the search matches the query as ONE phrase (substring), not as terms —
-        # a customer typing "trump apple" finds nothing about "Trump asks Apple …".
-        self.check("search finds the top story's own words", (total or 0) > 0, f"q='{q}' total={total}", warn=True)
+        # Recall on the easiest possible query: two words from a headline the catalogue holds,
+        # in the order they were NOT written. Term search must find it; a phrase match cannot.
+        words = q.split()
+        reversed_q = " ".join(reversed(words)) if len(words) > 1 else q
+        r2 = self.get("articles.search", "/v1/articles", {"q": reversed_q, "limit": 20})
+        total2 = (((r2.json or {}).get("meta") or {}).get("page") or {}).get("total")
+        self.check("search finds the top story's own words, in any order", (total or 0) > 0 and (total2 or 0) > 0,
+                   f"'{q}' -> {total}; '{reversed_q}' -> {total2}")
+        self.check("query terms echoed and relevance is the default sort",
+                   meta.get("sort") == "relevance" and (meta.get("query") or {}).get("terms"),
+                   f"sort={meta.get('sort')} terms={(meta.get('query') or {}).get('terms')}")
         qt = _tokens(q)
         rel = [a for a in arts if qt & _tokens((a.get("headline") or "") + " " + (a.get("description") or ""))]
         visible = [a for a in arts if "headline" in a]
-        self.metrics["searchRelevance"] = {"q": q, "returned": len(arts), "total": total,
-                                           "withVisibleText": len(visible),
-                                           "matchingAnyToken": len(rel),
-                                           "precisionOverVisible": round(len(rel) / len(visible), 3) if visible else None}
+        first = visible[0] if visible else None
+        top_hit = bool(first) and bool(qt & _tokens((first.get("headline") or "") + " " + (first.get("description") or "")))
+        self.metrics["searchRelevance"] = {"q": q, "returned": len(arts), "total": total, "reversedTotal": total2,
+                                           "withVisibleText": len(visible), "matchingAnyToken": len(rel),
+                                           "precisionOverVisible": round(len(rel) / len(visible), 3) if visible else None,
+                                           "topResultMatches": top_hit}
         if visible:
             self.check("search precision (query token in visible text)", len(rel) / len(visible) >= 0.7,
                        f"{len(rel)}/{len(visible)}", warn=True)
-        times = [a.get("publishedAt") or "" for a in arts]
-        self.check("newest-first ordering", times == sorted(times, reverse=True), f"{len(times)} rows")
+            self.check("top result carries the query", top_hit, (first.get("headline") or "")[:80])
+        r3 = self.get("articles.search", "/v1/articles", {"q": q, "sort": "newest", "limit": 20})
+        times = [a.get("publishedAt") or "" for a in (self.data(r3) or [])]
+        self.check("sort=newest orders newest first", times == sorted(times, reverse=True), f"{len(times)} rows")
+        r4 = self.get("stories.search", "/v1/stories", {"q": q, "limit": 10})
+        found = self.data(r4) or []
+        s_total = (((r4.json or {}).get("meta") or {}).get("page") or {}).get("total")
+        self.check("story search finds the story the words came from", r4.status == 200 and (s_total or 0) >= 1
+                   and any(s.get("storyId") == getattr(self, "sid", None) for s in found),
+                   f"q='{q}' -> {s_total} stories")
+        self.metrics["storySearch"] = {"q": q, "total": s_total, "topIsSource": bool(found) and found[0].get("storyId") == getattr(self, "sid", None)}
         self.check("every article carries ids + licence", all(
             a.get("articleId", "").startswith("ar_") and a.get("publisherId", "").startswith("pub_")
             and (a.get("licence") or {}).get("class") for a in arts))
