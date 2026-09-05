@@ -82,20 +82,23 @@ def _strip_identity(st):
 def test_health_never_counts_enrichment_on_the_request_path(monkeypatch, tmp_path):
     st = _seed(f"sqlite:///{tmp_path}/h.db")                     # file-backed: a connection per thread, as in production
     assert not st.single_connection
-    calls = []
+    calls, finished = [], []
     real = st.enrichment_coverage
 
     def slow(**kw):
         calls.append(time.time())
-        time.sleep(0.3)
-        return real(**kw)
+        time.sleep(1.5)                                           # far longer than any request path
+        out = real(**kw)
+        finished.append(time.time())
+        return out
     monkeypatch.setattr(st, "enrichment_coverage", slow)
     c = TestClient(platform_app.create_app(st))
-    t0 = time.perf_counter()
     first = c.get("/v1/health").json()["data"]
-    assert (time.perf_counter() - t0) < 0.25                     # answered before the count finished
+    # The invariant, not a wall-clock bound (a 0.25 s bound flaked at 0.96 s under the full
+    # suite's load): the response is back while the count is still running.
+    assert calls and not finished, "the count must not be on the request path"
     assert first["status"] == "ok" and first["enrichment"] is None
-    deadline = time.time() + 5
+    deadline = time.time() + 8
     while time.time() < deadline:
         d = c.get("/v1/health").json()["data"]
         if d["enrichment"]:
