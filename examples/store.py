@@ -1600,6 +1600,15 @@ class Store:
         finally:
             s.close()
 
+    @property
+    def single_connection(self) -> bool:
+        """True when every session shares ONE DBAPI connection (in-memory SQLite on a
+        ``StaticPool``). A background thread must not open a session on such a store beside a
+        request: the two transactions interleave on the same connection and either one's
+        commit / rollback lands on the other's work. File-backed and server databases hand each
+        thread its own connection and are safe for off-request work."""
+        return isinstance(self.engine.pool, StaticPool)
+
     # -- repository operations ------------------------------------------
     def upsert_user_by_identity(self, provider: str, provider_account_id: str,
                                 email: str | None = None,
@@ -2552,50 +2561,69 @@ class Store:
                      "fetchedAt": fa.isoformat() if fa else None}
                     for c, u, p, st, sp, sf, e, pa, aid, pid, lc, ca, fa in s.execute(q).all()]
 
-    def apply_identity_backfill(self, canonical_url: str, *, article_id: str, publisher_id,
-                                publisher_key, licence_class, channel, provider, source_ref,
-                                external_id, published_at, first_observed_at,
-                                last_observed_at, url) -> bool:
+    def apply_identity_backfill(self, canonical_url: str, **kw) -> bool:
         """Fill one legacy row's identity columns and seed its aliases + first provenance row from
         what the row already carries. Idempotent: a filled row is left exactly as it is (the
         backfill never rewrites an id), and an existing provenance row is not re-counted."""
         with self.session() as s:
-            row = s.get(FeedArticle, canonical_url)
-            if row is None:
-                return False
-            changed = False
-            if not row.article_id:
-                row.article_id = article_id
+            return self._identity_backfill_row(s, canonical_url, **kw)
+
+    def apply_identity_backfill_batch(self, rows) -> int:
+        """The same fill for MANY rows in ONE transaction; returns how many changed.
+
+        One transaction per row is what the first production run did: 150,062 rows, 150,062
+        transactions, each taking and releasing the write lock beside a live poller. It stopped
+        after ~37k rows on a lock error that killed the process. A batch holds the lock once for
+        (default) a thousand rows, which is both far faster and far less contended."""
+        changed = 0
+        with self.session() as s:
+            for r in rows:
+                kw = dict(r)
+                if self._identity_backfill_row(s, kw.pop("canonical_url"), **kw):
+                    changed += 1
+        return changed
+
+    def _identity_backfill_row(self, s, canonical_url: str, *, article_id: str, publisher_id,
+                               publisher_key, licence_class, channel, provider, source_ref,
+                               external_id, published_at, first_observed_at,
+                               last_observed_at, url) -> bool:
+        """One row's fill, inside the caller's session (see the two methods above)."""
+        row = s.get(FeedArticle, canonical_url)
+        if row is None:
+            return False
+        changed = False
+        if not row.article_id:
+            row.article_id = article_id
+            changed = True
+        if publisher_id and not row.publisher_id:
+            row.publisher_id = publisher_id
+            changed = True
+        merged = merge_licence_class(row.licence_class, licence_class)
+        if merged != row.licence_class:
+            row.licence_class = merged
+            changed = True
+        aid = row.article_id
+        for alias, kind in ((url, "url"), (canonical_url, "canonical")):
+            alias = (alias or "").strip()
+            if alias and s.get(ArticleAlias, alias) is None:
+                s.add(ArticleAlias(alias=alias, article_id=aid, canonical_url=canonical_url,
+                                   kind=kind))
                 changed = True
-            if publisher_id and not row.publisher_id:
-                row.publisher_id = publisher_id
-                changed = True
-            merged = merge_licence_class(row.licence_class, licence_class)
-            if merged != row.licence_class:
-                row.licence_class = merged
-                changed = True
-            aid = row.article_id
-            for alias, kind in ((url, "url"), (canonical_url, "canonical")):
-                alias = (alias or "").strip()
-                if alias and s.get(ArticleAlias, alias) is None:
-                    s.add(ArticleAlias(alias=alias, article_id=aid, canonical_url=canonical_url,
-                                       kind=kind))
-                    changed = True
-            ch = ((channel or "").strip().lower() or "unknown")[:32]
-            ref = (source_ref or "")[:2048]
-            if s.scalar(select(ArticleProvenance.id).where(
-                    ArticleProvenance.canonical_url == canonical_url,
-                    ArticleProvenance.channel == ch, ArticleProvenance.source_ref == ref)) is None:
-                s.add(ArticleProvenance(canonical_url=canonical_url, article_id=aid, channel=ch,
-                                        provider=provider, source_ref=ref, external_id=external_id,
-                                        licence_class=licence_class,
-                                        first_observed_at=first_observed_at or _utcnow().isoformat(),
-                                        last_observed_at=last_observed_at or first_observed_at
-                                        or _utcnow().isoformat(),
-                                        published_at_seen=published_at, observations=1))
-                changed = True
-            self._ensure_publisher_row(s, publisher_id, publisher_key, row.publisher)
-            return changed
+        ch = ((channel or "").strip().lower() or "unknown")[:32]
+        ref = (source_ref or "")[:2048]
+        if s.scalar(select(ArticleProvenance.id).where(
+                ArticleProvenance.canonical_url == canonical_url,
+                ArticleProvenance.channel == ch, ArticleProvenance.source_ref == ref)) is None:
+            s.add(ArticleProvenance(canonical_url=canonical_url, article_id=aid, channel=ch,
+                                    provider=provider, source_ref=ref, external_id=external_id,
+                                    licence_class=licence_class,
+                                    first_observed_at=first_observed_at or _utcnow().isoformat(),
+                                    last_observed_at=last_observed_at or first_observed_at
+                                    or _utcnow().isoformat(),
+                                    published_at_seen=published_at, observations=1))
+            changed = True
+        self._ensure_publisher_row(s, publisher_id, publisher_key, row.publisher)
+        return changed
 
     def upsert_publisher(self, *, publisher_id: str, identity_key: str, name: str,
                          registered: "bool | None" = None, facts: "dict | None" = None,
@@ -2804,51 +2832,86 @@ class Store:
 
     def apply_story_history(self, *, build_id: int, built_at: str, new_stories: list,
                             reopened: list, status_updates: list, touched: list,
-                            snapshots: list, joins: list, leaves: list, stats: dict) -> None:
-        """Write one build's deltas in ONE transaction: new/reopened story rows, status changes
-        (closed / merged with successor, split origin), the touched stories' ``last_*`` stamps,
-        the changed snapshots, membership joins, membership leaves, and the build's counters."""
-        with self.session() as s:
-            for ns in new_stories:
-                s.add(StoryRecord(story_id=ns["storyId"], status="active",
-                                  origin_id=ns.get("originId"), first_build_id=build_id,
-                                  last_build_id=build_id, first_served_at=built_at,
-                                  last_served_at=built_at, title=ns.get("title") or "",
-                                  topic=ns.get("topic") or "",
-                                  representative_url=ns.get("representativeUrl") or ""))
-            for sid in reopened:
-                r = s.get(StoryRecord, sid)
-                if r is not None:
-                    r.status, r.successor_id, r.closed_at = "active", None, None
-            for upd in status_updates:
-                r = s.get(StoryRecord, upd["storyId"])
-                if r is None:
-                    continue
-                r.status = upd["status"]
-                r.successor_id = upd.get("successorId")
-                r.closed_at = built_at
-                r.updated_at = _utcnow()
-            snap_counts: dict = {}
-            for sn in snapshots:
-                s.add(StorySnapshot(build_id=build_id, built_at=built_at, **sn))
-                snap_counts[sn["story_id"]] = snap_counts.get(sn["story_id"], 0) + 1
-            for sid in touched:
-                r = s.get(StoryRecord, sid)
-                if r is None:
-                    continue
-                r.last_build_id, r.last_served_at, r.updated_at = build_id, built_at, _utcnow()
-                if sid in snap_counts:
-                    r.snapshots = int(r.snapshots or 0) + snap_counts[sid]
-                    t = next((sn for sn in snapshots if sn["story_id"] == sid), None)
-                    if t is not None:
-                        r.title, r.topic = t.get("title") or r.title, t.get("topic") or r.topic
-            if joins:
+                            snapshots: list, joins: list, leaves: list, stats: dict,
+                            chunk: int = 500) -> None:
+        """Write one build's deltas in CHUNKED transactions: new/reopened story rows, status
+        changes (closed / merged with successor, split origin), the changed snapshots, the touched
+        stories' ``last_*`` stamps, membership joins, membership leaves, and the build's counters.
+
+        NOT one transaction any more, and the reason is a measured production failure. The first
+        recorded build on the live catalogue was 2,897 stories and ~100k membership joins; as a
+        single transaction it failed as a whole, leaving a ``story_builds`` row with no story rows,
+        no snapshots and no membership — and since nothing was ever recorded, the NEXT build saw
+        the same ~100k joins and failed the same way, forever (observed 2026-09-05: builds
+        advancing, ``stories`` empty, every ``/v1/…/history`` a 404).
+
+        The atomicity that buys is worth less than the write completing: this is bookkeeping over a
+        build that has already been served, and every step is idempotent-by-construction on a
+        re-run (ids are stable, snapshots are keyed by build, joins are only written for members
+        that actually moved). The build's own ``stats`` are written LAST, so a build row carrying
+        counters is a complete one and a partial write is visible as a build without them."""
+        def chunks(seq):
+            for i in range(0, len(seq), max(1, chunk)):
+                yield seq[i:i + chunk]
+
+        for part in chunks(new_stories):
+            with self.session() as s:
+                for ns in part:
+                    s.add(StoryRecord(story_id=ns["storyId"], status="active",
+                                      origin_id=ns.get("originId"), first_build_id=build_id,
+                                      last_build_id=build_id, first_served_at=built_at,
+                                      last_served_at=built_at, title=ns.get("title") or "",
+                                      topic=ns.get("topic") or "",
+                                      representative_url=ns.get("representativeUrl") or ""))
+        for part in chunks(reopened):
+            with self.session() as s:
+                s.execute(update(StoryRecord).where(StoryRecord.story_id.in_(part))
+                          .values(status="active", successor_id=None, closed_at=None))
+        for part in chunks(status_updates):
+            with self.session() as s:
+                for upd in part:
+                    r = s.get(StoryRecord, upd["storyId"])
+                    if r is None:
+                        continue
+                    r.status = upd["status"]
+                    r.successor_id = upd.get("successorId")
+                    r.closed_at = built_at
+                    r.updated_at = _utcnow()
+        for part in chunks(snapshots):
+            with self.session() as s:
+                for sn in part:
+                    s.add(StorySnapshot(build_id=build_id, built_at=built_at, **sn))
+        # The touched stamp is the same value for every served story: one bulk UPDATE per chunk,
+        # not one SELECT + mutate per story (2,897 round trips on the production catalogue).
+        for part in chunks(list(touched)):
+            with self.session() as s:
+                s.execute(update(StoryRecord).where(StoryRecord.story_id.in_(part))
+                          .values(last_build_id=build_id, last_served_at=built_at,
+                                  updated_at=_utcnow()))
+        # Per-story snapshot bookkeeping only for the stories that CHANGED (indexed by story once,
+        # rather than a linear scan of `snapshots` per touched story — that was quadratic).
+        by_story: dict = {}
+        for sn in snapshots:
+            by_story.setdefault(sn["story_id"], []).append(sn)
+        for part in chunks(list(by_story)):
+            with self.session() as s:
+                for sid in part:
+                    r = s.get(StoryRecord, sid)
+                    if r is None:
+                        continue
+                    snaps = by_story[sid]
+                    r.snapshots = int(r.snapshots or 0) + len(snaps)
+                    r.title = snaps[0].get("title") or r.title
+                    r.topic = snaps[0].get("topic") or r.topic
+        for part in chunks(joins):
+            with self.session() as s:
                 s.bulk_save_objects([StoryMembership(joined_build=build_id, joined_at=built_at, **j)
-                                     for j in joins])
-            for i in range(0, len(leaves), 500):
-                s.execute(update(StoryMembership)
-                          .where(StoryMembership.id.in_(leaves[i:i + 500]))
+                                     for j in part])
+        for part in chunks(leaves):
+            with self.session() as s:
+                s.execute(update(StoryMembership).where(StoryMembership.id.in_(part))
                           .values(left_build=build_id, left_at=built_at))
+        with self.session() as s:
             b = s.get(StoryBuild, build_id)
             if b is not None:
                 for k, v in stats.items():
@@ -2961,12 +3024,19 @@ class Store:
 
         def share(s, cond):
             total = int(s.scalar(select(func.count()).select_from(FeedArticle).where(live, cond)) or 0)
+
             def covered(model, extra=None):
-                sub = select(model.canonical_url).distinct()
+                # DRIVEN FROM THE SIDE TABLE (whose ``canonical_url`` is indexed) and joined back,
+                # not a scan of feed_articles testing membership of a materialised subquery. The
+                # membership form cost 3.5 s at the production catalogue's 150k rows — eight of
+                # them in one health call — and timed out the operator's 10 s probe on a cold
+                # engine (2026-09-05). Same answer, index-driven.
+                q = (select(func.count(func.distinct(model.canonical_url))).select_from(model)
+                     .join(FeedArticle, FeedArticle.canonical_url == model.canonical_url)
+                     .where(live, cond))
                 if extra is not None:
-                    sub = sub.where(extra)
-                return int(s.scalar(select(func.count()).select_from(FeedArticle)
-                                    .where(live, cond, FeedArticle.canonical_url.in_(sub))) or 0)
+                    q = q.where(extra)
+                return int(s.scalar(q) or 0)
             ents = covered(ArticleEntity, ArticleEntity.kind.in_(PROVIDER_ENTITY_KINDS))
             spans = covered(ArticleEntity, ArticleEntity.kind == "span")
             geo = covered(ArticleEventLocation)

@@ -124,6 +124,11 @@ def test_health_publishes_enrichment_coverage_and_build_time(st, client):
     st.replace_article_entities(bbc, {"person": ["keir starmer"]})
     st.replace_article_event_locations(bbc, [location.EventLocation(country="GB", source="gdelt-gkg")])
     d = client.get("/v1/health").json()["data"]
+    import time as _t
+    deadline = _t.time() + 5                       # counted off the request path: poll for the first value
+    while not d.get("enrichment") and _t.time() < deadline:
+        _t.sleep(0.1)
+        d = client.get("/v1/health").json()["data"]
     e = d["enrichment"]["catalogue"]
     assert e["articles"] == 3 and e["withEntities"] == 1 and e["entityCoverage"] == 0.333
     assert e["withEventCountries"] == 1 and e["geoCoverage"] == 0.333 and e["withSpans"] == 0

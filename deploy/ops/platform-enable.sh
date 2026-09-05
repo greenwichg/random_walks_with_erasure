@@ -75,16 +75,33 @@ else
   if [ "$MODE" = "enable" ]; then
     "$OPS_DIR/restart.sh" api || { bad "engine restart failed"; exit 1; }
   fi
-  if dc exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-    ok "caddy reloaded"
+  # Caddy re-reads the bind-mounted Caddyfile on `reload`; the result is VERIFIED by routing a
+  # request through it, because `docker compose up -d` does not recreate a container whose spec
+  # is unchanged (a bind-mounted file is not part of the spec) — the first production run
+  # declared the reload done and /v1 kept landing on the web tier. A failed probe restarts Caddy.
+  if dc exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | sed 's/^/    /'; then
+    ok "caddy reload accepted"
   else
-    warn "caddy reload returned non-zero (config unchanged since the last start is fine); recreating"
-    dc up -d caddy >/dev/null 2>&1 || bad "caddy could not be (re)created"
+    warn "caddy reload returned non-zero"
   fi
+  routed=""
+  for attempt in 1 2; do
+    rc="$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" --max-time 15 "https://$DOMAIN/v1/articles" 2>/dev/null || echo 000)"
+    if [ "$rc" = "401" ]; then routed="yes"; break; fi
+    if [ "$attempt" = "1" ]; then
+      warn "https://$DOMAIN/v1/articles answered $rc through Caddy (expected the engine's 401) — restarting caddy"
+      dc restart caddy 2>&1 | sed 's/^/    /'
+      sleep 3
+    fi
+  done
+  [ -n "$routed" ] && ok "Caddy routes /v1/* to the engine (keyless /v1/articles -> 401)" \
+    || bad "Caddy still does not route /v1/* to the engine — check: dc logs caddy; grep -n '@platform' deploy/Caddyfile"
   wait_ready 180 || { bad "engine not ready"; exit 1; }
+  # A generous timeout on purpose: right after a restart the engine may still be building the
+  # search index (once, on the first start of a release) or the first story view.
   code="$(dc exec -T api python -c "
 import urllib.request
-try: print(urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=10).status)
+try: print(urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=60).status)
 except Exception as e: print(getattr(e, 'code', 'EXC:' + type(e).__name__))" 2>/dev/null | tr -d '[:space:]')"
   [ "$code" = "200" ] && ok "/v1/health answers 200 inside the engine" || bad "/v1/health returned '$code' (is RWE_PLATFORM_API on the api service?)"
 fi
@@ -96,17 +113,21 @@ if [ "$MODE" = "dry" ]; then
 else
   if backup_run backup >/dev/null 2>&1; then ok "pre-backfill backup written ($DATA_DIR/backups)"; else warn "backup step failed — continuing (the backfill is additive and idempotent)"; fi
   echo "  dry run:"
-  dc exec -T api python examples/identity_backfill.py --dry-run 2>/dev/null | tr -d '\n' | sed 's/^/    /'; echo
+  dc exec -T api python examples/identity_backfill.py --dry-run 2>&1 | tail -1 | sed 's/^/    /'
   if [ "$MODE" = "enable" ]; then
-    echo "  applying:"
-    dc exec -T api python examples/identity_backfill.py 2>/dev/null | tail -1 | sed 's/^/    /'
+    # stderr is SHOWN: the first production run lost its traceback to /dev/null and reported a
+    # backfill that stopped at 37k of 150k rows as "rows still missing — re-run". The CLI now
+    # writes a batch per transaction, retries lock contention, passes until nothing is missing,
+    # and exits 1 if rows remain; its last line is the summary.
+    echo "  applying (batched, retried, passes until complete):"
+    dc exec -T api python examples/identity_backfill.py 2>&1 | tail -4 | sed 's/^/    /'
   fi
   echo "  after:"
-  after="$(dc exec -T api python examples/identity_backfill.py --dry-run 2>/dev/null | tr -d '\n ')"
+  after="$(dc exec -T api python examples/identity_backfill.py --dry-run 2>/dev/null | tail -1 | tr -d ' ')"
   echo "    $after"
   case "$after" in
-    *'"missingArticleId":0,'*'"missingPublisherId":0,'*'"missingLicence":0,'*) ok "every catalogue row carries article_id, publisher_id, licence_class" ;;
-    *) bad "rows still missing identity — re-run; if it persists, inspect with --dry-run" ;;
+    *'"missingArticleId":0,'*'"missingLicence":0,'*'"missingPublisherId":0,'*) ok "every catalogue row carries article_id, publisher_id, licence_class" ;;
+    *) bad "rows still missing identity — re-run; if it persists: dc exec -T api python examples/identity_backfill.py" ;;
   esac
   dc exec -T api python - <<'PY' 2>/dev/null | sed 's/^/    /'
 import os, sys
@@ -125,13 +146,17 @@ step "4b/7 enrichment backfill (what /v1/entities, /v1/countries and the compari
 if [ "$MODE" = "dry" ]; then
   echo "  would run: gdelt_entity_backfill.py --hours ${PLATFORM_GKG_HOURS:-48} ; entity_span_backfill.py ; then report /v1/health enrichment"
 else
-  if [ "$MODE" = "enable" ]; then
-    echo "  provider entities from GDELT GKG (last ${PLATFORM_GKG_HOURS:-48}h of files; idempotent; a missing window is skipped):"
+  if [ "$MODE" = "enable" ] && [ "${PLATFORM_GKG_HOURS:-48}" != "0" ]; then
+    echo "  provider entities from GDELT GKG (last ${PLATFORM_GKG_HOURS:-48}h of files; idempotent; a missing window is skipped; PLATFORM_GKG_HOURS=0 skips):"
     if dc exec -T api python examples/gdelt_entity_backfill.py --hours "${PLATFORM_GKG_HOURS:-48}" 2>&1 | tail -3 | sed 's/^/    /'; then
       ok "entity backfill finished"
     else
       warn "entity backfill returned non-zero (egress to data.gdeltproject.org? re-run later; the steady-state enricher keeps filling)"
     fi
+  elif [ "$MODE" = "enable" ]; then
+    ok "GDELT entity backfill skipped (PLATFORM_GKG_HOURS=0) — the last run's entities stand; the steady-state enricher keeps filling"
+  fi
+  if [ "$MODE" = "enable" ]; then
     echo "  headline spans (local rule extractor):"
     dc exec -T api python examples/entity_span_backfill.py 2>&1 | tail -2 | sed 's/^/    /' || warn "span backfill returned non-zero"
   fi

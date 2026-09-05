@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -67,6 +68,8 @@ PROVIDER_ENTITY_KINDS = ("person", "org")
 ENTITY_KINDS = PROVIDER_ENTITY_KINDS + ("span",)
 #: Paths that answer without a key (and are therefore never metered).
 PUBLIC_PATHS = frozenset({"/v1/health", "/v1/openapi.json", "/v1/docs"})
+#: How long the enrichment-coverage numbers on /v1/health stand before a background refresh.
+ENRICHMENT_TTL = 300.0
 
 DESCRIPTION = """\
 The commercial front door over the Hidden View news-intelligence engine: the same articles,
@@ -278,9 +281,12 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         if live is not None:
             return None, {"asOf": as_of, "stale": False}
         persisted, as_of = story_service.persisted_default_view(st)
-        if as_of is None:
-            # Nothing was ever recorded (a first boot): the only answer is the build itself, as
-            # before this path existed — once, and the cache holds it from then on.
+        if as_of is None or not persisted:
+            # Nothing to serve from the record: never recorded (a first boot), or a build row
+            # whose story rows never landed (history off, or a failed history write — observed
+            # in production before the write was chunked). An empty page marked "stale" would
+            # be a lie about a catalogue that has stories; the only honest answer is the build
+            # itself, as before this path existed — once, and the cache holds it from then on.
             return None, None
         story_service.request_default_refresh(st)
         return persisted, {"asOf": as_of, "stale": True}
@@ -315,17 +321,41 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
         return JSONResponse(envelope, status_code=status,
                             headers={"ETag": etag, "Cache-Control": "private, must-revalidate"})
 
-    _health_cache: dict = {}
+    _health_cache: dict = {"at": 0.0, "value": None, "computing": False}
+    _health_lock = threading.Lock()
 
-    def _enrichment(st) -> "dict | None":
-        now = time.time()
-        if _health_cache.get("at", 0) > now - 60:
-            return _health_cache.get("value")
+    def _refresh_enrichment(st) -> None:
         try:
             value = st.enrichment_coverage()
         except Exception:                    # noqa: BLE001 — health never fails on a count
             value = None
-        _health_cache.update(at=now, value=value)
+        with _health_lock:
+            _health_cache.update(at=time.time(), value=value, computing=False)
+
+    def _enrichment(st) -> "dict | None":
+        """The coverage numbers, never counted on the request path.
+
+        Counting enrichment over the whole catalogue is a multi-second query at production size
+        (measured 2026-09-05: 3.5 s at 150k rows, and on a cold engine it timed the operator's
+        10 s health probe out — the probe that gates the enable script). Health answers from the
+        last computed value — ``null`` until the first one lands — and one daemon thread
+        refreshes it every ``ENRICHMENT_TTL`` seconds at most."""
+        with _health_lock:
+            stale = _health_cache["at"] < time.time() - ENRICHMENT_TTL
+            start = stale and not _health_cache["computing"]
+            if start:
+                _health_cache["computing"] = True
+            value = _health_cache["value"]
+        if start and st.single_connection:
+            # One shared connection (in-memory SQLite): a thread beside the request would
+            # interleave two transactions on it. Such a store is small by construction; count
+            # inline and hand the value back at once.
+            _refresh_enrichment(st)
+            with _health_lock:
+                value = _health_cache["value"]
+        elif start:
+            threading.Thread(target=_refresh_enrichment, args=(st,), daemon=True,
+                             name="platform-enrichment").start()
         return value
 
     def _row_or_404(st, ref: str) -> dict:

@@ -102,6 +102,44 @@ unchanged (substring) unless `RWE_SEARCH_TERMS=1`.
 Remaining before an external key: the production battery itself (the bars above), and the
 ratings / provider-ToS decisions that gate `RWE_PLATFORM_PUBLISH_RATINGS`.
 
+## First production run (2026-09-05, release `dd94e0e`)
+
+The battery ran against the live catalogue: **150,062 articles, 2,897 stories, 3,199 publishers,
+68,457 articles published in the last seven days, 2,305 tags, 205 event countries.** Result:
+76 PASS, 4 WARN, 3 FAIL, 2 SKIP — and four findings, every one of them in the enablement path
+rather than the API's answers.
+
+What the catalogue itself showed, all bars met: the default listing holds only `clusterTrust: ok`
+stories, the largest story holds 6% of covered articles, at most 2.9 articles per publisher per
+story, every first-page story has ≥12 publishers, summaries / tags / event countries on 100%;
+`wielding stabbing` and `stabbing wielding` both find the same 8 articles with the Times Square
+story on top and `/v1/stories?q=` lands on it; the developer key saw 62 provider-restricted rows
+and received none of their delivery; 94 of 94 requests metered, a 304 logged with no unit; warm
+latency p50 of 59 ms on `/v1/stories`, 36 ms on search, 19 ms on a story, 9 ms on `/v1/me`.
+
+The findings (fixed in the follow-up release; `tests/test_platform_production_findings.py`):
+
+| finding | cause | fix |
+|---|---|---|
+| `/v1/health` timed out the enable script's 10 s probe on the cold engine; 3.5 s warm | enrichment coverage counted on the request path: eight `IN (subquery)` scans of 150k rows | counted off the request path by one daemon thread with a 5-minute TTL (`null` until the first count lands); counts driven from the indexed side tables |
+| identity backfill stopped at ~37k of 150k rows; the script said "re-run" and showed no error | one transaction per row beside the live poller; a lock error killed the process; the script sent stderr to `/dev/null` | a transaction per batch of 1,000, retried on lock contention, a failing batch reported and skipped, passes until nothing is missing, exit 1 if rows remain, one summary line; the script shows stderr |
+| `stories` / `story_snapshots` / `story_membership` empty while `story_builds` advanced; every `/history` a 404 | the first recorded build (2,897 stories, ~100k joins) was one transaction and failed whole, so every later build saw the same deltas and failed the same way | chunked transactions (500 rows), a bulk UPDATE for the touched stamp instead of 2,897 round trips, the build's counters written last as the completion marker |
+| `https://hidden-view.com/v1/*` still reached the web tier (404 / HTML) | `caddy reload` was not verified and `docker compose up -d` does not recreate a container whose bind-mounted file changed | the script routes a request through Caddy and expects the engine's 401; on a miss it restarts Caddy and probes again |
+
+A fifth thing the run exposed, fixed alongside: with a build row present but no story rows, the
+platform served an **empty page marked stale** on a cold cache. It now builds instead; the durable
+record is served only when it holds stories.
+
+Two numbers to act on, not bugs: provider entities reach 13.4% and event geography 11.9% of the
+last seven days' articles (the battery's bar is 20%). The steady-state enricher fills forward;
+the backfill reaches back 48 hours. Whether that is enough is the product's call before a key
+that sells `/v1/entities` or `/v1/countries`.
+
+The re-run on the follow-up release continues where this one stopped: the backfill is
+resumable (111,645 rows remained), the entity backfill can be skipped with
+`PLATFORM_GKG_HOURS=0` (its rows stand), and the first served build after the deploy records the
+story history in full.
+
 ## Production run
 
 ```bash

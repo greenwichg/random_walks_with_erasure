@@ -221,6 +221,13 @@ class Battery:
                    json.dumps(v))
         self.metrics["versions"] = v
         d = self.data(r) or {}
+        # Enrichment is counted off the request path: the first health call after a start hands
+        # back null and starts the count. Give it a moment rather than reporting a cold engine.
+        for _ in range(6):
+            if d.get("enrichment"):
+                break
+            time.sleep(2)
+            d = self.data(self.get("health", "/v1/health", headers={}, record=False)) or {}
         enr = (d.get("enrichment") or {}).get("recent") or {}
         self.check("enrichment coverage published", bool(enr) and "entityCoverage" in enr,
                    f"last {enr.get('days')}d: entities {enr.get('entityCoverage')} spans {enr.get('spanCoverage')} geo {enr.get('geoCoverage')} over {enr.get('articles')} articles")

@@ -78,7 +78,7 @@ both public.
 
 | endpoint | scope | what it answers |
 |---|---|---|
-| `GET /v1/health` | — | liveness, the versions in force, enrichment coverage (entities / spans / event geography over the catalogue and the last 7 days), `lastBuildAt`, search-index status |
+| `GET /v1/health` | — | liveness, the versions in force, enrichment coverage (entities / spans / event geography over the catalogue and the last 7 days; counted in the background, `null` until the first count after a start), `lastBuildAt`, search-index status |
 | `GET /v1/me` | any key | the key's tenant, plan, scopes, licence classes, limits, month-to-date, the key's own label / prefix / expiry |
 | `GET /v1/articles?q=&publisher_id=&publisher=&topic=&country=&from=&to=&sort=&limit=&cursor=` | `articles:read` | catalogue term search + filters; with `q` the default `sort` is `relevance` (else `newest`; `oldest`, `publisher`); provisional rows excluded in SQL |
 | `GET /v1/articles/{article_id}` · `GET /v1/articles/by-url?url=` | `articles:read` | one article, its current `storyId`, its provenance channels |
