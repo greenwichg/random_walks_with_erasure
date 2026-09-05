@@ -169,6 +169,32 @@ seven days. New WARN to act on before an external key: the publisher profile of 
 outlet answered in 3.0 s (`/v1/publishers/{id}` computes topics and hosts over every row of the
 publisher on the request path; a cached or bounded profile is the next improvement).
 
+## Third production run (2026-09-05, release `e294fe3`) — validated
+
+**93 PASS, 3 WARN, 0 FAIL, 0 SKIP; `platform: ENABLED and validated`.** The recorder wrote the
+first build after the restart in full — 2,897 story rows, 2,900 snapshots, 11,258 membership
+rows, no error, 480 ms — and the battery's walk found 2,892 served ids over 29 pages with none
+duplicated and the cursor reaching the announced total. The top story's history answered with
+1 snapshot and 43 membership rows. 139 of 139 requests metered; 53 provider-restricted rows seen
+by the developer key, none delivered; 69 payloads swept with no body, no reader-private row, no
+provisional row, no rating. The public edge held: 200 on health, the unauthenticated envelope
+without a key, the consumer site untouched.
+
+The three WARNs, none of them an exposure or a wrong answer:
+
+| WARN | measured | reading |
+|---|---|---|
+| provider entities ≥20% of recent articles | 13.3% | the product's call on how much of `/v1/entities` a key is sold; the enricher fills forward |
+| event geography ≥20% of recent articles | 11.7% | same call for `/v1/countries` |
+| p95 under 1.5 s on every endpoint | health 6.5 s (one sample, taken while the first build after the restart was running), publisher profile 5.7 s (a 6,460-article outlet), outlet search 2.1 s | the publisher profile is the one to fix before an external key: it aggregates topics and hosts over every row of the publisher on the request path |
+
+**Readiness.** Phase 1 is ready for a first private external user on the developer plan
+(`metadata_public` only, ratings and Wikipedia unpublished, `stories:history` off the plan). What
+that user gets is exactly what the battery verified: ids and licence on every row, term search,
+the trusted default listing with capped coverage, ETags, a metered key with `Retry-After`. The
+two things to say to them up front: the publisher profile can take seconds on the largest
+outlets until it is cached, and entity / geography coverage is a minority of recent articles.
+
 ## Production run
 
 ```bash
