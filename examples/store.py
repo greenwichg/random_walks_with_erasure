@@ -2523,6 +2523,15 @@ class Store:
             res = s.execute(delete(ArticleAlias).where(ArticleAlias.alias.in_(aliases)))
             return res.rowcount or 0
 
+    def hidden_article_refs(self) -> list:
+        """Every reference the platform must never serve — ``{url, canonicalUrl, articleId}`` of
+        each reader-private or provisional row — for a validator's exposure sweep."""
+        q = select(FeedArticle.url, FeedArticle.canonical_url, FeedArticle.article_id).where(
+            or_(FeedArticle.licence_class == "reader_private",
+                FeedArticle.article_state == "provisional"))
+        with self.session() as s:
+            return [{"url": u, "canonicalUrl": c, "articleId": a} for u, c, a in s.execute(q).all()]
+
     def identity_backfill_rows(self, *, limit: int = 1000, after: "str | None" = None) -> list:
         """Catalogue rows in canonical-URL order, resuming after ``after`` — the backfill's cursor
         shape, narrow on purpose (the identity backfill reads seven columns, not the scored blob)."""

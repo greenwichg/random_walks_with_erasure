@@ -20,18 +20,28 @@ RWE_PLATFORM_API=1                 # mounts /v1 into the engine (default 0: no /
 deploy/ops/restart.sh api
 ```
 
-The engine stays private. To reach `/v1` from the internet add a second Caddy site that proxies
-**only** that prefix to the engine (the consumer app keeps `web:3000`):
+The engine stays private. `deploy/Caddyfile` routes **only** `https://hidden-view.com/v1/*` straight
+to the engine (`api:8000`); every other path stays on the web tier. The route is inert until the
+flag is on — without it the engine answers `/v1/*` with its ordinary 404 — so the same Caddyfile
+serves both states and no DNS or certificate work is needed.
 
-```caddyfile
-api.hidden-view.com {
-	@v1 path /v1/*
-	handle @v1 {
-		reverse_proxy api:8000
-	}
-	respond 404
-}
+**One command does the whole first enablement on the production host** and validates it:
+
+```bash
+cd /opt/ih && sudo deploy/ops/platform-enable.sh            # --dry-run to preview, --validate to re-run the checks
 ```
+
+It sets the flag, restarts the engine, reloads Caddy, takes a backup, runs the identity backfill
+(dry run, then real, then verifies no row is missing an id), mints two **temporary** keys (internal
+and developer plan — never printed, revoked at the end), runs `examples/platform_validate.py` inside
+the api container against the live catalogue, and probes the public edge. The report lands at
+`/opt/ih/data/platform_validation.json`. It is idempotent: re-running it re-validates.
+
+`examples/platform_validate.py` is also a customer-side smoke test: `--base-url https://hidden-view.com`
+with the key in `RWE_PLATFORM_KEY` (an `internal`-plan key; add `RWE_PLATFORM_KEY_DEV` for the
+withholding checks) runs every capability, the exposure sweep, the quality measurements and a
+latency table. `--db sqlite:////path/ih_beta.db --backfill` rehearses the same battery on a copy of
+a database, standalone.
 
 `platform_api.app.create_app(store)` builds the same surface as a standalone FastAPI app — the
 shape a separate `platform` process would run — if isolation is ever worth a process.

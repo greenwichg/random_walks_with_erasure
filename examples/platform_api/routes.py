@@ -529,15 +529,22 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
             h["withheld"] = ["snapshots.distribution", "snapshots.blindspotSide"]
         urls = [m["url"] for m in h["membership"]]
         metas = meta_for(st, urls)
+        kept = []
         for m in h["membership"]:
             meta = metas.get(m["url"]) or {}
+            # A hidden member (reader-private, provisional) is not in the history either: the
+            # ledger recorded its join, but its existence is the reader's, not ours to serve.
+            # (Found by platform_validate.py's exposure sweep before the first customer did.)
+            if shape.hidden(meta):
+                continue
             cls = meta.get("licenceClass") or "unknown"
             if not m.get("articleId"):
                 m["articleId"] = meta.get("articleId")
             m["licence"] = {"class": cls}
-            if cls == "reader_private" or (
-                    cls not in p.licence_classes):
+            if cls not in p.licence_classes:
                 m.pop("url", None)
+            kept.append(m)
+        h["membership"] = kept
         return shape.envelope(h, request_id=rid(request))
 
     # ---- tags ------------------------------------------------------------------------- #

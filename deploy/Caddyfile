@@ -20,9 +20,22 @@
 {$APP_DOMAIN:hidden-view.com} {
 	encode zstd gzip
 
+	# ── Platform API (/v1) → the engine directly ────────────────────────────────────────────
+	# The commercial surface (docs/PLATFORM_API.md) authenticates by API key inside the engine;
+	# the web tier has no /v1 routes. The engine serves /v1 only with RWE_PLATFORM_API=1 in
+	# deploy/.env (otherwise it answers 404 like any unknown path), so this block is inert until
+	# the operator opts in — deploy/ops/platform-enable.sh does that and validates the result.
+	# Everything else stays on the web tier, exactly as before.
+	@platform path /v1/*
+	handle @platform {
+		reverse_proxy api:8000
+	}
+
 	# Reverse-proxy to the web tier over the internal Docker network. `web` resolves via Docker's
 	# embedded DNS on the shared compose network; 3000 is the container port, not a host port.
-	reverse_proxy web:3000
+	handle {
+		reverse_proxy web:3000
+	}
 
 	# Lightweight access logging to stdout (captured by the Docker json-file driver, rotated via
 	# deploy/host/daemon.json). Application-level structured logs remain OBS1's responsibility.
