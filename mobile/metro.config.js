@@ -37,7 +37,7 @@ config.resolver.nodeModulesPaths = [
  * a hook called through it reads `null`. Two copies is not a slow app or a subtle bug; it is a hard
  * crash on the first hook.
  */
-const SINGLETONS = /^(react|react-native)(\/.*)?$/;
+const SINGLETONS = /^(react|react-dom|react-native)(\/.*)?$/;
 
 /**
  * Resolve React as if every request came from `mobile/`, whoever actually asked.
@@ -61,9 +61,22 @@ const SINGLETONS = /^(react|react-native)(\/.*)?$/;
  * Only the search ORIGIN is rewritten; Metro still does the resolving, so platform extensions
  * (`.android.js`, `.ios.js`) and package `exports` maps keep working normally.
  */
+/**
+ * The parity validation harness (`scripts/validation/`; its report is docs/MOBILE_PARITY.md once the
+ * pass completes) renders the app through react-native-web to put it beside the mobile web app. `expo-secure-store` is an empty module on that platform, so the harness
+ * gets a localStorage stand-in — on the WEB platform only. Android and iOS bundles never see it;
+ * `react-dom` joins the singletons for the same reason the others are there (one React per bundle).
+ */
+const WEB_ONLY_SUBSTITUTES = {
+  "expo-secure-store": path.resolve(projectRoot, "scripts", "validation", "secure-store.web.js"),
+};
+
 const originalResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const resolve = originalResolveRequest ?? context.resolveRequest;
+  if (platform === "web" && WEB_ONLY_SUBSTITUTES[moduleName]) {
+    return { type: "sourceFile", filePath: WEB_ONLY_SUBSTITUTES[moduleName] };
+  }
   if (SINGLETONS.test(moduleName)) {
     return resolve({ ...context, originModulePath: __filename }, moduleName, platform);
   }
