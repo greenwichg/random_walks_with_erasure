@@ -75,6 +75,7 @@ export async function exchangeIdToken(
   const body = (await res.json().catch(() => ({}))) as {
     token?: string;
     userId?: number;
+    email?: string | null;
     error?: { code?: string; message?: string };
   };
 
@@ -85,7 +86,9 @@ export async function exchangeIdToken(
     return { ok: false, reason: "rejected", message: body.error?.message };
   }
 
-  const session: StoredSession = { token: body.token, userId: body.userId ?? 0 };
+  // The verified address rides along for the account menu — `/api/profile` is session-only, so
+  // this is the one place the app learns who it signed in.
+  const session: StoredSession = { token: body.token, userId: body.userId ?? 0, email: body.email ?? null };
   await saveSession(session);
   return { ok: true, session };
 }

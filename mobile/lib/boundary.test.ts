@@ -113,11 +113,15 @@ test("the shared core is imported, not reimplemented", () => {
   // card must be built on @ih/core. A version of these files that stopped importing it would still
   // render — with its own copy of the ordering and the explanation rules, drifting from the web from
   // the day it was written.
-  const screen = readFileSync(join(MOBILE, "app", "index.tsx"), "utf8");
-  const card = readFileSync(join(MOBILE, "components", "recommendation-card.tsx"), "utf8");
+  const screen = readFileSync(join(MOBILE, "app", "recommendations.tsx"), "utf8");
+  const card = readFileSync(join(MOBILE, "components", "recommendations", "recommendation-card.tsx"), "utf8");
+  const home = readFileSync(join(MOBILE, "components", "home", "home-model.ts"), "utf8");
+  const hooks = readFileSync(join(MOBILE, "lib", "hooks.ts"), "utf8");
   for (const [name, source, expected] of [
-    ["app/index.tsx", screen, ["@ih/core/api/services", "@ih/core/logic/country-partition"]],
-    ["components/recommendation-card.tsx", card, ["@ih/core/logic/rec-presentation"]],
+    ["app/recommendations.tsx", screen, ["@ih/core/api/services", "@ih/core/logic/country-partition"]],
+    ["components/recommendations/recommendation-card.tsx", card, ["@ih/core/logic/rec-presentation"]],
+    ["components/home/home-model.ts", home, ["@ih/core/logic/home"]],
+    ["lib/hooks.ts", hooks, ["@ih/core/api/services"]],
   ] as const) {
     for (const spec of expected) {
       assert.ok(source.includes(`"${spec}"`), `${name} no longer imports ${spec}`);

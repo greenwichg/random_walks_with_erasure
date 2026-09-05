@@ -16,6 +16,9 @@ import * as SecureStore from "expo-secure-store";
 const TOKEN_KEY = "ih.bearer.token";
 const USER_KEY = "ih.bearer.userId";
 const TOKEN_ID_KEY = "ih.bearer.tokenId";
+/** The signed-in address, for the account menu. Not a credential; kept beside the token because
+ *  it describes the token's owner and must be forgotten with it. */
+const EMAIL_KEY = "ih.bearer.email";
 
 /**
  * A synchronous cache of the token.
@@ -32,21 +35,24 @@ export interface StoredSession {
   userId: number;
   /** The engine's id for this token, so sign-out can revoke it rather than merely forget it. */
   tokenId?: number;
+  /** The address the exchange verified. Absent on sessions written before it was stored. */
+  email?: string | null;
 }
 
 /** Read the session off the keystore into the in-memory cache. Call once, before the first request. */
 export async function loadSession(): Promise<StoredSession | null> {
   try {
-    const [token, userId] = await Promise.all([
+    const [token, userId, email] = await Promise.all([
       SecureStore.getItemAsync(TOKEN_KEY),
       SecureStore.getItemAsync(USER_KEY),
+      SecureStore.getItemAsync(EMAIL_KEY),
     ]);
     if (!token) {
       cached = null;
       return null;
     }
     cached = token;
-    return { token, userId: Number(userId ?? 0) };
+    return { token, userId: Number(userId ?? 0), email: email ?? null };
   } catch {
     // A keystore that cannot be read (a device in an odd state, a restore from backup) is a signed
     // -out app, not a crashed one. The reader signs in again; nothing is lost but a session.
@@ -63,6 +69,9 @@ export async function saveSession(session: StoredSession): Promise<void> {
     session.tokenId != null
       ? SecureStore.setItemAsync(TOKEN_ID_KEY, String(session.tokenId))
       : Promise.resolve(),
+    session.email
+      ? SecureStore.setItemAsync(EMAIL_KEY, session.email)
+      : SecureStore.deleteItemAsync(EMAIL_KEY),
   ]);
 }
 
@@ -74,6 +83,7 @@ export async function clearSession(): Promise<void> {
     SecureStore.deleteItemAsync(TOKEN_KEY),
     SecureStore.deleteItemAsync(USER_KEY),
     SecureStore.deleteItemAsync(TOKEN_ID_KEY),
+    SecureStore.deleteItemAsync(EMAIL_KEY),
   ]);
 }
 

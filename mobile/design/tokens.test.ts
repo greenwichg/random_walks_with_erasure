@@ -62,20 +62,48 @@ function within(a: string, b: string, tolerance = 2): boolean {
   return Math.abs(ar - br) <= tolerance && Math.abs(ag - bg) <= tolerance && Math.abs(ab - bb) <= tolerance;
 }
 
+/** Every token the palette carries — the whole stylesheet, not a sample of it. A ramp that was
+ *  transcribed but never checked is exactly the one that drifts. */
 const TOKENS: Array<[keyof typeof light, string]> = [
   ["background", "background"],
   ["foreground", "foreground"],
   ["card", "card"],
+  ["cardForeground", "card-foreground"],
+  ["popover", "popover"],
+  ["popoverForeground", "popover-foreground"],
   ["primary", "primary"],
   ["primaryForeground", "primary-foreground"],
+  ["secondary", "secondary"],
+  ["secondaryForeground", "secondary-foreground"],
   ["muted", "muted"],
   ["mutedForeground", "muted-foreground"],
+  ["accent", "accent"],
+  ["accentForeground", "accent-foreground"],
+  ["destructive", "destructive"],
+  ["destructiveForeground", "destructive-foreground"],
   ["border", "border"],
+  ["input", "input"],
+  ["ring", "ring"],
   ["left", "left"],
   ["center", "center"],
   ["right", "right"],
   ["positive", "positive"],
   ["caution", "caution"],
+  ["negative", "negative"],
+  ["ownIndependent", "own-independent"],
+  ["ownIndividual", "own-individual"],
+  ["ownTelecom", "own-telecom"],
+  ["ownGovernment", "own-government"],
+  ["ownPrivateEquity", "own-private-equity"],
+  ["ownConglomerate", "own-conglomerate"],
+  ["ownCorporation", "own-corporation"],
+  ["ownOther", "own-other"],
+  ["factVeryHigh", "fact-very-high"],
+  ["factHigh", "fact-high"],
+  ["factMostlyFactual", "fact-mostly-factual"],
+  ["factMixed", "fact-mixed"],
+  ["factLow", "fact-low"],
+  ["factVeryLow", "fact-very-low"],
 ];
 
 test("the light palette is the stylesheet's light palette", () => {
@@ -105,6 +133,8 @@ test("every token is a full-length hex colour", () => {
       assert.match(value, /^#[0-9a-f]{6}$/, `${key} = ${value}`);
     }
   }
+  // And every stylesheet token has a palette entry: a new `--x` in globals.css must land here.
+  assert.equal(TOKENS.length, Object.keys(light).length);
 });
 
 test("an unrated outlet gets NO lean colour — never Center", () => {

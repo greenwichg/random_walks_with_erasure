@@ -1,26 +1,40 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
-import { useColorScheme } from "react-native";
+import * as React from "react";
+import { Platform, UIManager, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { AppHeader } from "@/components/layout/header";
+import { TabBar } from "@/components/layout/tab-bar";
+import { FONT_FILES } from "@/design/fonts";
 import { initApi } from "@/lib/api";
-import { loadSession } from "@/lib/session";
-import { dark, light } from "@/design/tokens";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { LanguageProvider } from "@/lib/i18n-context";
+import { ThemeProvider, useTheme } from "@/lib/theme";
 
 /**
  * The app shell.
  *
- * Two things happen before anything renders, and the order matters:
+ * `initApi()` points the shared client at the deployment and at the keystore reader — at module
+ * scope, so it runs once per bundle load and before any hook can fire a request. The providers
+ * then stack in dependency order: the query client (everything reads through it), the theme, the
+ * keystore session (which clears the query cache on sign-out), and the language (which reads the
+ * settings query). Nothing renders until the fonts and the session have both loaded.
  *
- *   1. `initApi()` points the shared client at the deployment and at the keystore reader. At module
- *      scope, so it runs once per bundle load and before any hook can fire a request — the same
- *      placement `components/providers.tsx` uses on the web, for the same reason.
- *   2. `loadSession()` reads the token out of the keystore into the synchronous cache the client's
- *      `getToken` reads. It is async, so the first frame waits on it: rendering before it resolves
- *      would send one unauthenticated request and show a signed-out screen to a signed-in reader.
+ * ONE navigator. The web's every page sits inside one shell — sticky masthead, fixed bottom tab
+ * bar — so the native stack renders the same header on every screen and the tab bar is drawn once
+ * over the whole stack, not inside a tabs navigator that would leave the story page without it.
+ * Routes are the web's paths, one for one.
+ *
+ * The sign-in gate is the web's middleware: signed out, the only reachable screen is sign-in.
  */
 initApi();
+
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,32 +49,52 @@ const queryClient = new QueryClient({
 });
 
 export default function RootLayout() {
-  const scheme = useColorScheme();
-  const palette = scheme === "dark" ? dark : light;
-  const [ready, setReady] = useState(false);
+  const [fontsLoaded] = useFonts(FONT_FILES);
+  return (
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <AuthProvider>
+            <LanguageProvider>{fontsLoaded ? <Shell /> : null}</LanguageProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </SafeAreaProvider>
+  );
+}
 
-  useEffect(() => {
-    // Never rejects — `loadSession` turns an unreadable keystore into "signed out" rather than a
-    // crash, so there is no failure branch to handle here.
-    void loadSession().finally(() => setReady(true));
-  }, []);
-
-  if (!ready) return null;
+function Shell() {
+  const { palette, scheme } = useTheme();
+  const { ready, signedIn } = useAuth();
+  if (!ready) return <View style={{ flex: 1, backgroundColor: palette.background }} />;
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <View style={{ flex: 1, backgroundColor: palette.background }}>
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: palette.background },
-          headerTintColor: palette.foreground,
-          headerTitleStyle: { color: palette.foreground },
+          header: () => <AppHeader />,
           contentStyle: { backgroundColor: palette.background },
+          animation: "slide_from_right",
         }}
       >
-        <Stack.Screen name="index" options={{ title: "Hidden View" }} />
-        <Stack.Screen name="sign-in" options={{ title: "Sign in", presentation: "modal" }} />
+        <Stack.Protected guard={signedIn}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="recommendations" />
+          <Stack.Screen name="search" />
+          <Stack.Screen name="stories/index" />
+          <Stack.Screen name="stories/[id]" />
+          <Stack.Screen name="publishers/[name]" />
+          <Stack.Screen name="settings" />
+          <Stack.Screen name="alerts" />
+          <Stack.Screen name="saved" />
+          <Stack.Screen name="menu" options={{ headerShown: false, presentation: "fullScreenModal", animation: "slide_from_bottom" }} />
+        </Stack.Protected>
+        <Stack.Protected guard={!signedIn}>
+          <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+        </Stack.Protected>
       </Stack>
-    </QueryClientProvider>
+      {signedIn && <TabBar />}
+    </View>
   );
 }
