@@ -186,7 +186,7 @@ The three WARNs, none of them an exposure or a wrong answer:
 |---|---|---|
 | provider entities ≥20% of recent articles | 13.3% | the product's call on how much of `/v1/entities` a key is sold; the enricher fills forward |
 | event geography ≥20% of recent articles | 11.7% | same call for `/v1/countries` |
-| p95 under 1.5 s on every endpoint | health 6.5 s (one sample, taken while the first build after the restart was running), publisher profile 5.7 s (a 6,460-article outlet), outlet search 2.1 s | the publisher profile is the one to fix before an external key: it aggregates topics and hosts over every row of the publisher on the request path |
+| p95 under 1.5 s on every endpoint | health 6.5 s (one sample, taken while the first build after the restart was running), publisher profile 5.7 s (a 6,460-article outlet), outlet search 2.1 s | the publisher profile aggregated topics and hosts over every row of the publisher on the request path — three whole-catalogue scans per request. Fixed in the follow-up release: the counted core is cached per publisher (`RWE_PUBLISHER_PROFILE_TTL`, 600 s; `meta.asOf` says when it was counted), the catalogue's topic counts are shared, the platform skips the recent-articles query, and an expression index on `lower(publisher)` serves the filter every surface writes |
 
 **Readiness.** Phase 1 is ready for a first private external user on the developer plan
 (`metadata_public` only, ratings and Wikipedia unpublished, `stories:history` off the plan). What

@@ -1583,6 +1583,7 @@ class Store:
         self._ensure_search_indexes()
         self._ensure_retention_indexes()
         self._ensure_identity_indexes()
+        self._ensure_publisher_index()
         self._ensure_search_fts()
         # Publisher ids this process has already ensured a `publishers` row for — the lazy
         # materialisation at ingest costs one INSERT-OR-IGNORE per NEW publisher per process.
@@ -3632,6 +3633,17 @@ class Store:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_feed_article_id ON feed_articles(article_id)",
             "CREATE INDEX IF NOT EXISTS ix_feed_publisher_id ON feed_articles(publisher_id)",
             "CREATE INDEX IF NOT EXISTS ix_feed_licence_class ON feed_articles(licence_class)",
+        ])
+
+    def _ensure_publisher_index(self) -> None:
+        """An EXPRESSION index on ``lower(publisher)`` — the only index that serves the publisher
+        filter as every surface writes it (``lower(feed_articles.publisher) = ?``: the catalog
+        search, the platform's publisher scoping, the profile's counted stats). A plain index on
+        ``publisher`` never matches that predicate. Measured before it existed (2026-09-05): every
+        publisher profile scanned the whole 150k-row catalogue once per request; a scan again for
+        the recent-articles count."""
+        self._create_indexes([
+            "CREATE INDEX IF NOT EXISTS ix_feed_publisher_lower ON feed_articles(lower(publisher))",
         ])
 
     def _ensure_publisher_metadata_columns(self) -> None:

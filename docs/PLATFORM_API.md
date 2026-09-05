@@ -95,7 +95,7 @@ both public.
 | `GET /v1/tags/{tag}?limit=&cursor=` | `stories:read` | every story recorded under the tag, strongest association first |
 | `GET /v1/publishers?name=` · `?q=&country=&scope=&kind=&registered=&limit=&cursor=` | `publishers:read` | resolve one by any name/host form, or list busiest-first under filters |
 | `GET /v1/publishers/by-host?host=` | `publishers:read` | a hostname or URL → its publisher |
-| `GET /v1/publishers/{publisher_id}` | `publishers:read` | curated facts + hosts + counted profile |
+| `GET /v1/publishers/{publisher_id}` | `publishers:read` | curated facts + hosts + counted profile; the counted profile is served from a cache (`RWE_PUBLISHER_PROFILE_TTL`, 600 s) and `meta.asOf` is when it was counted |
 | `GET /v1/publishers/{publisher_id}/articles?q=&topic=&from=&to=&sort=&limit=&cursor=` | `articles:read` | the publisher's articles (same `q` / `sort` semantics as `/v1/articles`) |
 | `GET /v1/publishers/{publisher_id}/stories?q=&topic=&country=&from=&to=&sort=&limit=&cursor=` | `stories:read` | stories with coverage from the publisher |
 | `GET /v1/outlets/search?q=&count=` | `publishers:read` | the outlet index (Wikidata, Wikipedia, Common Crawl, observed feeds): outlets by place, language or name — internal index only, no paid upstream |

@@ -822,7 +822,8 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
     @router.get("/publishers/{publisher_id}", summary="One publisher: curated facts + counted profile",
                 description="Registry facts (country, scope, kind, ownership), hosts, catalogue "
                             "counts, and the counted profile (topics, languages, event "
-                            "countries, co-coverage).")
+                            "countries, co-coverage). The counted profile is served from a "
+                            "short-lived cache; `meta.asOf` is when it was counted.")
     def publisher(request: Request, publisher_id: str,
                   p: Principal = Depends(scoped("publishers:read"))) -> Response:
         st = get_store()
@@ -832,8 +833,10 @@ def build_router(get_store: Callable, *, get_request_id: "Callable[[], str] | No
             profile = publisher_service.get_publisher(st, row["name"], recent_limit=0)
         except Exception:                    # noqa: BLE001 — the curated row stands alone
             profile = None
+        counted = {"asOf": profile["countedAt"]} if profile and profile.get("countedAt") else {}
         return _object_response(request, shape.envelope(
-            shape.publisher(row, st.publisher_hosts(publisher_id), profile), request_id=rid(request)))
+            shape.publisher(row, st.publisher_hosts(publisher_id), profile), request_id=rid(request),
+            **counted))
 
     @router.get("/publishers/{publisher_id}/articles", summary="One publisher's articles",
                 description="`/v1/articles` scoped to the publisher.")

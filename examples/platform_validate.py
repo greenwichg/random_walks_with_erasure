@@ -807,6 +807,16 @@ class Battery:
 
 
 # ---- local mode ------------------------------------------------------------------------- #
+def _metering_errors() -> int:
+    """The engine's process-wide count of metering rows that failed to write (0 when the
+    counter is unavailable — e.g. against a remote engine, where it is not this process's)."""
+    try:
+        import obs_metrics
+        return int((obs_metrics.snapshot().get("counters") or {}).get("platform_metering_errors_total") or 0)
+    except Exception:                        # noqa: BLE001
+        return 0
+
+
 def run_local(db_url: str, *, backfill: bool, repeat: int, log=print) -> dict:
     os.environ["RWE_PLATFORM_API"] = "1"
     import identity
@@ -814,6 +824,10 @@ def run_local(db_url: str, *, backfill: bool, repeat: int, log=print) -> dict:
     import store as store_mod
     import story_service
     from platform_api import app as platform_app
+    # The metering-error counter is process-wide and never reset: what this run reports is the
+    # DELTA over the run, not whatever an earlier caller in the same process left behind (the
+    # test suite ran into exactly that — a battery blamed for one error from a test before it).
+    errs_before = _metering_errors()
     st = store_mod.Store(db_url)
     if backfill:
         log("-- identity backfill (dry run, then real) --")
@@ -843,12 +857,7 @@ def run_local(db_url: str, *, backfill: bool, repeat: int, log=print) -> dict:
     finally:
         st.platform_revoke_key(meta["keyId"])
         st.platform_revoke_key(meta_dev["keyId"])
-    try:
-        import obs_metrics
-        errs = (obs_metrics.snapshot().get("counters") or {}).get("platform_metering_errors_total")
-        out["metrics"]["metering"]["recordErrors"] = int(errs or 0)
-    except Exception:                        # noqa: BLE001
-        pass
+    out["metrics"]["metering"]["recordErrors"] = max(0, _metering_errors() - errs_before)
     out["mode"] = {"db": re.sub(r"//[^/]*@", "//…@", db_url), "backfill": backfill,
                    "hiddenRows": len(hidden["urls"])}
     return out

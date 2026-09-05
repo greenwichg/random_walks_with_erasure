@@ -27,7 +27,11 @@ Read-only and additive: no ranking, no recommender, no protected module is touch
 from __future__ import annotations
 
 import math
-from datetime import datetime
+import os
+import threading
+import time
+import weakref
+from datetime import datetime, timezone
 from typing import Optional
 
 import api_server as engine     # _prettify / _lean_bucket — the one serializer vocabulary
@@ -70,6 +74,85 @@ TOP_GAPS = 5
 # Co-coverage floors (M2): "appears in the same stories as" needs shared stories to count.
 CO_COVERAGE_MIN_STORIES = 3      # stories the publisher shares with at least one other outlet
 CO_COVERAGE_TOP = 6
+
+#: How long a publisher's COUNTED core — its catalogue stats and its topic gaps — is served
+#: before it is counted again. The core is whole-catalogue work: the publisher's rows (a scan
+#: matched on ``lower(publisher)``), the catalogue's topic counts (a JSON group-by over every
+#: row), and for the consumer page the recent-articles count. Measured in production
+#: (2026-09-05): 1.5–5.7 s per profile for a 6,460-article outlet on a 150k-row catalogue.
+#: Counts over an outlet's whole history move by a fraction of a percent per poll, so a
+#: ten-minute-old answer is the same answer — and the profile says when it was counted
+#: (``countedAt``). ``RWE_PUBLISHER_PROFILE_TTL`` overrides (seconds; ``0`` counts every time).
+PROFILE_TTL = 600.0
+#: Entries kept per store before the oldest are dropped — a memory bound, not an eviction policy.
+PROFILE_CACHE_MAX = 4096
+
+
+def profile_ttl() -> float:
+    raw = os.environ.get("RWE_PUBLISHER_PROFILE_TTL", "").strip()
+    try:
+        return float(raw) if raw else PROFILE_TTL
+    except ValueError:
+        return PROFILE_TTL
+
+
+_CORE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()   # store -> {key: (at, value)}
+_CORE_LOCK = threading.Lock()
+_INFLIGHT: dict = {}                                                 # (id(store), key) -> Lock
+
+
+def clear_cache() -> None:
+    """Forget every counted core (tests; an operator who wants the next request to recount)."""
+    with _CORE_LOCK:
+        _CORE.clear()
+        _INFLIGHT.clear()
+
+
+def _cached(store_, key: str, compute):
+    """``compute()`` once per :func:`profile_ttl` per store and key, single-flighted: concurrent
+    misses on one publisher wait for the one count rather than each running it."""
+    ttl = profile_ttl()
+    if ttl <= 0:
+        return compute()
+    with _CORE_LOCK:
+        hit = _CORE.setdefault(store_, {}).get(key)
+        if hit is not None and hit[0] > time.time() - ttl:
+            return hit[1]
+        flight = _INFLIGHT.setdefault((id(store_), key), threading.Lock())
+    with flight:
+        with _CORE_LOCK:
+            hit = _CORE.setdefault(store_, {}).get(key)
+            if hit is not None and hit[0] > time.time() - ttl:
+                return hit[1]
+        value = compute()
+        with _CORE_LOCK:
+            entries = _CORE.setdefault(store_, {})
+            if len(entries) >= PROFILE_CACHE_MAX:
+                cutoff = time.time() - ttl
+                for k in [k for k, (at, _v) in entries.items() if at <= cutoff]:
+                    entries.pop(k, None)
+                while len(entries) >= PROFILE_CACHE_MAX:
+                    entries.pop(next(iter(entries)), None)     # insertion order: the oldest first
+            entries[key] = (time.time(), value)
+            _INFLIGHT.pop((id(store_), key), None)
+        return value
+
+
+def _catalog_topics(store_) -> dict:
+    """The catalogue's per-topic counts — one JSON group-by over every row, shared by every
+    publisher's topic gaps for a TTL rather than run once per profile."""
+    return _cached(store_, "\x00catalog_topics", store_.catalog_topic_counts)
+
+
+def _counted_core(store_, query: str, outlet) -> dict:
+    """The expensive half of a profile: the publisher's catalogue stats and its topic gaps
+    against the catalogue, stamped with when they were counted."""
+    stats = store_.publisher_catalog_stats(query)
+    if stats is None and outlet is not None and outlet.canonical.lower() != query.lower():
+        # The request came as an alias/domain; the catalog stores the canonical name.
+        stats = store_.publisher_catalog_stats(outlet.canonical)
+    gaps = _topic_gaps(stats["topics"], _catalog_topics(store_)) if stats else None
+    return {"stats": stats, "gaps": gaps, "countedAt": datetime.now(timezone.utc).isoformat()}
 
 
 def _parse_iso(ts: "str | None") -> Optional[datetime]:
@@ -169,10 +252,9 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
     if not query:
         return None
     outlet = outlet_registry.resolve(query)
-    stats = store_.publisher_catalog_stats(query)
-    if stats is None and outlet is not None and outlet.canonical.lower() != query.lower():
-        # The request came as an alias/domain; the catalog stores the canonical name.
-        stats = store_.publisher_catalog_stats(outlet.canonical)
+    core = _cached(store_, "core:" + " ".join(query.split()).casefold(),
+                   lambda: _counted_core(store_, query, outlet))
+    stats = core["stats"]
     if stats is None and outlet is None:
         return None
 
@@ -247,20 +329,26 @@ def get_publisher(store_, name: str, *, recent_limit: int = RECENT_LIMIT) -> Opt
                 "source": outlet.ownership_source,
                 "asOf": outlet.ownership_asof,
             }
+    # When the counted core was counted — the cache's age, on the record (the platform stamps it
+    # as `meta.asOf`; the consumer's response model does not carry it).
+    profile["countedAt"] = core["countedAt"]
     if stats:
         if stats["registers"] and stats["registers"]["n"] >= MIN_SIGNAL:
             profile["registers"] = stats["registers"]
         if stats["emotion"] and stats["emotion"]["n"] >= MIN_SIGNAL:
             profile["emotion"] = stats["emotion"]
         # M2 — the two counted relationship modules, each behind its own floor (omit, don't
-        # thin-render): what the catalog covers that they rarely do, and who shares their stories.
-        gaps = _topic_gaps(stats["topics"], store_.catalog_topic_counts())
-        if gaps:
-            profile["topicGaps"] = gaps
+        # thin-render): what the catalog covers that they rarely do (counted with the core, from
+        # the catalogue's cached topic counts) and who shares their stories (a walk over the
+        # cached story view — cheap, and read fresh so a cold view is never remembered as "none").
+        if core["gaps"]:
+            profile["topicGaps"] = core["gaps"]
         co = _co_coverage(store_, {display, stored_name, engine._prettify(stored_name)})
         if co:
             profile["coCoverage"] = co
-    if total:
+    if total and recent_limit > 0:
+        # The platform asks for no recent list (recent_limit=0) and skips the query outright —
+        # a LIMIT 0 still ran the publisher's full count.
         rows, _ = store_.search_feed_articles(
             publisher=stored_name, sort="newest",
             pagination=OffsetPagination.from_params(recent_limit, 0), include_provisional=False)
