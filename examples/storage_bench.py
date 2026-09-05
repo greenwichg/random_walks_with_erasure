@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import pathlib
@@ -128,7 +129,12 @@ def _rows(rng: random.Random, start: int, count: int, sources: int) -> list:
         out.append((url, url, publisher, "bench", title, desc, None,
                     f"2026-07-{day:02d}T12:00:00+00:00", f"https://{publisher}/feed",
                     _scored_json(publisher, url, title), "rss", "bench", None, None,
-                    "2026-08-20 12:00:00.000000", "2026-08-20 12:00:00.000000"))
+                    "2026-08-20 12:00:00.000000", "2026-08-20 12:00:00.000000",
+                    # Durable identity + licence, exactly as ingest stamps them (store.article_id_for
+                    # is the same sha1; the publisher id is a hash of the host's identity key).
+                    "ar_" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:20],
+                    "pub_" + hashlib.sha1(f"d:{publisher}".encode("utf-8")).hexdigest()[:20],
+                    "metadata_public", "1"))
     return out
 
 
@@ -139,7 +145,8 @@ def _rows(rng: random.Random, start: int, count: int, sources: int) -> list:
 #: and it is why `_fill` now verifies the row count instead of trusting the statement.
 _FEED_COLUMNS = ("canonical_url", "url", "publisher", "source_publisher", "title", "description",
                  "body", "published_at", "source_feed", "scored", "source_type",
-                 "source_provider", "country", "language", "fetched_at", "created_at")
+                 "source_provider", "country", "language", "fetched_at", "created_at",
+                 "article_id", "publisher_id", "licence_class", "scorer_version")
 
 
 # --------------------------------------------------------------------------- instrumentation
@@ -258,6 +265,14 @@ def _fill(path: str, start: int, count: int, sources: int, rng: random.Random,
     loc_sql = ("INSERT INTO article_event_locations (canonical_url, country, region, city, source) "
                "VALUES (?,?,?,?,?)")
     ent_sql = "INSERT INTO article_entities (canonical_url, kind, name, source) VALUES (?,?,?,?)"
+    # The identity rows the real path writes per article (store._record_observation): one alias
+    # (the bench's url IS its canonical form, so the two forms collapse to one row) and one
+    # provenance row per (article, channel, source). Both are real per-article storage now.
+    alias_sql = ("INSERT OR IGNORE INTO article_aliases (alias, article_id, canonical_url, kind, "
+                 "first_seen) VALUES (?,?,?,?,?)")
+    prov_sql = ("INSERT OR IGNORE INTO article_provenance (canonical_url, article_id, channel, "
+                "provider, source_ref, external_id, licence_class, first_observed_at, "
+                "last_observed_at, published_at_seen, observations) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
     before = con.execute("SELECT COUNT(*) FROM feed_articles").fetchone()[0]
     t0 = time.perf_counter()
     try:
@@ -281,6 +296,11 @@ def _fill(path: str, start: int, count: int, sources: int, rng: random.Random,
                                       for r in batch[::5]])
             con.executemany(ent_sql, [(r[0], "person", f"Name {i % 997}", "gdelt-gkg")
                                       for i, r in enumerate(batch) if i % 10 != 0])
+            con.executemany(alias_sql, [(r[0], r[16], r[0], "url", "2026-08-20 12:00:00.000000")
+                                        for r in batch])
+            con.executemany(prov_sql, [(r[0], r[16], "rss", r[11], r[8], None, "metadata_public",
+                                        "2026-08-20T12:00:00+00:00", "2026-08-20T12:00:00+00:00",
+                                        r[7], 1) for r in batch])
             con.commit()
             done += n
         seconds = time.perf_counter() - t0

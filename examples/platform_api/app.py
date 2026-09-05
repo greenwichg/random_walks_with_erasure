@@ -41,6 +41,12 @@ def mount(app: FastAPI, get_store: Callable, *,
         return False
     app.include_router(build_router(get_store, get_request_id=get_request_id))
     app.add_exception_handler(PlatformError, _handler_for(get_request_id))
+    # Starlette copies the handler table into its exception middleware when the middleware stack
+    # is BUILT (first request). Mounting after that point — tests, a runtime opt-in — would leave
+    # PlatformError rendered by the engine's generic handler (`unauthorized` for `unauthenticated`,
+    # `http_error` for every 403). Dropping the built stack makes the next request rebuild it with
+    # this handler in place; at import time it is already None, so this is a no-op there.
+    app.middleware_stack = None
     setattr(app.state, _MARK, True)
     return True
 

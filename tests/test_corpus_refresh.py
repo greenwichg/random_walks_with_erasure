@@ -30,7 +30,10 @@ import store as store_mod          # noqa: E402
 import feed_source                 # noqa: E402
 import corpus_refresh as cr        # noqa: E402
 
-NOW = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
+# The seeded catalogue's clock. RELATIVE, not pinned: the candidate corpus applies the 60-day
+# freshness window, and a fixed July date turned every test here into a fuse that blew on
+# 2026-09-04 (`validation_failed`: all rows stale) with no code change anywhere.
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 # --------------------------------------------------------------------------- #

@@ -91,7 +91,8 @@ def test_licence_and_identity_are_leaves_of_the_store():
     import identity
     import licence
     import store
-    assert licence.LICENCE_CLASSES is store.LICENCE_CLASSES
-    assert identity.article_id_for is store.article_id_for
+    # Equality, not identity: other test modules load store.py under a fresh module object.
+    assert licence.LICENCE_CLASSES == store.LICENCE_CLASSES
+    assert identity.article_id_for("https://x.example/a") == store.article_id_for("https://x.example/a")
     store_src = (ROOT / "examples" / "store.py").read_text(encoding="utf-8")
     assert not re.search(r"^\s*import (identity|licence|platform_api|story_history|archive)\b", store_src, re.M)

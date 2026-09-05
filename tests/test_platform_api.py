@@ -300,7 +300,10 @@ def test_engine_mount_leaves_the_consumer_routes_alone(monkeypatch):
     assert platform_app.mount(api.app, api._require_store, get_request_id=api._request_id.get) in (True, False)
     assert platform_app.mount(api.app, api._require_store) is False          # idempotent
     after = {getattr(r, "path", None) for r in api.app.routes}
-    assert before <= after and all(str(p).startswith("/v1") for p in after - before)
+    # A router included after the app has started may sit in `routes` as an included-router
+    # object with no `path` of its own (hence the None); every path that DID appear is /v1.
+    added = {p for p in after - before if p is not None}
+    assert before <= after and all(str(p).startswith("/v1") for p in added)
     with TestClient(api.app) as c:
         assert c.get("/api/health").status_code == 200
         assert c.get("/api/stories").status_code == 200
